@@ -24,6 +24,8 @@ tags
 *.so
 *.dylib
 
+# Vendor
+vendor/
 # Test binary, build with `go test -c`
 *.test
 
