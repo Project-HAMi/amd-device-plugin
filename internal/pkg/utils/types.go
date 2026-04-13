@@ -1,0 +1,103 @@
+/*
+Copyright 2024 The HAMi Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package utils
+
+const (
+	AssignedTimeAnnotations = "hami.io/vgpu-time"
+	AssignedNodeAnnotations = "hami.io/vgpu-node"
+	BindTimeAnnotations     = "hami.io/bind-time"
+	DeviceBindPhase         = "hami.io/bind-phase"
+
+	DeviceBindAllocating = "allocating"
+	DeviceBindFailed     = "failed"
+	DeviceBindSuccess    = "success"
+
+	DeviceLimit = 100
+	//TimeLayout = "ANSIC"
+	//DefaultTimeout = time.Second * 60.
+
+	BestEffort string = "best-effort"
+	Restricted string = "restricted"
+	Guaranteed string = "guaranteed"
+
+	// NodeNameEnvName define env var name for use get node name.
+	NodeNameEnvName = "NODE_NAME"
+	TaskPriority    = "CUDA_TASK_PRIORITY"
+	CoreLimitSwitch = "GPU_CORE_UTILIZATION_POLICY"
+
+	// LeaderRoleLabel is the label key used to identify the leader pod.
+	HAMiRoleLabel = "hami.io/scheduler-role"
+	// LeaderRoleLabelValueLeader is the label value used to identify the leader pod.
+	HAMiRoleLabelValueLeader = "leader"
+	// LeaderRoleLabelValueFollower is the label value used to identify the follower pod.
+	HAMiRoleLabelValueFollower = "follower"
+
+	// HAMiSchedulerLabelValue is the label key to identify the component of HAMi in Kubernetes.
+	HAMiComponentLabel = "app.kubernetes.io/component"
+	// HAMiComponentScheduler the label value for hami-scheduler.
+	HAMiComponentScheduler = "hami-scheduler"
+)
+
+var (
+	DebugMode         bool
+	NodeName          string
+	RuntimeSocketFlag string
+)
+
+type SchedulerPolicyName string
+
+const (
+	// NodeSchedulerPolicyBinpack is node use binpack scheduler policy.
+	NodeSchedulerPolicyBinpack SchedulerPolicyName = "binpack"
+	// NodeSchedulerPolicySpread is node use spread scheduler policy.
+	NodeSchedulerPolicySpread SchedulerPolicyName = "spread"
+	// GPUSchedulerPolicyBinpack is GPU use binpack scheduler.
+	GPUSchedulerPolicyBinpack SchedulerPolicyName = "binpack"
+	// GPUSchedulerPolicySpread is GPU use spread scheduler.
+	GPUSchedulerPolicySpread SchedulerPolicyName = "spread"
+	// GPUSchedulerPolicyTopology is GPU use topology scheduler.
+	GPUSchedulerPolicyTopology SchedulerPolicyName = "topology-aware"
+)
+
+const (
+	// NodeSchedulerPolicyAnnotationKey is user set Pod annotation to change this default node policy.
+	NodeSchedulerPolicyAnnotationKey = "hami.io/node-scheduler-policy"
+	// GPUSchedulerPolicyAnnotationKey is user set Pod annotation to change this default GPU policy.
+	GPUSchedulerPolicyAnnotationKey = "hami.io/gpu-scheduler-policy"
+)
+
+func (s SchedulerPolicyName) String() string {
+	return string(s)
+}
+
+const (
+	Weight int = 10
+)
+
+type DeviceInfo struct {
+	ID              string          `json:"id,omitempty"`
+	Index           uint            `json:"index,omitempty"`
+	Count           int32           `json:"count,omitempty"`
+	Devmem          int32           `json:"devmem,omitempty"`
+	Devcore         int32           `json:"devcore,omitempty"`
+	Type            string          `json:"type,omitempty"`
+	Numa            int             `json:"numa,omitempty"`
+	Mode            string          `json:"mode,omitempty"`
+	Health          bool            `json:"health,omitempty"`
+	DeviceVendor    string          `json:"devicevendor,omitempty"`
+	CustomInfo      map[string]any  `json:"custominfo,omitempty"`
+}
