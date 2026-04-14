@@ -101,6 +101,9 @@ func WithResource(res string) AMDGPUPluginOption {
 // method could be used to prepare resources before they are offered
 // to Kubernetes.
 func (p *AMDGPUPlugin) Start() error {
+	if utils.GetClient() == nil {
+		utils.InitGlobalClient()
+	}
 	p.signal = make(chan os.Signal, 1)
 	if p.disableWatchAndRegister == nil {
 		p.disableWatchAndRegister = make(chan bool, 1)
@@ -215,27 +218,15 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	for _, key := range keys {
 		deviceData := p.AMDGPUs[key]
 
-		renderD, _ := deviceData["renderD"].(int)
 		card, _ := deviceData["card"].(int)
-		devID, _ := deviceData["devID"].(string)
-		nodeID, _ := deviceData["nodeId"].(int)
 		numa, _ := deviceData["numaNode"].(int)
-		computePT, _ := deviceData["computePartitionType"].(string)
-		memoryPT, _ := deviceData["memoryPartitionType"].(string)
 
 		// UUID: node name + topology key (PCIe BDF or platform id, same as ListAndWatch Device.ID / AMDGPUs map key).
 		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, key)
-		// Keep only required fields in DeviceInfo; avoid duplicating device/node details in CustomInfo.
-		_ = card
-		_ = devID
-		_ = nodeID
-		_ = computePT
-		_ = memoryPT
-		_ = gpuNodeLabels
 
 		out = append(out, &utils.DeviceInfo{
 			ID:           uuid,
-			Index:        uint(renderD),
+			Index:        uint(card),
 			Count:        defaultSplitCount,
 			Devmem:       vramMiB,
 			Devcore:      cuCount,
@@ -378,17 +369,19 @@ func getDevices() []*allocator.Device {
 	var deviceList []*allocator.Device
 
 	for id, deviceData := range devices {
-		device := &allocator.Device{
-			Id:                   id,
-			Card:                 deviceData["card"].(int),
-			RenderD:              deviceData["renderD"].(int),
-			DevId:                deviceData["devID"].(string),
-			ComputePartitionType: deviceData["computePartitionType"].(string),
-			MemoryPartitionType:  deviceData["memoryPartitionType"].(string),
-			NodeId:               deviceData["nodeId"].(int),
-			NumaNode:             deviceData["numaNode"].(int),
+		for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+			device := &allocator.Device{
+				Id:                   fmt.Sprintf("%s#%d", id, splitIdx),
+				Card:                 deviceData["card"].(int),
+				RenderD:              deviceData["renderD"].(int),
+				DevId:                deviceData["devID"].(string),
+				ComputePartitionType: deviceData["computePartitionType"].(string),
+				MemoryPartitionType:  deviceData["memoryPartitionType"].(string),
+				NodeId:               deviceData["nodeId"].(int),
+				NumaNode:             deviceData["numaNode"].(int),
+			}
+			deviceList = append(deviceList, device)
 		}
-		deviceList = append(deviceList, device)
 	}
 	return deviceList
 }
@@ -523,7 +516,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 
 	glog.Infof("Found %d AMDGPUs", len(p.AMDGPUs))
 
-	devs := make([]*pluginapi.Device, len(p.AMDGPUs))
+	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*defaultSplitCount)
 	var isHomogeneous bool
 	isHomogeneous = amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
@@ -532,15 +525,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	if isHomogeneous {
 		// limit scope for hwloc
 		func() {
-			i := 0
 			for id, device := range p.AMDGPUs {
-				dev := &pluginapi.Device{
-					ID:     id,
-					Health: pluginapi.Healthy,
-				}
-				devs[i] = dev
-				i++
-
 				numas := []int64{int64(device["numaNode"].(int))}
 				glog.Infof("Watching GPU with bus ID: %s NUMA Node: %+v", id, numas)
 
@@ -551,8 +536,15 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 					}
 				}
 
-				dev.Topology = &pluginapi.TopologyInfo{
-					Nodes: numaNodes,
+				for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+					dev := &pluginapi.Device{
+						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
+						Health: pluginapi.Healthy,
+						Topology: &pluginapi.TopologyInfo{
+							Nodes: numaNodes,
+						},
+					}
+					devs = append(devs, dev)
 				}
 			}
 		}()
@@ -560,14 +552,6 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	} else {
 		func() {
 			for id, device := range p.AMDGPUs {
-				dev := &pluginapi.Device{
-					ID:     id,
-					Health: pluginapi.Healthy,
-				}
-				// Append a device belonging to a certain partition type to its respective list
-				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
-				resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], dev)
-
 				numas := []int64{int64(device["numaNode"].(int))}
 				glog.Infof("Watching GPU with bus ID: %s NUMA Node: %+v", id, numas)
 
@@ -578,8 +562,17 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 					}
 				}
 
-				dev.Topology = &pluginapi.TopologyInfo{
-					Nodes: numaNodes,
+				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
+				for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+					dev := &pluginapi.Device{
+						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
+						Health: pluginapi.Healthy,
+						Topology: &pluginapi.TopologyInfo{
+							Nodes: numaNodes,
+						},
+					}
+					// Append a split device belonging to this partition type.
+					resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], dev)
 				}
 			}
 		}()
@@ -849,9 +842,6 @@ func (p *AMDGPUPlugin) runPodInformer() {
 	if nodeName == "" {
 		glog.Warningf("%s is empty, skip pod informer for cu allocation", utils.NodeNameEnvName)
 		return
-	}
-	if utils.GetClient() == nil {
-		utils.InitGlobalClient()
 	}
 
 	selector := fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
