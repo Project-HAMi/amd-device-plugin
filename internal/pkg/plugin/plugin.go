@@ -752,7 +752,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		}
 
 		if len(devreq) > 0 {
-			containerMask := ""
+			hsaCuSets := make([]string, 0, len(devreq))
 			for _, d := range devreq {
 				if d.UUID == "" {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
@@ -760,7 +760,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				}
 			}
 
-			for _, d := range devreq {
+			for i, d := range devreq {
 				totalCUs, err := p.getDeviceTotalCUs(d.UUID)
 				if err != nil {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
@@ -782,12 +782,13 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				}
 
 				deltaHex := cuallocation.ConvertAllocationToHex(deltaAllocation)
-				if containerMask == "" {
-					containerMask = deltaHex
-				} else if containerMask != deltaHex {
-					utils.PodAllocationFailed(nodename, current, NodeLockName)
-					return &pluginapi.AllocateResponse{}, fmt.Errorf("multiple devices have different cu masks (%s vs %s), but ROC_GLOBAL_CU_MASK is shared per container", containerMask, deltaHex)
+				trimmedHex := strings.TrimLeft(strings.ToUpper(deltaHex), "0")
+				if trimmedHex == "" {
+					trimmedHex = "0"
 				}
+				// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
+				// Use container-local device index as GPU_list and hex bitmap as CU_list.
+				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:0x%s", i, trimmedHex))
 
 				if oldHex, ok := podCuAllocHex[d.UUID]; ok && strings.TrimSpace(oldHex) != "" {
 					oldAllocation, err := cuallocation.ConvertHexToAllocation(oldHex)
@@ -805,7 +806,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					podCuAllocHex[d.UUID] = deltaHex
 				}
 			}
-			car.Envs["ROC_GLOBAL_CU_MASK"] = containerMask
+			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 		}
 
