@@ -28,17 +28,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/ROCm/k8s-device-plugin/internal/pkg/allocator"
 	"github.com/ROCm/k8s-device-plugin/internal/pkg/amdgpu"
+	"github.com/ROCm/k8s-device-plugin/internal/pkg/cuallocation"
 	"github.com/ROCm/k8s-device-plugin/internal/pkg/exporter"
 	"github.com/ROCm/k8s-device-plugin/internal/pkg/utils"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/cuallocation"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	"golang.org/x/net/context"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -56,6 +63,9 @@ type AMDGPUPlugin struct {
 	devAllocator       allocator.Policy
 	allocatorInitError bool
 	cuAllocation       map[string]cuallocation.Allocation // device ID -> cu allocation
+	cuAllocationMu     sync.RWMutex // protects cuAllocation map reads/writes
+	cuAllocationLocks  sync.Map     // map[uuid]*sync.Mutex, lock granularity per device
+	podInformerStopCh  chan struct{}
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -98,6 +108,12 @@ func (p *AMDGPUPlugin) Start() error {
 	if p.ackDisableWatchAndRegister == nil {
 		p.ackDisableWatchAndRegister = make(chan bool, 1)
 	}
+	if p.cuAllocation == nil {
+		p.cuAllocation = make(map[string]cuallocation.Allocation)
+	}
+	if p.podInformerStopCh == nil {
+		p.podInformerStopCh = make(chan struct{})
+	}
 	signal.Notify(p.signal, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	err := p.devAllocator.Init(getDevices(), "")
 	if err != nil {
@@ -109,12 +125,22 @@ func (p *AMDGPUPlugin) Start() error {
 		p.WatchAndRegister(p.disableWatchAndRegister, p.ackDisableWatchAndRegister)
 	}()
 
+	// Ensure deviceCache is initialized before informer starts handling pod events.
+	if err := p.RegisterInAnnotation(); err != nil {
+		return fmt.Errorf("initialize device cache before pod informer: %w", err)
+	}
+	if err := p.initCuAllocationForDevices(p.deviceCache); err != nil {
+		return fmt.Errorf("initialize cu allocation map before pod informer: %w", err)
+	}
+	go p.runPodInformer()
+
 	return nil
 }
 
 const (
 	registerAnnosKey        = "amd.com/register-gpus"
 	registerGPUPairScoreKey = "amd.com/gpu-pair-score"
+	NodeLockName            = "hami.io/mutex.lock"
 )
 
 func (p *AMDGPUPlugin) RegisterInAnnotation() error {
@@ -197,8 +223,8 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		computePT, _ := deviceData["computePartitionType"].(string)
 		memoryPT, _ := deviceData["memoryPartitionType"].(string)
 
-		// UUID format must include renderD + node name (Allocate mapping + unique in cluster).
-		uuid := fmt.Sprintf("%s-renderD%d", nodeName, renderD)
+		// UUID: node name + topology key (PCIe BDF or platform id, same as ListAndWatch Device.ID / AMDGPUs map key).
+		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, key)
 		// Keep only required fields in DeviceInfo; avoid duplicating device/node details in CustomInfo.
 		_ = card
 		_ = devID
@@ -372,6 +398,14 @@ func getDevices() []*allocator.Device {
 // plugin is unregistered from kubelet. This method could be used to tear
 // down resources.
 func (p *AMDGPUPlugin) Stop() error {
+	if p.podInformerStopCh != nil {
+		select {
+		case <-p.podInformerStopCh:
+			// already closed
+		default:
+			close(p.podInformerStopCh)
+		}
+	}
 	return nil
 }
 
@@ -607,56 +641,593 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 	return response, nil
 }
 
+// allocationUUIDSep separates node name from the local topology key in DeviceInfo.ID / scheduler UUIDs.
+const allocationUUIDSep = "~"
+
+// deviceDataFromAllocationUUID resolves amdgpu topology for a scheduler/device allocation UUID:
+// "<nodeName>~<topoKey>" where topoKey matches p.AMDGPUs (e.g. PCIe "0000:19:00.0").
+func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, expectNode string) (map[string]interface{}, error) {
+	sep := strings.Index(uuid, allocationUUIDSep)
+	if sep <= 0 {
+		return nil, fmt.Errorf("invalid allocation UUID %q (expected \"<nodeName>%s<topoKey>\")", uuid, allocationUUIDSep)
+	}
+	nodeInUUID := uuid[:sep]
+	topoKey := uuid[sep+len(allocationUUIDSep):]
+	if topoKey == "" {
+		return nil, fmt.Errorf("invalid allocation UUID %q (empty topology key)", uuid)
+	}
+	if expectNode != "" && nodeInUUID != expectNode {
+		return nil, fmt.Errorf("allocation UUID node %q does not match this node %q", nodeInUUID, expectNode)
+	}
+	d, ok := p.AMDGPUs[topoKey]
+	if !ok {
+		return nil, fmt.Errorf("no local GPU topology entry for key %q (UUID %q)", topoKey, uuid)
+	}
+	return d, nil
+}
+
 // Allocate is called during container creation so that the Device
 // Plugin can run device specific operations and instruct Kubelet
 // of the steps to make the Device available in the container
 func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
-	var response pluginapi.AllocateResponse
-	var car pluginapi.ContainerAllocateResponse
-	var dev *pluginapi.DeviceSpec
+	response := &pluginapi.AllocateResponse{}
 
-	err := p.syncCUAllocation()
+	// resolve device allocation from annotation
+	glog.Infof("Allocate request: %+v", r)
+	nodename := os.Getenv(utils.NodeNameEnvName)
+	current, err := utils.GetPendingPod(ctx, nodename)
 	if err != nil {
-		glog.Errorf("unable to sync cu allocation: %v", err)
-		return nil, fmt.Errorf("unable to sync cu allocation: %v", err)
+		return &pluginapi.AllocateResponse{}, err
 	}
-	for _, req := range r.ContainerRequests {
-		car = pluginapi.ContainerAllocateResponse{}
+	podDevices := current.Annotations[utils.DeviceAllocation]
+	podCuAllocHex := map[string]string{}
+	if raw := strings.TrimSpace(current.Annotations[utils.CuAllocation]); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &podCuAllocHex); err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("parse existing %s: %w", utils.CuAllocation, err)
+		}
+	}
+	// Take a read-only snapshot; Allocate only derives deltas and does not mutate global CU state.
+	cuAllocationSnapshot := make(map[string]cuallocation.Allocation, len(p.cuAllocation))
+	p.cuAllocationMu.RLock()
+	for uuid, allocation := range p.cuAllocation {
+		cuAllocationSnapshot[uuid] = append(cuallocation.Allocation(nil), allocation...)
+	}
+	p.cuAllocationMu.RUnlock()
+	hostHookPath := os.Getenv("HOST_HOOK_PATH")
+	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
-		// Currently, there are only 1 /dev/kfd per nodes regardless of the # of GPU available
-		// for compute/rocm/HSA use cases
-		dev = new(pluginapi.DeviceSpec)
-		dev.HostPath = "/dev/kfd"
-		dev.ContainerPath = "/dev/kfd"
-		dev.Permissions = "rw"
-		car.Devices = append(car.Devices, dev)
+	for idx := range r.ContainerRequests {
+		currentCtr, devreq, err := utils.GetNextDeviceRequest("amd", *current)
+		glog.Infof("deviceAllocateFromAnnotation(container=%s)=%+v", currentCtr.Name, devreq)
+		if err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, err
+		}
+		if len(devreq) != len(r.ContainerRequests[idx].DevicesIDs) {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("device number not matched")
+		}
 
-		for _, id := range req.DevicesIDs {
-			glog.Infof("Allocating device ID: %s", id)
+		car := pluginapi.ContainerAllocateResponse{
+			Envs: map[string]string{},
+		}
 
-			for k, v := range p.AMDGPUs[id] {
-				// Map struct previously only had 'card' and 'renderD' and only those are paths to be appended as before
-				if k != "card" && k != "renderD" {
-					continue
-				}
-				devpath := fmt.Sprintf("/dev/dri/%s%d", k, v)
-				dev = new(pluginapi.DeviceSpec)
-				dev.HostPath = devpath
-				dev.ContainerPath = devpath
-				dev.Permissions = "rw"
-				car.Devices = append(car.Devices, dev)
+		// KFD + DRI from annotation UUID topology.
+		car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
+			HostPath:      "/dev/kfd",
+			ContainerPath: "/dev/kfd",
+			Permissions:   "rw",
+		})
+		for _, d := range devreq {
+			glog.Infof("Allocating device from annotation UUID: %s", d.UUID)
+			deviceData, topoErr := p.deviceDataFromAllocationUUID(d.UUID, nodename)
+			if topoErr != nil {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, topoErr
+			}
+			cardMinor, cok := deviceData["card"].(int)
+			renderMinor, rok := deviceData["renderD"].(int)
+			if !cok || !rok {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, fmt.Errorf("invalid card/renderD in topology for UUID %q", d.UUID)
+			}
+			for _, pair := range []struct{ kind string; minor int }{
+				{"card", cardMinor},
+				{"renderD", renderMinor},
+			} {
+				devpath := fmt.Sprintf("/dev/dri/%s%d", pair.kind, pair.minor)
+				car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
+					HostPath:      devpath,
+					ContainerPath: devpath,
+					Permissions:   "rw",
+				})
 			}
 		}
+
+		err = utils.EraseNextDeviceTypeFromAnnotation("amd", *current)
+		if err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, err
+		}
+
+		if len(devreq) > 0 {
+			containerMask := ""
+			for _, d := range devreq {
+				if d.UUID == "" {
+					utils.PodAllocationFailed(nodename, current, NodeLockName)
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("empty device uuid in allocation request")
+				}
+			}
+
+			for _, d := range devreq {
+				totalCUs, err := p.getDeviceTotalCUs(d.UUID)
+				if err != nil {
+					utils.PodAllocationFailed(nodename, current, NodeLockName)
+					return &pluginapi.AllocateResponse{}, err
+				}
+				baseAllocation, ok := cuAllocationSnapshot[d.UUID]
+				if !ok {
+					baseAllocation, err = cuallocation.NewAllocation(totalCUs)
+					if err != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, err
+					}
+					cuAllocationSnapshot[d.UUID] = baseAllocation
+				}
+				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, int(d.Usedcores))
+				if err != nil {
+					utils.PodAllocationFailed(nodename, current, NodeLockName)
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
+				}
+
+				deltaHex := cuallocation.ConvertAllocationToHex(deltaAllocation)
+				if containerMask == "" {
+					containerMask = deltaHex
+				} else if containerMask != deltaHex {
+					utils.PodAllocationFailed(nodename, current, NodeLockName)
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("multiple devices have different cu masks (%s vs %s), but ROC_GLOBAL_CU_MASK is shared per container", containerMask, deltaHex)
+				}
+
+				if oldHex, ok := podCuAllocHex[d.UUID]; ok && strings.TrimSpace(oldHex) != "" {
+					oldAllocation, err := cuallocation.ConvertHexToAllocation(oldHex)
+					if err != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("decode existing pod cu allocation for %s: %w", d.UUID, err)
+					}
+					mergedAllocation, err := cuallocation.AddAllocation(oldAllocation, totalCUs, deltaAllocation)
+					if err != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("merge pod cu allocation for %s: %w", d.UUID, err)
+					}
+					podCuAllocHex[d.UUID] = cuallocation.ConvertAllocationToHex(mergedAllocation)
+				} else {
+					podCuAllocHex[d.UUID] = deltaHex
+				}
+			}
+			car.Envs["ROC_GLOBAL_CU_MASK"] = containerMask
+			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
+		}
+
+		car.Mounts = append(car.Mounts,
+			&pluginapi.Mount{
+				ContainerPath: fmt.Sprintf("%s/vgpu/libamvgpu.so", hostHookPath),
+				HostPath:      hostHookPath + "/vgpu/libamvgpu.so",
+				ReadOnly:      true,
+			},
+		)
+		car.Mounts = append(car.Mounts, &pluginapi.Mount{
+			ContainerPath: "/etc/ld.so.preload",
+			HostPath:      hostHookPath + "/vgpu/ld.so.preload",
+			ReadOnly:      true,
+		})
 
 		response.ContainerResponses = append(response.ContainerResponses, &car)
 	}
 
-	return &response, nil
+	if len(podCuAllocHex) > 0 {
+		b, err := json.Marshal(podCuAllocHex)
+		if err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("marshal %s: %w", utils.CuAllocation, err)
+		}
+		if err := utils.PatchPodAnnotations(current, map[string]string{utils.CuAllocation: string(b)}); err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w", utils.CuAllocation, err)
+		}
+	}
+
+	glog.Infoln("Allocate Response", response.ContainerResponses)
+	utils.PodAllocationTrySuccess(nodename, podDevices, NodeLockName, current)
+
+	return response, nil
 }
 
-// syncCUAllocation syncs the cu allocation from the node pods to the plugin
-func (p *AMDGPUPlugin) syncCUAllocation() error {
+func (p *AMDGPUPlugin) runPodInformer() {
+	nodeName := os.Getenv(utils.NodeNameEnvName)
+	if nodeName == "" {
+		glog.Warningf("%s is empty, skip pod informer for cu allocation", utils.NodeNameEnvName)
+		return
+	}
+	if utils.GetClient() == nil {
+		utils.InitGlobalClient()
+	}
+
+	selector := fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
+	lw := &cache.ListWatch{
+		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			options.FieldSelector = selector
+			return utils.GetClient().CoreV1().Pods("").List(context.TODO(), options)
+		},
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			options.FieldSelector = selector
+			return utils.GetClient().CoreV1().Pods("").Watch(context.TODO(), options)
+		},
+	}
+
+	_, controller := cache.NewInformer(
+		lw,
+		&corev1.Pod{},
+		0,
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				p.onPodAdd(obj)
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				p.onPodUpdate(oldObj, newObj)
+			},
+			DeleteFunc: func(obj interface{}) {
+				p.onPodDelete(obj)
+			},
+		},
+	)
+	controller.Run(p.podInformerStopCh)
+}
+
+func (p *AMDGPUPlugin) onPodAdd(obj interface{}) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok || pod == nil {
+		return
+	}
+	if !hasCuAllocation(pod.Annotations) {
+		return
+	}
+	key := pod.Namespace + "/" + pod.Name
+	allocs, err := parseCuAllocation(pod.Annotations)
+	if err != nil {
+		glog.Warningf("skip pod add %s: %v", key, err)
+		return
+	}
+	uuids := sortedMapKeysStr(allocs)
+	unlock := p.lockDeviceAllocations(uuids...)
+	defer unlock()
+
+	for _, uuid := range uuids {
+		allocation := allocs[uuid]
+		totalCUs, err := p.getDeviceTotalCUs(uuid)
+		if err != nil {
+			glog.Errorf("unable to get total CUs for %s: %v", uuid, err)
+			return
+		}
+		current, err := p.ensureDeviceAllocation(uuid, totalCUs)
+		if err != nil {
+			glog.Errorf("unable to initialize cu allocation for %s: %v", uuid, err)
+			return
+		}
+		newAllocation, err := cuallocation.AddAllocation(current, totalCUs, allocation)
+		if err != nil {
+			if isAlreadyAllocatedErr(err) {
+				glog.V(4).Infof("cu allocation for %s already accounted, skip add", uuid)
+				continue
+			}
+			glog.Errorf("unable to add cu allocation for %s: %v", uuid, err)
+			return
+		}
+		p.setDeviceAllocation(uuid, newAllocation)
+	}
+}
+
+func (p *AMDGPUPlugin) onPodUpdate(oldObj, newObj interface{}) {
+	oldPod, okOld := oldObj.(*corev1.Pod)
+	newPod, okNew := newObj.(*corev1.Pod)
+	if !okOld || !okNew || oldPod == nil || newPod == nil {
+		return
+	}
+	oldHas := hasCuAllocation(oldPod.Annotations)
+	newHas := hasCuAllocation(newPod.Annotations)
+	if !oldHas && !newHas {
+		return
+	}
+
+	key := newPod.Namespace + "/" + newPod.Name
+	var (
+		oldAllocs map[string]cuallocation.Allocation
+		newAllocs map[string]cuallocation.Allocation
+		err       error
+	)
+	if oldHas {
+		oldAllocs, err = parseCuAllocation(oldPod.Annotations)
+		if err != nil {
+			glog.Warningf("skip pod update %s (parse old): %v", key, err)
+			return
+		}
+	}
+	if newHas {
+		newAllocs, err = parseCuAllocation(newPod.Annotations)
+		if err != nil {
+			glog.Warningf("skip pod update %s (parse new): %v", key, err)
+			return
+		}
+	}
+
+	unlock := p.lockDeviceAllocations(allocationUUIDsForLock(oldHas, newHas, oldAllocs, newAllocs)...)
+ 	defer unlock()
+
+	if oldHas {
+		for _, uuid := range sortedMapKeysStr(oldAllocs) {
+			current, ok := p.getDeviceAllocation(uuid)
+			if !ok {
+				glog.Warningf("skip pod update %s: uuid %s not found in allocation map", key, uuid)
+				return
+			}
+			oldTotalCUs, totalErr := p.getDeviceTotalCUs(uuid)
+			if totalErr != nil {
+				glog.Errorf("unable to get total CUs for %s: %v", uuid, totalErr)
+				return
+			}
+			updated, releaseErr := cuallocation.ReleaseAllocation(current, oldTotalCUs, oldAllocs[uuid])
+			if releaseErr != nil {
+				glog.Errorf("unable to release cu allocation for %s: %v", uuid, releaseErr)
+				return
+			}
+			p.setDeviceAllocation(uuid, updated)
+		}
+	}
+
+	if newHas {
+		for _, uuid := range sortedMapKeysStr(newAllocs) {
+			newTotalCUs, totalErr := p.getDeviceTotalCUs(uuid)
+			if totalErr != nil {
+				glog.Errorf("unable to get total CUs for %s: %v", uuid, totalErr)
+				return
+			}
+			current, ensureErr := p.ensureDeviceAllocation(uuid, newTotalCUs)
+			if ensureErr != nil {
+				glog.Errorf("unable to initialize cu allocation for %s: %v", uuid, ensureErr)
+				return
+			}
+			updated, addErr := cuallocation.AddAllocation(current, newTotalCUs, newAllocs[uuid])
+			if addErr != nil {
+				if isAlreadyAllocatedErr(addErr) {
+					glog.V(4).Infof("cu allocation for %s already accounted, skip add", uuid)
+					continue
+				}
+				glog.Errorf("unable to add cu allocation for %s: %v", uuid, addErr)
+				return
+			}
+			p.setDeviceAllocation(uuid, updated)
+		}
+	}
+}
+
+func (p *AMDGPUPlugin) onPodDelete(obj interface{}) {
+	var pod *corev1.Pod
+	switch t := obj.(type) {
+	case *corev1.Pod:
+		pod = t
+	case cache.DeletedFinalStateUnknown:
+		if p, ok := t.Obj.(*corev1.Pod); ok {
+			pod = p
+		}
+	}
+	if pod == nil {
+		return
+	}
+	if !hasCuAllocation(pod.Annotations) {
+		return
+	}
+	key := pod.Namespace + "/" + pod.Name
+	allocs, err := parseCuAllocation(pod.Annotations)
+	if err != nil {
+		glog.Warningf("skip pod delete %s: %v", key, err)
+		return
+	}
+	uuids := sortedMapKeysStr(allocs)
+	unlock := p.lockDeviceAllocations(uuids...)
+	defer unlock()
+
+	for _, uuid := range uuids {
+		allocation := allocs[uuid]
+		current, ok := p.getDeviceAllocation(uuid)
+		if !ok {
+			glog.Warningf("skip pod delete %s: uuid %s not found in allocation map", key, uuid)
+			return
+		}
+		totalCUs, err := p.getDeviceTotalCUs(uuid)
+		if err != nil {
+			glog.Errorf("unable to get total CUs for %s: %v", uuid, err)
+			return
+		}
+		newAllocation, err := cuallocation.ReleaseAllocation(current, totalCUs, allocation)
+		if err != nil {
+			glog.Errorf("unable to release cu allocation for %s: %v", uuid, err)
+			return
+		}
+		p.setDeviceAllocation(uuid, newAllocation)
+	}
+}
+
+func hasCuAllocation(annotations map[string]string) bool {
+	if annotations == nil {
+		return false
+	}
+	_, ok := annotations[utils.CuAllocation]
+	return ok
+}
+
+func (p *AMDGPUPlugin) ensureDeviceAllocation(uuid string, totalCUs int) (cuallocation.Allocation, error) {
+	if allocation, ok := p.getDeviceAllocation(uuid); ok {
+		return allocation, nil
+	}
+	allocation, err := cuallocation.NewAllocation(totalCUs)
+	if err != nil {
+		return nil, err
+	}
+	p.setDeviceAllocation(uuid, allocation)
+	return allocation, nil
+}
+
+func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
+	for _, d := range p.deviceCache {
+		if d == nil || d.ID != uuid {
+			continue
+		}
+		if d.Devcore <= 0 {
+			return 0, fmt.Errorf("invalid cu count for device %s: %d", uuid, d.Devcore)
+		}
+		return int(d.Devcore), nil
+	}
+	return 0, fmt.Errorf("device %s not found in device cache", uuid)
+}
+
+func (p *AMDGPUPlugin) initCuAllocationForDevices(devices []*utils.DeviceInfo) error {
+	for _, d := range devices {
+		if d == nil || d.ID == "" {
+			continue
+		}
+		if d.Devcore <= 0 {
+			return fmt.Errorf("invalid cu count for device %s: %d", d.ID, d.Devcore)
+		}
+
+		unlock := p.lockDeviceAllocations(d.ID)
+		if _, ok := p.getDeviceAllocation(d.ID); !ok {
+			allocation, err := cuallocation.NewAllocation(int(d.Devcore))
+			if err != nil {
+				unlock()
+				return fmt.Errorf("create allocation for device %s: %w", d.ID, err)
+			}
+			p.setDeviceAllocation(d.ID, allocation)
+		}
+		unlock()
+	}
 	return nil
+}
+
+func (p *AMDGPUPlugin) getDeviceAllocation(uuid string) (cuallocation.Allocation, bool) {
+	p.cuAllocationMu.RLock()
+	defer p.cuAllocationMu.RUnlock()
+	allocation, ok := p.cuAllocation[uuid]
+	return allocation, ok
+}
+
+func (p *AMDGPUPlugin) setDeviceAllocation(uuid string, allocation cuallocation.Allocation) {
+	p.cuAllocationMu.Lock()
+	defer p.cuAllocationMu.Unlock()
+	p.cuAllocation[uuid] = allocation
+}
+
+func (p *AMDGPUPlugin) lockDeviceAllocations(uuids ...string) func() {
+	uniq := make(map[string]struct{}, len(uuids))
+	sortedUUIDs := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		if uuid == "" {
+			continue
+		}
+		if _, ok := uniq[uuid]; ok {
+			continue
+		}
+		uniq[uuid] = struct{}{}
+		sortedUUIDs = append(sortedUUIDs, uuid)
+	}
+	sort.Strings(sortedUUIDs)
+
+	locks := make([]*sync.Mutex, 0, len(sortedUUIDs))
+	for _, uuid := range sortedUUIDs {
+		lock := p.getDeviceLock(uuid)
+		lock.Lock()
+		locks = append(locks, lock)
+	}
+	return func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			locks[i].Unlock()
+		}
+	}
+}
+
+func (p *AMDGPUPlugin) getDeviceLock(uuid string) *sync.Mutex {
+	lock, _ := p.cuAllocationLocks.LoadOrStore(uuid, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// sortedMapKeysStr returns map keys sorted for stable lock order and iteration.
+func sortedMapKeysStr(m map[string]cuallocation.Allocation) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func allocationUUIDsForLock(oldHas, newHas bool, oldAllocs, newAllocs map[string]cuallocation.Allocation) []string {
+	uniq := make(map[string]struct{})
+	if oldHas && oldAllocs != nil {
+		for k := range oldAllocs {
+			uniq[k] = struct{}{}
+		}
+	}
+	if newHas && newAllocs != nil {
+		for k := range newAllocs {
+			uniq[k] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(uniq))
+	for k := range uniq {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isAlreadyAllocatedErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "add delta contains allocated bits")
+}
+
+// parseCuAllocation decodes utils.CuAllocation as JSON:
+//
+//	{ "<device-uuid>": "<hex-bitmap>", ... }
+//
+// device-uuid must match DeviceInfo.ID (e.g. "node~0000:19:00.0"); hex is cuallocation.ConvertHexToAllocation format.
+func parseCuAllocation(annotations map[string]string) (map[string]cuallocation.Allocation, error) {
+	if annotations == nil {
+		return nil, fmt.Errorf("nil annotations")
+	}
+	raw := strings.TrimSpace(annotations[utils.CuAllocation])
+	if raw == "" {
+		return nil, fmt.Errorf("empty %s", utils.CuAllocation)
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("parse %s JSON: %w", utils.CuAllocation, err)
+	}
+	if len(m) == 0 {
+		return nil, fmt.Errorf("no entries in %s", utils.CuAllocation)
+	}
+	out := make(map[string]cuallocation.Allocation, len(m))
+	for uuid, hex := range m {
+		if uuid == "" {
+			return nil, fmt.Errorf("empty device uuid key in %s", utils.CuAllocation)
+		}
+		alloc, err := cuallocation.ConvertHexToAllocation(hex)
+		if err != nil {
+			return nil, fmt.Errorf("device %q: %w", uuid, err)
+		}
+		out[uuid] = alloc
+	}
+	return out, nil
 }
 
 // Lister serves as an interface between imlementation and Manager machinery. User passes

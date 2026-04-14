@@ -247,3 +247,88 @@ func IsPodTerminating(pod *corev1.Pod) bool {
 func AllContainersCreated(pod *corev1.Pod) bool {
 	return len(pod.Status.ContainerStatuses) >= len(pod.Spec.Containers)
 }
+
+func PodAllocationTrySuccess(nodeName string, devName string, lockName string, pod *corev1.Pod) {
+	refreshed, err := GetClient().CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("Error getting pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return
+	}
+	annos := refreshed.Annotations[DeviceToAllocate]
+	klog.Infof("Trying allocation success: %s", annos)
+	if strings.Contains(annos, devName) {
+		return
+	}
+	klog.Infof("All devices allocate success, releasing lock")
+	PodAllocationSuccess(nodeName, pod, lockName)
+}
+
+func PodAllocationSuccess(nodeName string, pod *corev1.Pod, lockName string) {
+	klog.Infof("Pod allocation successful for pod %s/%s on node %s", pod.Namespace, pod.Name, nodeName)
+	updatePodAnnotationsAndReleaseLock(nodeName, pod, lockName, DeviceBindSuccess)
+}
+
+func updatePodAnnotationsAndReleaseLock(nodeName string, pod *corev1.Pod, lockName string, deviceBindPhase string) {
+	newAnnos := map[string]string{DeviceBindPhase: deviceBindPhase}
+	if err := PatchPodAnnotations(pod, newAnnos); err != nil {
+		klog.Errorf("Failed to patch pod annotations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return
+	}
+	if err := ReleaseNodeLock(nodeName, lockName, pod, false); err != nil {
+		klog.Errorf("Failed to release node lock for node %s and lock %s: %v", nodeName, lockName, err)
+	}
+}
+
+func PodAllocationFailed(nodeName string, pod *corev1.Pod, lockName string) {
+	klog.Infof("Pod allocation failed for pod %s/%s on node %s", pod.Namespace, pod.Name, nodeName)
+	updatePodAnnotationsAndReleaseLock(nodeName, pod, lockName, DeviceBindFailed)
+}
+
+func GetNextDeviceRequest(dtype string, p corev1.Pod) (corev1.Container, ContainerDevices, error) {
+	pdevices, err := DecodePodDevices(InRequestDevices, p.Annotations)
+	if err != nil {
+		return corev1.Container{}, ContainerDevices{}, err
+	}
+	klog.Infof("pod annotation decode value is %+v", pdevices)
+	res := ContainerDevices{}
+
+	pd, ok := pdevices[dtype]
+	if !ok {
+		return corev1.Container{}, res, fmt.Errorf("device request not found")
+	}
+	for ctridx, ctrDevice := range pd {
+		if len(ctrDevice) > 0 {
+			return p.Spec.Containers[ctridx], ctrDevice, nil
+		}
+	}
+	return corev1.Container{}, res, fmt.Errorf("device request not found")
+}
+
+func EraseNextDeviceTypeFromAnnotation(dtype string, p corev1.Pod) error {
+	pdevices, err := DecodePodDevices(InRequestDevices, p.Annotations)
+	if err != nil {
+		return err
+	}
+	res := PodSingleDevice{}
+	pd, ok := pdevices[dtype]
+	if !ok {
+		return fmt.Errorf("erase device annotation not found")
+	}
+	found := false
+	for _, val := range pd {
+		if found {
+			res = append(res, val)
+		} else {
+			if len(val) > 0 {
+				found = true
+				res = append(res, ContainerDevices{})
+			} else {
+				res = append(res, val)
+			}
+		}
+	}
+	klog.Infoln("After erase res=", res)
+	newannos := make(map[string]string)
+	newannos[InRequestDevices[dtype]] = EncodePodSingleDevice(res)
+	return PatchPodAnnotations(&p, newannos)
+}

@@ -16,11 +16,23 @@ limitations under the License.
 
 package utils
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/golang/glog"
+)
+
 const (
 	AssignedTimeAnnotations = "hami.io/vgpu-time"
 	AssignedNodeAnnotations = "hami.io/vgpu-node"
 	BindTimeAnnotations     = "hami.io/bind-time"
 	DeviceBindPhase         = "hami.io/bind-phase"
+	DeviceAllocation        = "hami.io/amd-devices-allocated"
+	DeviceToAllocate        = "hami.io/amd-devices-to-allocate"
+	// CuAllocation is JSON: { "<device-uuid>": "<hex-bitmap>", ... } with device-uuid matching DeviceInfo.ID (e.g. node~PCI-BDF).
+	CuAllocation = "hami.io/amd-cu-allocated"
 
 	DeviceBindAllocating = "allocating"
 	DeviceBindFailed     = "failed"
@@ -100,4 +112,148 @@ type DeviceInfo struct {
 	Health          bool            `json:"health,omitempty"`
 	DeviceVendor    string          `json:"devicevendor,omitempty"`
 	CustomInfo      map[string]any  `json:"custominfo,omitempty"`
+}
+
+type ContainerDevice struct {
+	// TODO current Idx cannot use, because EncodeContainerDevices method not encode this filed.
+	Idx        int
+	UUID       string
+	Type       string
+	Usedmem    int32
+	Usedcores  int32
+	CustomInfo map[string]any
+}
+
+type ContainerDeviceRequest struct {
+	Nums             int32
+	Type             string
+	Memreq           int32
+	MemPercentagereq int32
+	Coresreq         int32
+}
+
+type ContainerDevices []ContainerDevice
+type ContainerDeviceRequests map[string]ContainerDeviceRequest
+
+// type ContainerAllDevices map[string]ContainerDevices.
+type PodSingleDevice []ContainerDevices
+type PodDeviceRequests []ContainerDeviceRequests
+type PodDevices map[string]PodSingleDevice
+
+const (
+	// OneContainerMultiDeviceSplitSymbol this is when one container use multi device, use : symbol to join device info.
+	OneContainerMultiDeviceSplitSymbol = ":"
+
+	// OnePodMultiContainerSplitSymbol this is when one pod having multi container and more than one container use device, use ; symbol to join device info.
+	OnePodMultiContainerSplitSymbol = ";"
+)
+
+var (
+	GPUSchedulerPolicy string
+	InRequestDevices   map[string]string
+	SupportDevices     map[string]string
+)
+
+func init() {
+	InRequestDevices = make(map[string]string)
+	InRequestDevices["amd"] = DeviceToAllocate
+	SupportDevices = make(map[string]string)
+	SupportDevices["amd"] = DeviceAllocation
+}
+
+func DecodeContainerDevices(str string) (ContainerDevices, error) {
+	if len(str) == 0 {
+		return ContainerDevices{}, nil
+	}
+	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
+	contdev := ContainerDevices{}
+	tmpdev := ContainerDevice{}
+	glog.V(5).Infof("Start to decode container device %s", str)
+	for _, val := range cd {
+		if strings.Contains(val, ",") {
+			//fmt.Println("cd is ", val)
+			tmpstr := strings.Split(val, ",")
+			if len(tmpstr) < 4 {
+				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
+			}
+			tmpdev.UUID = tmpstr[0]
+			tmpdev.Type = tmpstr[1]
+			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
+			tmpdev.Usedmem = int32(devmem)
+			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
+			tmpdev.Usedcores = int32(devcores)
+			contdev = append(contdev, tmpdev)
+		}
+	}
+	glog.V(5).Infof("Finished decoding container devices. Total devices: %d", len(contdev))
+	return contdev, nil
+}
+
+func DecodePodDevices(checklist map[string]string, annos map[string]string) (PodDevices, error) {
+	glog.V(5).Infof("checklist is [%+v], annos is [%+v]", checklist, annos)
+	if len(annos) == 0 {
+		return PodDevices{}, nil
+	}
+	pd := make(PodDevices)
+	for devID, devs := range checklist {
+		str, ok := annos[devs]
+		if !ok {
+			continue
+		}
+		pd[devID] = make(PodSingleDevice, 0)
+		for s := range strings.SplitSeq(str, OnePodMultiContainerSplitSymbol) {
+			cd, err := DecodeContainerDevices(s)
+			if err != nil {
+				return PodDevices{}, nil
+			}
+			if len(cd) == 0 {
+				continue
+			}
+			pd[devID] = append(pd[devID], cd)
+		}
+	}
+	glog.V(5).Infof("Decoded pod annos, poddevices: %+v", pd)
+	return pd, nil
+}
+
+func EncodeContainerDevices(cd ContainerDevices) string {
+	tmp := ""
+	for _, val := range cd {
+		tmp += val.UUID + "," + val.Type + "," + strconv.Itoa(int(val.Usedmem)) + "," + strconv.Itoa(int(val.Usedcores)) + OneContainerMultiDeviceSplitSymbol
+	}
+	glog.Infof("Encoded container Devices: %s", tmp)
+	return tmp
+	//return strings.Join(cd, ",")
+}
+
+func EncodeContainerDeviceType(cd ContainerDevices, t string) string {
+	tmp := ""
+	for _, val := range cd {
+		if strings.Compare(val.Type, t) == 0 {
+			tmp += val.UUID + "," + val.Type + "," + strconv.Itoa(int(val.Usedmem)) + "," + strconv.Itoa(int(val.Usedcores))
+		}
+		tmp += OneContainerMultiDeviceSplitSymbol
+	}
+	glog.Infof("Encoded container Certain Device type: %s->%s", t, tmp)
+	return tmp
+}
+
+func EncodePodSingleDevice(pd PodSingleDevice) string {
+	res := ""
+	for _, ctrdevs := range pd {
+		res = res + EncodeContainerDevices(ctrdevs)
+		res = res + OnePodMultiContainerSplitSymbol
+	}
+	glog.Infof("Encoded pod single devices %s", res)
+	return res
+}
+
+func EncodePodDevices(checklist map[string]string, pd PodDevices) map[string]string {
+	res := map[string]string{}
+	for devType, cd := range pd {
+		glog.Infoln("devtype=", devType)
+		res[checklist[devType]] = EncodePodSingleDevice(cd)
+	}
+	glog.Infof("Encoded pod Devices %s\n", res)
+	return res
 }
