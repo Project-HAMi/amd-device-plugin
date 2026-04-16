@@ -21,7 +21,6 @@ tags
 *.exe
 *.exe~
 *.dll
-*.so
 *.dylib
 
 # Vendor

@@ -34,6 +34,13 @@ spec:
       containers:
         - name: {{ .Chart.Name }}-dp-cntr
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: HOST_HOOK_PATH
+              value: {{ .Values.dp.hostHookPath | quote }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
@@ -43,6 +50,8 @@ spec:
               mountPath: /sys
             - name: health
               mountPath: /var/lib/amd-metrics-exporter/
+            - name: host-hook
+              mountPath: {{ .Values.dp.hostHookPath | quote }}
           resources:
             {{- toYaml .Values.dp.resources | nindent 12 }}
       volumes:
@@ -56,3 +65,7 @@ spec:
           hostPath:
             path: /var/lib/amd-metrics-exporter/
             type : DirectoryOrCreate
+        - name: host-hook
+          hostPath:
+            path: {{ .Values.dp.hostHookPath | quote }}
+            type: DirectoryOrCreate

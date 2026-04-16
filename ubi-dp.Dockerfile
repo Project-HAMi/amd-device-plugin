@@ -49,6 +49,8 @@ RUN mkdir -p /licenses && \
     dnf install -y hwloc && \
     dnf clean all
 ADD ./LICENSE /licenses/LICENSE
+RUN mkdir -p /usr/local/vgpu
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]

@@ -31,7 +31,8 @@ const (
 	DeviceBindPhase         = "hami.io/bind-phase"
 	DeviceAllocation        = "hami.io/amd-devices-allocated"
 	DeviceToAllocate        = "hami.io/amd-devices-to-allocate"
-	// CuAllocation is JSON: { "<device-uuid>": "<hex-bitmap>", ... } with device-uuid matching DeviceInfo.ID (e.g. node~PCI-BDF).
+	// CuAllocation is JSON: { "<device-uuid>": "<ID_List>", ... } with device-uuid matching DeviceInfo.ID (e.g. node~card0).
+	// ID_List format examples: "0-90", "0-3,8,10-12".
 	CuAllocation = "hami.io/amd-cu-allocated"
 
 	DeviceBindAllocating = "allocating"

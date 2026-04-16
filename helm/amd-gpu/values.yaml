@@ -9,6 +9,11 @@ dp:
     repository: docker.io/rocm/k8s-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
     tag: "1.31.0.9"
+  # Host path prefix for vGPU hook files on host.
+  # Expected files:
+  #   <hostHookPath>/vgpu/libamvgpu.so
+  # Workload container path is fixed in plugin code: /usr/local/vgpu/libamvgpu.so
+  hostHookPath: "/usr/local"
   resources: {}
   # Set daemonsets updateStrategy for device plugin
   updateStrategy:

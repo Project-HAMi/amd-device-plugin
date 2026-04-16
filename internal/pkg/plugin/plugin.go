@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -141,8 +142,7 @@ func (p *AMDGPUPlugin) Start() error {
 }
 
 const (
-	registerAnnosKey        = "amd.com/register-gpus"
-	registerGPUPairScoreKey = "amd.com/gpu-pair-score"
+	registerAnnosKey        = "hami.io/node-amd-register"
 	NodeLockName            = "hami.io/mutex.lock"
 )
 
@@ -159,7 +159,6 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 		return err
 	}
 
-	glog.Infof("patch topo score to node: %s=%s", registerGPUPairScoreKey, marshalNodeDevices(p.deviceCache))
 	annos[registerAnnosKey] = marshalNodeDevices(p.deviceCache)
 	glog.Infof("patch node with the following annos %v", annos)
 	err = utils.PatchNodeAnnotations(node, annos)
@@ -221,8 +220,9 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		card, _ := deviceData["card"].(int)
 		numa, _ := deviceData["numaNode"].(int)
 
-		// UUID: node name + topology key (PCIe BDF or platform id, same as ListAndWatch Device.ID / AMDGPUs map key).
-		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, key)
+		// UUID: node name + escaped topology key. Escape is required because the annotation codec
+		// uses ":" as item separator and raw PCIe BDF also contains ":".
+		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, url.QueryEscape(key))
 
 		out = append(out, &utils.DeviceInfo{
 			ID:           uuid,
@@ -234,7 +234,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			Numa:         numa,
 			Mode:         "",
 			Health:       true,
-			DeviceVendor: "AMD",
+			DeviceVendor: "amd",
 			CustomInfo:   nil,
 		})
 	}
@@ -640,20 +640,42 @@ const allocationUUIDSep = "~"
 // deviceDataFromAllocationUUID resolves amdgpu topology for a scheduler/device allocation UUID:
 // "<nodeName>~<topoKey>" where topoKey matches p.AMDGPUs (e.g. PCIe "0000:19:00.0").
 func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, expectNode string) (map[string]interface{}, error) {
+	var topoKeyEscaped string
 	sep := strings.Index(uuid, allocationUUIDSep)
-	if sep <= 0 {
-		return nil, fmt.Errorf("invalid allocation UUID %q (expected \"<nodeName>%s<topoKey>\")", uuid, allocationUUIDSep)
+	if sep > 0 {
+		nodeInUUID := uuid[:sep]
+		topoKeyEscaped = uuid[sep+len(allocationUUIDSep):]
+		if expectNode != "" && nodeInUUID != expectNode {
+			return nil, fmt.Errorf("allocation UUID node %q does not match this node %q", nodeInUUID, expectNode)
+		}
+	} else {
+		// Backward/interop tolerance: accept bare topo key payloads.
+		topoKeyEscaped = uuid
 	}
-	nodeInUUID := uuid[:sep]
-	topoKey := uuid[sep+len(allocationUUIDSep):]
-	if topoKey == "" {
+	if topoKeyEscaped == "" {
 		return nil, fmt.Errorf("invalid allocation UUID %q (empty topology key)", uuid)
 	}
-	if expectNode != "" && nodeInUUID != expectNode {
-		return nil, fmt.Errorf("allocation UUID node %q does not match this node %q", nodeInUUID, expectNode)
+	topoKey, err := url.QueryUnescape(topoKeyEscaped)
+	if err != nil {
+		return nil, fmt.Errorf("invalid allocation UUID %q (cannot decode topology key): %w", uuid, err)
 	}
 	d, ok := p.AMDGPUs[topoKey]
 	if !ok {
+		// Graceful fallback for truncated values (e.g. "00.0" from legacy split conflicts):
+		// match by unique suffix among local topology keys.
+		var (
+			matchedKey string
+			matches    int
+		)
+		for k := range p.AMDGPUs {
+			if strings.HasSuffix(k, topoKey) {
+				matchedKey = k
+				matches++
+			}
+		}
+		if matches == 1 {
+			return p.AMDGPUs[matchedKey], nil
+		}
 		return nil, fmt.Errorf("no local GPU topology entry for key %q (UUID %q)", topoKey, uuid)
 	}
 	return d, nil
@@ -673,9 +695,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		return &pluginapi.AllocateResponse{}, err
 	}
 	podDevices := current.Annotations[utils.DeviceAllocation]
-	podCuAllocHex := map[string]string{}
+	podCuAllocList := map[string]string{}
 	if raw := strings.TrimSpace(current.Annotations[utils.CuAllocation]); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &podCuAllocHex); err != nil {
+		if err := json.Unmarshal([]byte(raw), &podCuAllocList); err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
 			return &pluginapi.AllocateResponse{}, fmt.Errorf("parse existing %s: %w", utils.CuAllocation, err)
 		}
@@ -774,17 +796,13 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
 				}
 
-				deltaHex := cuallocation.ConvertAllocationToHex(deltaAllocation)
-				trimmedHex := strings.TrimLeft(strings.ToUpper(deltaHex), "0")
-				if trimmedHex == "" {
-					trimmedHex = "0"
-				}
+				cuList := allocationToIDList(deltaAllocation, totalCUs)
 				// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
-				// Use container-local device index as GPU_list and hex bitmap as CU_list.
-				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:0x%s", i, trimmedHex))
+				// Use container-local device index as GPU_list and ID_List as CU_list.
+				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
-				if oldHex, ok := podCuAllocHex[d.UUID]; ok && strings.TrimSpace(oldHex) != "" {
-					oldAllocation, err := cuallocation.ConvertHexToAllocation(oldHex)
+				if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
+					oldAllocation, err := idListToAllocation(oldList, totalCUs)
 					if err != nil {
 						utils.PodAllocationFailed(nodename, current, NodeLockName)
 						return &pluginapi.AllocateResponse{}, fmt.Errorf("decode existing pod cu allocation for %s: %w", d.UUID, err)
@@ -794,33 +812,29 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						utils.PodAllocationFailed(nodename, current, NodeLockName)
 						return &pluginapi.AllocateResponse{}, fmt.Errorf("merge pod cu allocation for %s: %w", d.UUID, err)
 					}
-					podCuAllocHex[d.UUID] = cuallocation.ConvertAllocationToHex(mergedAllocation)
+					podCuAllocList[d.UUID] = allocationToIDList(mergedAllocation, totalCUs)
 				} else {
-					podCuAllocHex[d.UUID] = deltaHex
+					podCuAllocList[d.UUID] = cuList
 				}
 			}
 			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
+			car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 		}
 
 		car.Mounts = append(car.Mounts,
 			&pluginapi.Mount{
-				ContainerPath: fmt.Sprintf("%s/vgpu/libamvgpu.so", hostHookPath),
+				ContainerPath: "/usr/local/vgpu/libamvgpu.so",
 				HostPath:      hostHookPath + "/vgpu/libamvgpu.so",
 				ReadOnly:      true,
 			},
 		)
-		car.Mounts = append(car.Mounts, &pluginapi.Mount{
-			ContainerPath: "/etc/ld.so.preload",
-			HostPath:      hostHookPath + "/vgpu/ld.so.preload",
-			ReadOnly:      true,
-		})
 
 		response.ContainerResponses = append(response.ContainerResponses, &car)
 	}
 
-	if len(podCuAllocHex) > 0 {
-		b, err := json.Marshal(podCuAllocHex)
+	if len(podCuAllocList) > 0 {
+		b, err := json.Marshal(podCuAllocList)
 		if err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
 			return &pluginapi.AllocateResponse{}, fmt.Errorf("marshal %s: %w", utils.CuAllocation, err)
@@ -884,7 +898,7 @@ func (p *AMDGPUPlugin) onPodAdd(obj interface{}) {
 		return
 	}
 	key := pod.Namespace + "/" + pod.Name
-	allocs, err := parseCuAllocation(pod.Annotations)
+	allocs, err := p.parseCuAllocation(pod.Annotations)
 	if err != nil {
 		glog.Warningf("skip pod add %s: %v", key, err)
 		return
@@ -937,14 +951,14 @@ func (p *AMDGPUPlugin) onPodUpdate(oldObj, newObj interface{}) {
 		err       error
 	)
 	if oldHas {
-		oldAllocs, err = parseCuAllocation(oldPod.Annotations)
+		oldAllocs, err = p.parseCuAllocation(oldPod.Annotations)
 		if err != nil {
 			glog.Warningf("skip pod update %s (parse old): %v", key, err)
 			return
 		}
 	}
 	if newHas {
-		newAllocs, err = parseCuAllocation(newPod.Annotations)
+		newAllocs, err = p.parseCuAllocation(newPod.Annotations)
 		if err != nil {
 			glog.Warningf("skip pod update %s (parse new): %v", key, err)
 			return
@@ -1018,7 +1032,7 @@ func (p *AMDGPUPlugin) onPodDelete(obj interface{}) {
 		return
 	}
 	key := pod.Namespace + "/" + pod.Name
-	allocs, err := parseCuAllocation(pod.Annotations)
+	allocs, err := p.parseCuAllocation(pod.Annotations)
 	if err != nil {
 		glog.Warningf("skip pod delete %s: %v", key, err)
 		return
@@ -1187,12 +1201,106 @@ func isAlreadyAllocatedErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "add delta contains allocated bits")
 }
 
+// allocationToIDList converts a CU bitmap to ID_List grammar used by HSA_CU_MASK, e.g. "0-3,8,10-12".
+func allocationToIDList(allocation cuallocation.Allocation, totalCUs int) string {
+	if totalCUs <= 0 || len(allocation) == 0 {
+		return "0"
+	}
+	ids := make([]int, 0)
+	for i := 0; i < totalCUs; i++ {
+		word := i / 64
+		bit := uint(i % 64)
+		if word >= len(allocation) {
+			break
+		}
+		if (allocation[word] & (uint64(1) << bit)) != 0 {
+			ids = append(ids, i)
+		}
+	}
+	if len(ids) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(ids))
+	start := ids[0]
+	prev := ids[0]
+	flush := func(s, e int) {
+		if s == e {
+			parts = append(parts, fmt.Sprintf("%d", s))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d-%d", s, e))
+		}
+	}
+	for i := 1; i < len(ids); i++ {
+		if ids[i] == prev+1 {
+			prev = ids[i]
+			continue
+		}
+		flush(start, prev)
+		start = ids[i]
+		prev = ids[i]
+	}
+	flush(start, prev)
+	return strings.Join(parts, ",")
+}
+
+// idListToAllocation parses ID_List grammar (e.g. "0-3,8,10-12") into bitmap allocation.
+func idListToAllocation(s string, totalCUs int) (cuallocation.Allocation, error) {
+	allocation, err := cuallocation.NewAllocation(totalCUs)
+	if err != nil {
+		return nil, err
+	}
+	str := strings.TrimSpace(s)
+	if str == "" || str == "0" {
+		return allocation, nil
+	}
+	for _, part := range strings.Split(str, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "-") {
+			bounds := strings.Split(part, "-")
+			if len(bounds) != 2 {
+				return nil, fmt.Errorf("invalid ID range %q", part)
+			}
+			start, err := strconv.Atoi(strings.TrimSpace(bounds[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid range start %q: %w", part, err)
+			}
+			end, err := strconv.Atoi(strings.TrimSpace(bounds[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid range end %q: %w", part, err)
+			}
+			if start < 0 || end < start || end >= totalCUs {
+				return nil, fmt.Errorf("range out of bounds %q for totalCUs=%d", part, totalCUs)
+			}
+			for i := start; i <= end; i++ {
+				word := i / 64
+				bit := uint(i % 64)
+				allocation[word] |= uint64(1) << bit
+			}
+			continue
+		}
+		id, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CU id %q: %w", part, err)
+		}
+		if id < 0 || id >= totalCUs {
+			return nil, fmt.Errorf("CU id out of bounds %d for totalCUs=%d", id, totalCUs)
+		}
+		word := id / 64
+		bit := uint(id % 64)
+		allocation[word] |= uint64(1) << bit
+	}
+	return allocation, nil
+}
+
 // parseCuAllocation decodes utils.CuAllocation as JSON:
 //
-//	{ "<device-uuid>": "<hex-bitmap>", ... }
+//	{ "<device-uuid>": "<ID_List>", ... }
 //
-// device-uuid must match DeviceInfo.ID (e.g. "node~0000:19:00.0"); hex is cuallocation.ConvertHexToAllocation format.
-func parseCuAllocation(annotations map[string]string) (map[string]cuallocation.Allocation, error) {
+// device-uuid must match DeviceInfo.ID and ID_List follows grammar like "0-3,8,10-12".
+func (p *AMDGPUPlugin) parseCuAllocation(annotations map[string]string) (map[string]cuallocation.Allocation, error) {
 	if annotations == nil {
 		return nil, fmt.Errorf("nil annotations")
 	}
@@ -1208,11 +1316,15 @@ func parseCuAllocation(annotations map[string]string) (map[string]cuallocation.A
 		return nil, fmt.Errorf("no entries in %s", utils.CuAllocation)
 	}
 	out := make(map[string]cuallocation.Allocation, len(m))
-	for uuid, hex := range m {
+	for uuid, idList := range m {
 		if uuid == "" {
 			return nil, fmt.Errorf("empty device uuid key in %s", utils.CuAllocation)
 		}
-		alloc, err := cuallocation.ConvertHexToAllocation(hex)
+		totalCUs, err := p.getDeviceTotalCUs(uuid)
+		if err != nil {
+			return nil, fmt.Errorf("device %q total CU lookup failed: %w", uuid, err)
+		}
+		alloc, err := idListToAllocation(idList, totalCUs)
 		if err != nil {
 			return nil, fmt.Errorf("device %q: %w", uuid, err)
 		}

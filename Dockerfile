@@ -28,6 +28,8 @@ LABEL \
     org.opencontainers.image.licenses="Apache-2.0"
 RUN apk --no-cache add ca-certificates libdrm
 RUN apk --no-cache add hwloc --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
+RUN mkdir -p /usr/local/vgpu
 WORKDIR /root/
 COPY --from=0 /go/bin/k8s-device-plugin .
+COPY --from=0 /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]
