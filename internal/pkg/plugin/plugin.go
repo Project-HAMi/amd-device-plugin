@@ -54,19 +54,19 @@ const defaultSplitCount = 10
 
 // Plugin is identical to DevicePluginServer interface of device plugin API.
 type AMDGPUPlugin struct {
-	AMDGPUs            map[string]map[string]interface{}
-	Heartbeat          chan bool
-	signal             chan os.Signal
+	AMDGPUs                    map[string]map[string]interface{}
+	Heartbeat                  chan bool
+	signal                     chan os.Signal
 	disableWatchAndRegister    chan bool
 	ackDisableWatchAndRegister chan bool
-	deviceCache        []*utils.DeviceInfo
-	Resource           string
-	devAllocator       allocator.Policy
-	allocatorInitError bool
-	cuAllocation       map[string]cuallocation.Allocation // device ID -> cu allocation
-	cuAllocationMu     sync.RWMutex // protects cuAllocation map reads/writes
-	cuAllocationLocks  sync.Map     // map[uuid]*sync.Mutex, lock granularity per device
-	podInformerStopCh  chan struct{}
+	deviceCache                []*utils.DeviceInfo
+	Resource                   string
+	devAllocator               allocator.Policy
+	allocatorInitError         bool
+	cuAllocation               map[string]cuallocation.Allocation // device ID -> cu allocation
+	cuAllocationMu             sync.RWMutex                       // protects cuAllocation map reads/writes
+	cuAllocationLocks          sync.Map                           // map[uuid]*sync.Mutex, lock granularity per device
+	podInformerStopCh          chan struct{}
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -142,8 +142,8 @@ func (p *AMDGPUPlugin) Start() error {
 }
 
 const (
-	registerAnnosKey        = "hami.io/node-amd-register"
-	NodeLockName            = "hami.io/mutex.lock"
+	registerAnnosKey = "hami.io/node-amd-register"
+	NodeLockName     = "hami.io/mutex.lock"
 )
 
 func (p *AMDGPUPlugin) RegisterInAnnotation() error {
@@ -747,7 +747,10 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				utils.PodAllocationFailed(nodename, current, NodeLockName)
 				return &pluginapi.AllocateResponse{}, fmt.Errorf("invalid card/renderD in topology for UUID %q", d.UUID)
 			}
-			for _, pair := range []struct{ kind string; minor int }{
+			for _, pair := range []struct {
+				kind  string
+				minor int
+			}{
 				{"card", cardMinor},
 				{"renderD", renderMinor},
 			} {
@@ -894,6 +897,12 @@ func (p *AMDGPUPlugin) onPodAdd(obj interface{}) {
 	if !ok || pod == nil {
 		return
 	}
+	// A completed Pod no longer owns CUs. Ignore it when rebuilding state
+	// after a plugin restart; its allocation annotation may still exist until
+	// Kubernetes garbage-collects the Pod object.
+	if utils.IsPodInTerminatedState(pod) {
+		return
+	}
 	if !hasCuAllocation(pod.Annotations) {
 		return
 	}
@@ -964,9 +973,20 @@ func (p *AMDGPUPlugin) onPodUpdate(oldObj, newObj interface{}) {
 			return
 		}
 	}
+	// Release allocations when a Pod reaches Succeeded or Failed. Keep the
+	// original allocation as the "old" side of this update, but suppress the
+	// corresponding add below. Subsequent updates and the later delete event
+	// must not release the same CU bitmap again.
+	if utils.IsPodInTerminatedState(newPod) {
+		if utils.IsPodInTerminatedState(oldPod) {
+			return
+		}
+		newHas = false
+		newAllocs = nil
+	}
 
 	unlock := p.lockDeviceAllocations(allocationUUIDsForLock(oldHas, newHas, oldAllocs, newAllocs)...)
- 	defer unlock()
+	defer unlock()
 
 	if oldHas {
 		for _, uuid := range sortedMapKeysStr(oldAllocs) {
@@ -1026,6 +1046,11 @@ func (p *AMDGPUPlugin) onPodDelete(obj interface{}) {
 		}
 	}
 	if pod == nil {
+		return
+	}
+	// Terminal Pods release their allocation on the phase transition above.
+	// Their eventual deletion must therefore be a no-op.
+	if utils.IsPodInTerminatedState(pod) {
 		return
 	}
 	if !hasCuAllocation(pod.Annotations) {
