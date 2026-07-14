@@ -29,7 +29,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -44,9 +43,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/tools/cache"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -63,10 +59,6 @@ type AMDGPUPlugin struct {
 	Resource                   string
 	devAllocator               allocator.Policy
 	allocatorInitError         bool
-	cuAllocation               map[string]cuallocation.Allocation // device ID -> cu allocation
-	cuAllocationMu             sync.RWMutex                       // protects cuAllocation map reads/writes
-	cuAllocationLocks          sync.Map                           // map[uuid]*sync.Mutex, lock granularity per device
-	podInformerStopCh          chan struct{}
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -112,12 +104,6 @@ func (p *AMDGPUPlugin) Start() error {
 	if p.ackDisableWatchAndRegister == nil {
 		p.ackDisableWatchAndRegister = make(chan bool, 1)
 	}
-	if p.cuAllocation == nil {
-		p.cuAllocation = make(map[string]cuallocation.Allocation)
-	}
-	if p.podInformerStopCh == nil {
-		p.podInformerStopCh = make(chan struct{})
-	}
 	signal.Notify(p.signal, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	err := p.devAllocator.Init(getDevices(), "")
 	if err != nil {
@@ -129,14 +115,10 @@ func (p *AMDGPUPlugin) Start() error {
 		p.WatchAndRegister(p.disableWatchAndRegister, p.ackDisableWatchAndRegister)
 	}()
 
-	// Ensure deviceCache is initialized before informer starts handling pod events.
+	// Initialize deviceCache before Allocate rebuilds CU occupancy from Pod annotations.
 	if err := p.RegisterInAnnotation(); err != nil {
-		return fmt.Errorf("initialize device cache before pod informer: %w", err)
+		return fmt.Errorf("initialize device cache: %w", err)
 	}
-	if err := p.initCuAllocationForDevices(p.deviceCache); err != nil {
-		return fmt.Errorf("initialize cu allocation map before pod informer: %w", err)
-	}
-	go p.runPodInformer()
 
 	return nil
 }
@@ -391,14 +373,6 @@ func getDevices() []*allocator.Device {
 // plugin is unregistered from kubelet. This method could be used to tear
 // down resources.
 func (p *AMDGPUPlugin) Stop() error {
-	if p.podInformerStopCh != nil {
-		select {
-		case <-p.podInformerStopCh:
-			// already closed
-		default:
-			close(p.podInformerStopCh)
-		}
-	}
 	return nil
 }
 
@@ -702,13 +676,15 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			return &pluginapi.AllocateResponse{}, fmt.Errorf("parse existing %s: %w", utils.CuAllocation, err)
 		}
 	}
-	// Take a read-only snapshot; Allocate only derives deltas and does not mutate global CU state.
-	cuAllocationSnapshot := make(map[string]cuallocation.Allocation, len(p.cuAllocation))
-	p.cuAllocationMu.RLock()
-	for uuid, allocation := range p.cuAllocation {
-		cuAllocationSnapshot[uuid] = append(cuallocation.Allocation(nil), allocation...)
+	// Pod annotations are the source of truth. The scheduler keeps the node
+	// locked until this allocation is persisted, so a direct API read gives us
+	// the complete bitmap committed by all preceding Pods without depending on
+	// informer delivery.
+	cuAllocationSnapshot, err := p.rebuildCUAllocations(ctx, nodename)
+	if err != nil {
+		utils.PodAllocationFailed(nodename, current, NodeLockName)
+		return &pluginapi.AllocateResponse{}, fmt.Errorf("rebuild CU allocation for node %s: %w", nodename, err)
 	}
-	p.cuAllocationMu.RUnlock()
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
 	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
@@ -798,7 +774,6 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
 				}
-
 				cuList := allocationToIDList(deltaAllocation, totalCUs)
 				// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
 				// Use container-local device index as GPU_list and ID_List as CU_list.
@@ -842,9 +817,23 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
 			return &pluginapi.AllocateResponse{}, fmt.Errorf("marshal %s: %w", utils.CuAllocation, err)
 		}
-		if err := utils.PatchPodAnnotations(current, map[string]string{utils.CuAllocation: string(b)}); err != nil {
+		if err := p.validateNodeLockOwner(ctx, nodename, current); err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w", utils.CuAllocation, err)
+			return &pluginapi.AllocateResponse{}, err
+		}
+		if err := utils.PatchPodAnnotations(current, map[string]string{utils.CuAllocation: string(b)}); err != nil {
+			// A transport error can be returned after the API server applied the
+			// patch. Read back before failing to preserve a durable commit.
+			persisted, getErr := p.hasPersistedCUAllocation(ctx, current, string(b))
+			if getErr == nil && persisted {
+				glog.Warningf("CU allocation annotation patch for %s/%s returned %v after it was persisted", current.Namespace, current.Name, err)
+			} else {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				if getErr != nil {
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w (and failed to confirm persisted state: %v)", utils.CuAllocation, err, getErr)
+				}
+				return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w", utils.CuAllocation, err)
+			}
 		}
 	}
 
@@ -854,257 +843,97 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	return response, nil
 }
 
-func (p *AMDGPUPlugin) runPodInformer() {
-	nodeName := os.Getenv(utils.NodeNameEnvName)
-	if nodeName == "" {
-		glog.Warningf("%s is empty, skip pod informer for cu allocation", utils.NodeNameEnvName)
-		return
-	}
-
+func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string) (map[string]cuallocation.Allocation, error) {
 	selector := fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
-	lw := &cache.ListWatch{
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-			options.FieldSelector = selector
-			return utils.GetClient().CoreV1().Pods("").List(context.TODO(), options)
-		},
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			options.FieldSelector = selector
-			return utils.GetClient().CoreV1().Pods("").Watch(context.TODO(), options)
-		},
-	}
-
-	_, controller := cache.NewInformer(
-		lw,
-		&corev1.Pod{},
-		0,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				p.onPodAdd(obj)
-			},
-			UpdateFunc: func(oldObj, newObj interface{}) {
-				p.onPodUpdate(oldObj, newObj)
-			},
-			DeleteFunc: func(obj interface{}) {
-				p.onPodDelete(obj)
-			},
-		},
-	)
-	controller.Run(p.podInformerStopCh)
-}
-
-func (p *AMDGPUPlugin) onPodAdd(obj interface{}) {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok || pod == nil {
-		return
-	}
-	// A completed Pod no longer owns CUs. Ignore it when rebuilding state
-	// after a plugin restart; its allocation annotation may still exist until
-	// Kubernetes garbage-collects the Pod object.
-	if utils.IsPodInTerminatedState(pod) {
-		return
-	}
-	if !hasCuAllocation(pod.Annotations) {
-		return
-	}
-	key := pod.Namespace + "/" + pod.Name
-	allocs, err := p.parseCuAllocation(pod.Annotations)
+	pods, err := utils.GetClient().CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: selector})
 	if err != nil {
-		glog.Warningf("skip pod add %s: %v", key, err)
-		return
+		return nil, fmt.Errorf("list Pods: %w", err)
 	}
-	uuids := sortedMapKeysStr(allocs)
-	unlock := p.lockDeviceAllocations(uuids...)
-	defer unlock()
-
-	for _, uuid := range uuids {
-		allocation := allocs[uuid]
-		totalCUs, err := p.getDeviceTotalCUs(uuid)
-		if err != nil {
-			glog.Errorf("unable to get total CUs for %s: %v", uuid, err)
-			return
-		}
-		current, err := p.ensureDeviceAllocation(uuid, totalCUs)
-		if err != nil {
-			glog.Errorf("unable to initialize cu allocation for %s: %v", uuid, err)
-			return
-		}
-		newAllocation, err := cuallocation.AddAllocation(current, totalCUs, allocation)
-		if err != nil {
-			if isAlreadyAllocatedErr(err) {
-				glog.V(4).Infof("cu allocation for %s already accounted, skip add", uuid)
-				continue
-			}
-			glog.Errorf("unable to add cu allocation for %s: %v", uuid, err)
-			return
-		}
-		p.setDeviceAllocation(uuid, newAllocation)
-	}
+	return p.buildCUAllocations(pods.Items)
 }
 
-func (p *AMDGPUPlugin) onPodUpdate(oldObj, newObj interface{}) {
-	oldPod, okOld := oldObj.(*corev1.Pod)
-	newPod, okNew := newObj.(*corev1.Pod)
-	if !okOld || !okNew || oldPod == nil || newPod == nil {
-		return
-	}
-	oldHas := hasCuAllocation(oldPod.Annotations)
-	newHas := hasCuAllocation(newPod.Annotations)
-	if !oldHas && !newHas {
-		return
-	}
+// buildCUAllocations reconstructs device occupancy solely from durable Pod
+// annotations. It fails closed if persisted allocations already overlap.
+func (p *AMDGPUPlugin) buildCUAllocations(pods []corev1.Pod) (map[string]cuallocation.Allocation, error) {
+	result := make(map[string]cuallocation.Allocation)
+	owners := make(map[string][]string)
 
-	key := newPod.Namespace + "/" + newPod.Name
-	var (
-		oldAllocs map[string]cuallocation.Allocation
-		newAllocs map[string]cuallocation.Allocation
-		err       error
-	)
-	if oldHas {
-		oldAllocs, err = p.parseCuAllocation(oldPod.Annotations)
+	for i := range pods {
+		pod := &pods[i]
+		if utils.IsPodInTerminatedState(pod) {
+			continue
+		}
+		if strings.TrimSpace(pod.Annotations[utils.CuAllocation]) == "" {
+			continue
+		}
+
+		podKey := pod.Namespace + "/" + pod.Name
+		allocations, err := p.parseCuAllocation(pod.Annotations)
 		if err != nil {
-			glog.Warningf("skip pod update %s (parse old): %v", key, err)
-			return
+			return nil, fmt.Errorf("Pod %s: %w", podKey, err)
 		}
-	}
-	if newHas {
-		newAllocs, err = p.parseCuAllocation(newPod.Annotations)
-		if err != nil {
-			glog.Warningf("skip pod update %s (parse new): %v", key, err)
-			return
-		}
-	}
-	// Release allocations when a Pod reaches Succeeded or Failed. Keep the
-	// original allocation as the "old" side of this update, but suppress the
-	// corresponding add below. Subsequent updates and the later delete event
-	// must not release the same CU bitmap again.
-	if utils.IsPodInTerminatedState(newPod) {
-		if utils.IsPodInTerminatedState(oldPod) {
-			return
-		}
-		newHas = false
-		newAllocs = nil
-	}
-
-	unlock := p.lockDeviceAllocations(allocationUUIDsForLock(oldHas, newHas, oldAllocs, newAllocs)...)
-	defer unlock()
-
-	if oldHas {
-		for _, uuid := range sortedMapKeysStr(oldAllocs) {
-			current, ok := p.getDeviceAllocation(uuid)
+		for uuid, allocation := range allocations {
+			totalCUs, err := p.getDeviceTotalCUs(uuid)
+			if err != nil {
+				return nil, fmt.Errorf("Pod %s device %s: %w", podKey, uuid, err)
+			}
+			current, ok := result[uuid]
 			if !ok {
-				glog.Warningf("skip pod update %s: uuid %s not found in allocation map", key, uuid)
-				return
+				current, err = cuallocation.NewAllocation(totalCUs)
+				if err != nil {
+					return nil, fmt.Errorf("initialize device %s allocation: %w", uuid, err)
+				}
+				result[uuid] = current
+				owners[uuid] = make([]string, totalCUs)
 			}
-			oldTotalCUs, totalErr := p.getDeviceTotalCUs(uuid)
-			if totalErr != nil {
-				glog.Errorf("unable to get total CUs for %s: %v", uuid, totalErr)
-				return
-			}
-			updated, releaseErr := cuallocation.ReleaseAllocation(current, oldTotalCUs, oldAllocs[uuid])
-			if releaseErr != nil {
-				glog.Errorf("unable to release cu allocation for %s: %v", uuid, releaseErr)
-				return
-			}
-			p.setDeviceAllocation(uuid, updated)
-		}
-	}
 
-	if newHas {
-		for _, uuid := range sortedMapKeysStr(newAllocs) {
-			newTotalCUs, totalErr := p.getDeviceTotalCUs(uuid)
-			if totalErr != nil {
-				glog.Errorf("unable to get total CUs for %s: %v", uuid, totalErr)
-				return
-			}
-			current, ensureErr := p.ensureDeviceAllocation(uuid, newTotalCUs)
-			if ensureErr != nil {
-				glog.Errorf("unable to initialize cu allocation for %s: %v", uuid, ensureErr)
-				return
-			}
-			updated, addErr := cuallocation.AddAllocation(current, newTotalCUs, newAllocs[uuid])
-			if addErr != nil {
-				if isAlreadyAllocatedErr(addErr) {
-					glog.V(4).Infof("cu allocation for %s already accounted, skip add", uuid)
+			for cu := 0; cu < totalCUs; cu++ {
+				word := cu / 64
+				bit := uint(cu % 64)
+				mask := uint64(1) << bit
+				if allocation[word]&mask == 0 {
 					continue
 				}
-				glog.Errorf("unable to add cu allocation for %s: %v", uuid, addErr)
-				return
+				if current[word]&mask != 0 {
+					return nil, fmt.Errorf("CU allocation overlap on device %s CU %d between Pods %s and %s", uuid, cu, owners[uuid][cu], podKey)
+				}
 			}
-			p.setDeviceAllocation(uuid, updated)
+
+			updated, err := cuallocation.AddAllocation(current, totalCUs, allocation)
+			if err != nil {
+				return nil, fmt.Errorf("add Pod %s allocation for device %s: %w", podKey, uuid, err)
+			}
+			result[uuid] = updated
+			for cu := 0; cu < totalCUs; cu++ {
+				word := cu / 64
+				bit := uint(cu % 64)
+				if allocation[word]&(uint64(1)<<bit) != 0 {
+					owners[uuid][cu] = podKey
+				}
+			}
 		}
 	}
+
+	return result, nil
 }
 
-func (p *AMDGPUPlugin) onPodDelete(obj interface{}) {
-	var pod *corev1.Pod
-	switch t := obj.(type) {
-	case *corev1.Pod:
-		pod = t
-	case cache.DeletedFinalStateUnknown:
-		if p, ok := t.Obj.(*corev1.Pod); ok {
-			pod = p
-		}
-	}
-	if pod == nil {
-		return
-	}
-	// Terminal Pods release their allocation on the phase transition above.
-	// Their eventual deletion must therefore be a no-op.
-	if utils.IsPodInTerminatedState(pod) {
-		return
-	}
-	if !hasCuAllocation(pod.Annotations) {
-		return
-	}
-	key := pod.Namespace + "/" + pod.Name
-	allocs, err := p.parseCuAllocation(pod.Annotations)
+func (p *AMDGPUPlugin) validateNodeLockOwner(ctx context.Context, nodeName string, pod *corev1.Pod) error {
+	node, err := utils.GetClient().CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		glog.Warningf("skip pod delete %s: %v", key, err)
-		return
+		return fmt.Errorf("get node %s before CU allocation commit: %w", nodeName, err)
 	}
-	uuids := sortedMapKeysStr(allocs)
-	unlock := p.lockDeviceAllocations(uuids...)
-	defer unlock()
-
-	for _, uuid := range uuids {
-		allocation := allocs[uuid]
-		current, ok := p.getDeviceAllocation(uuid)
-		if !ok {
-			glog.Warningf("skip pod delete %s: uuid %s not found in allocation map", key, uuid)
-			return
-		}
-		totalCUs, err := p.getDeviceTotalCUs(uuid)
-		if err != nil {
-			glog.Errorf("unable to get total CUs for %s: %v", uuid, err)
-			return
-		}
-		newAllocation, err := cuallocation.ReleaseAllocation(current, totalCUs, allocation)
-		if err != nil {
-			glog.Errorf("unable to release cu allocation for %s: %v", uuid, err)
-			return
-		}
-		p.setDeviceAllocation(uuid, newAllocation)
+	lockValue, ok := node.Annotations[utils.NodeLockKey]
+	if !ok {
+		return fmt.Errorf("node %s lock is missing before CU allocation commit", nodeName)
 	}
-}
-
-func hasCuAllocation(annotations map[string]string) bool {
-	if annotations == nil {
-		return false
-	}
-	_, ok := annotations[utils.CuAllocation]
-	return ok
-}
-
-func (p *AMDGPUPlugin) ensureDeviceAllocation(uuid string, totalCUs int) (cuallocation.Allocation, error) {
-	if allocation, ok := p.getDeviceAllocation(uuid); ok {
-		return allocation, nil
-	}
-	allocation, err := cuallocation.NewAllocation(totalCUs)
+	_, namespace, name, err := utils.ParseNodeLock(lockValue)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("parse node %s lock: %w", nodeName, err)
 	}
-	p.setDeviceAllocation(uuid, allocation)
-	return allocation, nil
+	if namespace != pod.Namespace || name != pod.Name {
+		return fmt.Errorf("node %s lock is owned by %s/%s, not %s/%s", nodeName, namespace, name, pod.Namespace, pod.Name)
+	}
+	return nil
 }
 
 func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
@@ -1120,110 +949,12 @@ func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
 	return 0, fmt.Errorf("device %s not found in device cache", uuid)
 }
 
-func (p *AMDGPUPlugin) initCuAllocationForDevices(devices []*utils.DeviceInfo) error {
-	for _, d := range devices {
-		if d == nil || d.ID == "" {
-			continue
-		}
-		if d.Devcore <= 0 {
-			return fmt.Errorf("invalid cu count for device %s: %d", d.ID, d.Devcore)
-		}
-
-		unlock := p.lockDeviceAllocations(d.ID)
-		if _, ok := p.getDeviceAllocation(d.ID); !ok {
-			allocation, err := cuallocation.NewAllocation(int(d.Devcore))
-			if err != nil {
-				unlock()
-				return fmt.Errorf("create allocation for device %s: %w", d.ID, err)
-			}
-			p.setDeviceAllocation(d.ID, allocation)
-		}
-		unlock()
+func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1.Pod, expected string) (bool, error) {
+	refreshed, err := utils.GetClient().CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	if err != nil {
+		return false, err
 	}
-	return nil
-}
-
-func (p *AMDGPUPlugin) getDeviceAllocation(uuid string) (cuallocation.Allocation, bool) {
-	p.cuAllocationMu.RLock()
-	defer p.cuAllocationMu.RUnlock()
-	allocation, ok := p.cuAllocation[uuid]
-	return allocation, ok
-}
-
-func (p *AMDGPUPlugin) setDeviceAllocation(uuid string, allocation cuallocation.Allocation) {
-	p.cuAllocationMu.Lock()
-	defer p.cuAllocationMu.Unlock()
-	p.cuAllocation[uuid] = allocation
-}
-
-func (p *AMDGPUPlugin) lockDeviceAllocations(uuids ...string) func() {
-	uniq := make(map[string]struct{}, len(uuids))
-	sortedUUIDs := make([]string, 0, len(uuids))
-	for _, uuid := range uuids {
-		if uuid == "" {
-			continue
-		}
-		if _, ok := uniq[uuid]; ok {
-			continue
-		}
-		uniq[uuid] = struct{}{}
-		sortedUUIDs = append(sortedUUIDs, uuid)
-	}
-	sort.Strings(sortedUUIDs)
-
-	locks := make([]*sync.Mutex, 0, len(sortedUUIDs))
-	for _, uuid := range sortedUUIDs {
-		lock := p.getDeviceLock(uuid)
-		lock.Lock()
-		locks = append(locks, lock)
-	}
-	return func() {
-		for i := len(locks) - 1; i >= 0; i-- {
-			locks[i].Unlock()
-		}
-	}
-}
-
-func (p *AMDGPUPlugin) getDeviceLock(uuid string) *sync.Mutex {
-	lock, _ := p.cuAllocationLocks.LoadOrStore(uuid, &sync.Mutex{})
-	return lock.(*sync.Mutex)
-}
-
-// sortedMapKeysStr returns map keys sorted for stable lock order and iteration.
-func sortedMapKeysStr(m map[string]cuallocation.Allocation) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func allocationUUIDsForLock(oldHas, newHas bool, oldAllocs, newAllocs map[string]cuallocation.Allocation) []string {
-	uniq := make(map[string]struct{})
-	if oldHas && oldAllocs != nil {
-		for k := range oldAllocs {
-			uniq[k] = struct{}{}
-		}
-	}
-	if newHas && newAllocs != nil {
-		for k := range newAllocs {
-			uniq[k] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(uniq))
-	for k := range uniq {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func isAlreadyAllocatedErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "add delta contains allocated bits")
+	return refreshed.Annotations[utils.CuAllocation] == expected, nil
 }
 
 // allocationToIDList converts a CU bitmap to ID_List grammar used by HSA_CU_MASK, e.g. "0-3,8,10-12".
@@ -1275,7 +1006,7 @@ func idListToAllocation(s string, totalCUs int) (cuallocation.Allocation, error)
 		return nil, err
 	}
 	str := strings.TrimSpace(s)
-	if str == "" || str == "0" {
+	if str == "" {
 		return allocation, nil
 	}
 	for _, part := range strings.Split(str, ",") {

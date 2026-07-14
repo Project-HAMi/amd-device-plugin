@@ -17,6 +17,7 @@
 package plugin
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ROCm/k8s-device-plugin/internal/pkg/cuallocation"
@@ -34,63 +35,94 @@ func TestCountGPUDevFromTopology(t *testing.T) {
 	}
 }
 
-func TestTerminalPodReleasesCUAllocation(t *testing.T) {
-	const uuid = "node~gpu0"
-	p := &AMDGPUPlugin{
-		deviceCache:  []*utils.DeviceInfo{{ID: uuid, Devcore: 8}},
-		cuAllocation: make(map[string]cuallocation.Allocation),
-	}
-	if err := p.initCuAllocationForDevices(p.deviceCache); err != nil {
-		t.Fatalf("initialize CU allocation: %v", err)
+func TestBuildCUAllocationsFromPods(t *testing.T) {
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{
+		{ID: "node~gpu0", Devcore: 8},
+		{ID: "node~gpu1", Devcore: 8},
+	}}
+	pods := []corev1.Pod{
+		makeCUPod("running-a", corev1.PodRunning, `{"node~gpu0":"0-3"}`),
+		makeCUPod("running-b", corev1.PodPending, `{"node~gpu0":"4-5","node~gpu1":"0"}`),
+		makeCUPod("completed", corev1.PodSucceeded, `{"node~gpu0":"6-7"}`),
+		makeCUPod("failed", corev1.PodFailed, `{"node~gpu1":"1-7"}`),
 	}
 
-	pod := &corev1.Pod{
+	allocations, err := p.buildCUAllocations(pods)
+	if err != nil {
+		t.Fatalf("build CU allocations: %v", err)
+	}
+	assertAllocationWord(t, allocations, "node~gpu0", 0x3f)
+	assertAllocationWord(t, allocations, "node~gpu1", 0x01)
+}
+
+func TestBuildCUAllocationsRejectsOverlap(t *testing.T) {
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{{ID: "node~gpu0", Devcore: 8}}}
+	pods := []corev1.Pod{
+		makeCUPod("pod-a", corev1.PodRunning, `{"node~gpu0":"0-3"}`),
+		makeCUPod("pod-b", corev1.PodRunning, `{"node~gpu0":"3-4"}`),
+	}
+
+	_, err := p.buildCUAllocations(pods)
+	if err == nil {
+		t.Fatal("expected overlapping allocation to fail")
+	}
+	for _, want := range []string{"node~gpu0", "CU 3", "default/pod-a", "default/pod-b"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("overlap error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestBuildCUAllocationsRejectsOutOfRangeCU(t *testing.T) {
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{{ID: "node~gpu0", Devcore: 8}}}
+	_, err := p.buildCUAllocations([]corev1.Pod{
+		makeCUPod("invalid", corev1.PodRunning, `{"node~gpu0":"8"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "out of bounds") {
+		t.Fatalf("expected out-of-range error, got %v", err)
+	}
+}
+
+func TestNextAllocationUsesPersistedPodState(t *testing.T) {
+	const (
+		uuid     = "node~gpu0"
+		totalCUs = 8
+	)
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{{ID: uuid, Devcore: totalCUs}}}
+
+	// This is the only state left after a plugin restart or before any informer
+	// event: the first Pod's durable annotation.
+	occupied, err := p.buildCUAllocations([]corev1.Pod{
+		makeCUPod("first", corev1.PodRunning, `{"node~gpu0":"0-3"}`),
+	})
+	if err != nil {
+		t.Fatalf("rebuild first Pod allocation: %v", err)
+	}
+	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4)
+	if err != nil {
+		t.Fatalf("allocate second Pod: %v", err)
+	}
+	if delta[0] != 0xf0 {
+		t.Fatalf("second allocation = %#x, want %#x", delta[0], uint64(0xf0))
+	}
+}
+
+func makeCUPod(name string, phase corev1.PodPhase, allocation string) corev1.Pod {
+	return corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "default",
-			Name:      "test",
+			Name:      name,
 			Annotations: map[string]string{
-				utils.CuAllocation: `{"node~gpu0":"0-3"}`,
+				utils.CuAllocation: allocation,
 			},
 		},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		Status: corev1.PodStatus{Phase: phase},
 	}
-	p.onPodAdd(pod)
-	assertCUAllocationWord(t, p, uuid, 0x0f)
-
-	completed := pod.DeepCopy()
-	completed.Status.Phase = corev1.PodSucceeded
-	p.onPodUpdate(pod, completed)
-	assertCUAllocationWord(t, p, uuid, 0)
-
-	// Repeated terminal updates and the eventual delete event must not add or
-	// release the same bitmap again.
-	p.onPodUpdate(completed, completed)
-	p.onPodDelete(completed)
-	assertCUAllocationWord(t, p, uuid, 0)
 }
 
-func TestTerminalPodIsIgnoredWhenRebuildingCUAllocation(t *testing.T) {
-	const uuid = "node~gpu0"
-	p := &AMDGPUPlugin{
-		deviceCache:  []*utils.DeviceInfo{{ID: uuid, Devcore: 8}},
-		cuAllocation: make(map[string]cuallocation.Allocation),
-	}
-	if err := p.initCuAllocationForDevices(p.deviceCache); err != nil {
-		t.Fatalf("initialize CU allocation: %v", err)
-	}
-
-	p.onPodAdd(&corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
-			utils.CuAllocation: `{"node~gpu0":"0-3"}`,
-		}},
-		Status: corev1.PodStatus{Phase: corev1.PodFailed},
-	})
-	assertCUAllocationWord(t, p, uuid, 0)
-}
-
-func assertCUAllocationWord(t *testing.T, p *AMDGPUPlugin, uuid string, want uint64) {
+func assertAllocationWord(t *testing.T, allocations map[string]cuallocation.Allocation, uuid string, want uint64) {
 	t.Helper()
-	allocation, ok := p.getDeviceAllocation(uuid)
+	allocation, ok := allocations[uuid]
 	if !ok || len(allocation) == 0 {
 		t.Fatalf("allocation for %s is missing", uuid)
 	}
