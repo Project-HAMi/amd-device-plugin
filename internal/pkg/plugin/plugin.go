@@ -159,34 +159,18 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		nodeName = "unknown-node"
 	}
 
-	// Best-effort: enrich devices with node-labeller labels (amd.com/gpu.* and beta.amd.com/gpu.*).
-	var gpuNodeLabels map[string]string
-	var vramMiB int32
-	var cuCount int32
-	deviceType := "amd-gpu"
-	if nodeName != "unknown-node" {
-		if node, err := utils.GetNode(nodeName); err == nil && node != nil {
-			gpuNodeLabels = extractAMDGPUNodeLabels(node.Labels)
-
-			// NOTE: node-labeller labels are node-scoped aggregations. When a node has GPUs with
-			// different values (e.g., different product-name / vram / cu-count), the labeller
-			// typically emits per-value counter labels like:
-			//   amd.com/gpu.product-name.<VALUE>=<COUNT>
-			// and may omit the singular label:
-			//   amd.com/gpu.product-name=<VALUE>
-			// Therefore the mapping below cannot reliably provide per-device attributes on a
-			// heterogeneous node; it will either pick one node-level value or fall back.
-			//
-			// TODO: derive per-device productName/VRAM/CU from per-GPU sources (e.g. amdgpu sysfs/KFD
-			// topology keyed by renderD/devID) instead of node labels.
-			vramMiB = parseVRAMMiBFromLabels(gpuNodeLabels)
-			cuCount = parseInt32FromLabels(gpuNodeLabels, "amd.com/gpu.cu-count", "beta.amd.com/gpu.cu-count")
-			if v, ok := firstLabelValue(gpuNodeLabels, "amd.com/gpu.product-name", "beta.amd.com/gpu.product-name"); ok {
-				deviceType = v
-			}
-		} else if err != nil {
-			glog.V(4).Infof("get node labels failed (skip label enrichment): %v", err)
+	// Resolve a stable per-device UUID through the AMD SMI C API. Unlike the
+	// node labeller, this is not an aggregated node-level value and supports
+	// SR-IOV virtual functions.
+	bdfs := make([]string, 0, len(p.AMDGPUs))
+	for _, deviceData := range p.AMDGPUs {
+		if bdf, ok := deviceData["devID"].(string); ok {
+			bdfs = append(bdfs, bdf)
 		}
+	}
+	amdSMIUUIDs, err := amdgpu.GetAMDSMIUUIDs(bdfs)
+	if err != nil {
+		glog.Warningf("AMD SMI UUID lookup incomplete; registering topology-only devices where necessary: %v", err)
 	}
 
 	keys := make([]string, 0, len(p.AMDGPUs))
@@ -201,92 +185,39 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 
 		card, _ := deviceData["card"].(int)
 		numa, _ := deviceData["numaNode"].(int)
+		capacity, capacityErr := amdgpu.GetDeviceCapacity(fmt.Sprintf("card%d", card))
+		if capacityErr != nil {
+			glog.Warningf("libdrm capacity lookup failed for GPU %s (card%d): %v", key, card, capacityErr)
+		}
 
 		// UUID: node name + escaped topology key. Escape is required because the annotation codec
 		// uses ":" as item separator and raw PCIe BDF also contains ":".
 		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, url.QueryEscape(key))
 
+		var customInfo map[string]any
+		if bdf, ok := deviceData["devID"].(string); ok {
+			if amdSMIUUID, found := amdSMIUUIDs[strings.ToLower(bdf)]; found {
+				customInfo = map[string]any{"pciBDF": strings.ToLower(key), "amdSMIUUID": amdSMIUUID}
+			} else if err == nil {
+				glog.Warningf("AMD SMI did not return a UUID for GPU %s (topology BDF %s)", key, bdf)
+			}
+		}
+
 		out = append(out, &utils.DeviceInfo{
 			ID:           uuid,
 			Index:        uint(card),
 			Count:        defaultSplitCount,
-			Devmem:       vramMiB,
-			Devcore:      cuCount,
-			Type:         deviceType,
+			Devmem:       capacity.VRAMMiB,
+			Devcore:      capacity.CUCount,
+			Type:         "amd-gpu",
 			Numa:         numa,
 			Mode:         "",
 			Health:       true,
 			DeviceVendor: "amd",
-			CustomInfo:   nil,
+			CustomInfo:   customInfo,
 		})
 	}
 
-	return out
-}
-
-func firstLabelValue(labels map[string]string, keys ...string) (string, bool) {
-	for _, k := range keys {
-		if v, ok := labels[k]; ok && v != "" {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-func parseInt32FromLabels(labels map[string]string, keys ...string) int32 {
-	v, ok := firstLabelValue(labels, keys...)
-	if !ok {
-		return 0
-	}
-	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int32(n)
-}
-
-// node-labeller formats vram label like "16G" (GiB, rounded).
-// We map it into MiB for DeviceInfo.Devmem.
-func parseVRAMMiBFromLabels(labels map[string]string) int32 {
-	v, ok := firstLabelValue(labels, "amd.com/gpu.vram", "beta.amd.com/gpu.vram")
-	if !ok {
-		return 0
-	}
-	s := strings.TrimSpace(v)
-	if strings.HasSuffix(strings.ToUpper(s), "G") {
-		num := strings.TrimSpace(s[:len(s)-1])
-		n, err := strconv.ParseInt(num, 10, 32)
-		if err != nil {
-			return 0
-		}
-		// GiB -> MiB
-		return int32(n * 1024)
-	}
-	// Fallback: try plain integer (assume MiB)
-	n, err := strconv.ParseInt(s, 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int32(n)
-}
-
-func extractAMDGPUNodeLabels(labels map[string]string) map[string]string {
-	if len(labels) == 0 {
-		return nil
-	}
-	const (
-		amdPrefix  = "amd.com/gpu."
-		betaPrefix = "beta.amd.com/gpu."
-	)
-	out := make(map[string]string)
-	for k, v := range labels {
-		if strings.HasPrefix(k, amdPrefix) || strings.HasPrefix(k, betaPrefix) {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
 	return out
 }
 

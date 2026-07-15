@@ -24,6 +24,45 @@ package amdgpu
 // #include <drm.h>
 // #include <amdgpu.h>
 // #include <amdgpu_drm.h>
+// // Older distribution libdrm headers do not define these newer families.
+// // Define sentinel values solely to keep the switch below portable; systems
+// // with current headers use the kernel-provided values instead.
+// #ifndef AMDGPU_FAMILY_GC_11_0_0
+// #define AMDGPU_FAMILY_GC_11_0_0 0x7fff0001
+// #endif
+// #ifndef AMDGPU_FAMILY_GC_11_0_1
+// #define AMDGPU_FAMILY_GC_11_0_1 0x7fff0002
+// #endif
+// #ifndef AMDGPU_FAMILY_GC_10_3_6
+// #define AMDGPU_FAMILY_GC_10_3_6 0x7fff0003
+// #endif
+// #ifndef AMDGPU_FAMILY_GC_10_3_7
+// #define AMDGPU_FAMILY_GC_10_3_7 0x7fff0004
+// #endif
+// #ifndef AMDGPU_FAMILY_GC_11_5_0
+// #define AMDGPU_FAMILY_GC_11_5_0 0x7fff0005
+// #endif
+//
+// static int amdgpu_query_device_capacity(amdgpu_device_handle dev,
+//                                         uint64_t *vram_bytes,
+//                                         uint32_t *cu_count) {
+//     struct amdgpu_gpu_info gpu_info = {0};
+//     int rc = amdgpu_query_gpu_info(dev, &gpu_info);
+//     if (rc < 0) {
+//         return rc;
+//     }
+//
+//     struct drm_amdgpu_info_vram_gtt memory_info = {0};
+//     rc = amdgpu_query_info(dev, AMDGPU_INFO_MEMORY, sizeof(memory_info),
+//                            &memory_info);
+//     if (rc < 0) {
+//         return rc;
+//     }
+//
+//     *vram_bytes = memory_info.vram_size;
+//     *cu_count = gpu_info.cu_active_number;
+//     return 0;
+// }
 import "C"
 import (
 	"bufio"
@@ -96,6 +135,36 @@ func GetCardFamilyName(cardName string) (string, error) {
 	}
 
 	return FamilyIDtoString(uint32(info.family_id))
+}
+
+// DeviceCapacity describes the physical capacity HAMI needs for AMD vGPU
+// scheduling. VRAM is reported in MiB, while CUCount is the active CU count.
+type DeviceCapacity struct {
+	VRAMMiB int32
+	CUCount int32
+}
+
+// GetDeviceCapacity reads VRAM and active CU count through libdrm_amdgpu for
+// one DRM card. It intentionally avoids node-scoped labels so heterogeneous
+// nodes and SR-IOV virtual functions retain per-device values.
+func GetDeviceCapacity(cardName string) (DeviceCapacity, error) {
+	devHandle, err := openAMDGPU(cardName)
+	if err != nil {
+		return DeviceCapacity{}, err
+	}
+	defer C.amdgpu_device_deinitialize(devHandle)
+
+	var vramBytes C.uint64_t
+	var cuCount C.uint32_t
+	if rc := C.amdgpu_query_device_capacity(devHandle, &vramBytes, &cuCount); rc < 0 {
+		return DeviceCapacity{}, fmt.Errorf("query device capacity for %s: %d", cardName, rc)
+	}
+
+	vramMiB := uint64(vramBytes) / (1024 * 1024)
+	if vramMiB == 0 || vramMiB > uint64(^uint32(0)>>1) || uint64(cuCount) > uint64(^uint32(0)>>1) {
+		return DeviceCapacity{}, fmt.Errorf("invalid device capacity for %s: vram=%d bytes cu=%d", cardName, uint64(vramBytes), uint32(cuCount))
+	}
+	return DeviceCapacity{VRAMMiB: int32(vramMiB), CUCount: int32(cuCount)}, nil
 }
 
 func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {

@@ -11,25 +11,37 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-FROM docker.io/golang:1.23.6-alpine3.21
-RUN apk --no-cache add git pkgconfig build-base libdrm-dev
-RUN apk --no-cache add hwloc-dev --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
+FROM rocm/dev-ubuntu-24.04:7.0.2 AS rocm-runtime
+FROM rocm/dev-ubuntu-22.04:7.0.2 AS amdsmi-sdk
+
+FROM docker.io/golang:1.25 AS builder
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    git pkg-config build-essential libdrm-dev libhwloc-dev \
+    && rm -rf /var/lib/apt/lists/*
+# Keep the AMD SMI API at ROCm 7.0.2, but take it from Ubuntu 22.04 so the
+# library has an older glibc/libstdc++ baseline than the Ubuntu 24.04 runtime.
+COPY --from=amdsmi-sdk /opt/rocm/include/amd_smi /opt/rocm/include/amd_smi
+COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm/lib/libamd_smi.so
+COPY --from=amdsmi-sdk /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/rocm/lib/libstdc++.so.6
+RUN ln -s libstdc++.so.6 /opt/rocm/lib/libstdc++.so
 RUN mkdir -p /go/src/github.com/ROCm/k8s-device-plugin
 ADD . /go/src/github.com/ROCm/k8s-device-plugin
 WORKDIR /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-device-plugin
 RUN go install \
-    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/ROCm/k8s-device-plugin/ describe --always --long --dirty)"
+    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/ROCm/k8s-device-plugin/ describe --always --long --dirty 2>/dev/null || echo unknown)"
 
-FROM alpine:3.21.3
+FROM rocm-runtime
 LABEL \
     org.opencontainers.image.source="https://github.com/ROCm/k8s-device-plugin" \
     org.opencontainers.image.authors="Kenny Ho <Kenny.Ho@amd.com>" \
     org.opencontainers.image.vendor="Advanced Micro Devices, Inc." \
     org.opencontainers.image.licenses="Apache-2.0"
-RUN apk --no-cache add ca-certificates libdrm
-RUN apk --no-cache add hwloc --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdrm2 libhwloc15 && rm -rf /var/lib/apt/lists/*
+# The executable records the libamd_smi.so.26 SONAME. Override the runtime
+# target so it uses the Ubuntu 22.04-built, but still ROCm 7.0.2, library.
+COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm-7.0.2/lib/libamd_smi.so.26.0.70002
 RUN mkdir -p /usr/local/vgpu
 WORKDIR /root/
-COPY --from=0 /go/bin/k8s-device-plugin .
-COPY --from=0 /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
+COPY --from=builder /go/bin/k8s-device-plugin .
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]
