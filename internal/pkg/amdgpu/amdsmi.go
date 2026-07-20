@@ -29,6 +29,35 @@ static amdsmi_status_t amdsmi_uuid_for_bdf(const char *bdf_text, char *uuid,
 	}
 	return amdsmi_get_gpu_device_uuid(processor, uuid_length, uuid);
 }
+
+static amdsmi_status_t amdsmi_product_name_for_bdf(const char *bdf_text,
+                                                    char *market_name) {
+	unsigned long long domain;
+	unsigned int bus, device, function;
+	char trailing;
+	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
+	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
+		return AMDSMI_STATUS_INVAL;
+	}
+
+	amdsmi_bdf_t bdf = {0};
+	bdf.bdf.domain_number = domain;
+	bdf.bdf.bus_number = bus;
+	bdf.bdf.device_number = device;
+	bdf.bdf.function_number = function;
+	amdsmi_processor_handle processor = NULL;
+	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	if (status != AMDSMI_STATUS_SUCCESS) {
+		return status;
+	}
+	amdsmi_asic_info_t asic_info = {0};
+	status = amdsmi_get_gpu_asic_info(processor, &asic_info);
+	if (status != AMDSMI_STATUS_SUCCESS) {
+		return status;
+	}
+	snprintf(market_name, AMDSMI_MAX_STRING_LENGTH, "%s", asic_info.market_name);
+	return AMDSMI_STATUS_SUCCESS;
+}
 */
 import "C"
 
@@ -81,6 +110,44 @@ func GetAMDSMIUUIDs(bdfs []string) (map[string]string, error) {
 		return uuidByBDF, fmt.Errorf("AMD SMI UUID lookup failed for %s", strings.Join(failures, ", "))
 	}
 	return uuidByBDF, nil
+}
+
+// GetAMDSMIProductNames resolves the AMD SMI ASIC market_name by PCI BDF.
+// This is the user-facing product name reported in DeviceInfo.Type.
+func GetAMDSMIProductNames(bdfs []string) (map[string]string, error) {
+	amdSMIMu.Lock()
+	defer amdSMIMu.Unlock()
+
+	if status := C.amdsmi_init(C.AMDSMI_INIT_AMD_GPUS); status != C.AMDSMI_STATUS_SUCCESS {
+		return nil, fmt.Errorf("amdsmi_init: status %d", status)
+	}
+	defer C.amdsmi_shut_down()
+
+	namesByBDF := make(map[string]string, len(bdfs))
+	var failures []string
+	for _, rawBDF := range bdfs {
+		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
+		bdf := normalizeBDF(rawBDF)
+		if bdf == "" {
+			continue
+		}
+		cBDF := C.CString(bdf)
+		var marketName [C.AMDSMI_MAX_STRING_LENGTH]C.char
+		status := C.amdsmi_product_name_for_bdf(cBDF, &marketName[0])
+		C.free(unsafe.Pointer(cBDF))
+		if status != C.AMDSMI_STATUS_SUCCESS {
+			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
+			continue
+		}
+		if value := strings.TrimSpace(C.GoString(&marketName[0])); value != "" {
+			namesByBDF[bdf] = value
+			namesByBDF[rawBDF] = value
+		}
+	}
+	if len(failures) > 0 {
+		return namesByBDF, fmt.Errorf("AMD SMI product-name lookup failed for %s", strings.Join(failures, ", "))
+	}
+	return namesByBDF, nil
 }
 
 func normalizeBDF(bdf string) string {

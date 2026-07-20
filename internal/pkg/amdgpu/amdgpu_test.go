@@ -262,3 +262,14 @@ func TestRenderDevIdsFromTopology(t *testing.T) {
 		t.Errorf("Want: %s", exp)
 	}
 }
+
+func TestROCrUUIDsFromTopology(t *testing.T) {
+	got := GetROCrUUIDsFromTopology("../../../testdata/topology-parsing")
+	want := map[int]string{
+		128: "GPU-c34ec50444dd0a6c",
+		129: "GPU-c34ec50444dd0a6d",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ROCr UUIDs = %#v, want %#v", got, want)
+	}
+}

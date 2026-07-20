@@ -21,7 +21,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -59,6 +58,12 @@ type AMDGPUPlugin struct {
 	Resource                   string
 	devAllocator               allocator.Policy
 	allocatorInitError         bool
+	// amdSMIUUIDToTopology maps the stable AMD SMI device UUID published in
+	// DeviceInfo.ID back to the local topology key required during Allocate.
+	amdSMIUUIDToTopology map[string]string
+	// amdSMIUUIDToROCrUUID maps the scheduler-facing AMD SMI UUID to the UUID
+	// spelling understood by ROCR_VISIBLE_DEVICES.
+	amdSMIUUIDToROCrUUID map[string]string
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -153,12 +158,6 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	p.AMDGPUs = amdgpu.GetAMDGPUs()
 
-	// Node name is required to make device UUID unique cluster-wide.
-	nodeName := os.Getenv(utils.NodeNameEnvName)
-	if nodeName == "" {
-		nodeName = "unknown-node"
-	}
-
 	// Resolve a stable per-device UUID through the AMD SMI C API. Unlike the
 	// node labeller, this is not an aggregated node-level value and supports
 	// SR-IOV virtual functions.
@@ -170,7 +169,14 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	}
 	amdSMIUUIDs, err := amdgpu.GetAMDSMIUUIDs(bdfs)
 	if err != nil {
-		glog.Warningf("AMD SMI UUID lookup incomplete; registering topology-only devices where necessary: %v", err)
+		glog.Warningf("AMD SMI UUID lookup incomplete; GPUs without an AMD SMI UUID will not be registered: %v", err)
+	}
+	p.amdSMIUUIDToTopology = make(map[string]string, len(amdSMIUUIDs))
+	p.amdSMIUUIDToROCrUUID = make(map[string]string, len(amdSMIUUIDs))
+	rocrUUIDs := amdgpu.GetROCrUUIDsFromTopology()
+	amdSMIProductNames, err := amdgpu.GetAMDSMIProductNames(bdfs)
+	if err != nil {
+		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
 	}
 
 	keys := make([]string, 0, len(p.AMDGPUs))
@@ -190,17 +196,33 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			glog.Warningf("libdrm capacity lookup failed for GPU %s (card%d): %v", key, card, capacityErr)
 		}
 
-		// UUID: node name + escaped topology key. Escape is required because the annotation codec
-		// uses ":" as item separator and raw PCIe BDF also contains ":".
-		uuid := fmt.Sprintf("%s%s%s", nodeName, allocationUUIDSep, url.QueryEscape(key))
-
-		var customInfo map[string]any
-		if bdf, ok := deviceData["devID"].(string); ok {
-			if amdSMIUUID, found := amdSMIUUIDs[strings.ToLower(bdf)]; found {
-				customInfo = map[string]any{"pciBDF": strings.ToLower(key), "amdSMIUUID": amdSMIUUID}
-			} else if err == nil {
-				glog.Warningf("AMD SMI did not return a UUID for GPU %s (topology BDF %s)", key, bdf)
-			}
+		bdf, ok := deviceData["devID"].(string)
+		if !ok || bdf == "" {
+			glog.Errorf("skip GPU %s: missing PCI BDF in topology", key)
+			continue
+		}
+		uuid, found := amdSMIUUIDs[strings.ToLower(bdf)]
+		if !found || uuid == "" {
+			// Do not fall back to a node/BDF-derived ID. The scheduler must only
+			// see stable, hardware-bound AMD SMI UUIDs.
+			glog.Errorf("skip GPU %s: AMD SMI did not return a UUID for topology BDF %s", key, bdf)
+			continue
+		}
+		rocrUUID, found := rocrUUIDs[renderD]
+		if !found || rocrUUID == "" {
+			glog.Errorf("skip GPU %s: no ROCr UUID found for renderD%d", key, renderD)
+			continue
+		}
+		// Keep BDF in the annotation for consumers that need to locate the
+		// device node. Allocate uses the in-memory UUID -> topology map below.
+		p.amdSMIUUIDToTopology[uuid] = key
+		p.amdSMIUUIDToROCrUUID[uuid] = rocrUUID
+		// key is the standard PCI BDF spelling (domain:bus:device.function).
+		// The KFD topology bdf above uses a fourth colon-separated component.
+		customInfo := map[string]any{"pciBDF": strings.ToLower(key)}
+		deviceType := "amd-gpu"
+		if productName, ok := amdSMIProductNames[strings.ToLower(bdf)]; ok && productName != "" {
+			deviceType = productName
 		}
 
 		out = append(out, &utils.DeviceInfo{
@@ -209,7 +231,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			Count:        defaultSplitCount,
 			Devmem:       capacity.VRAMMiB,
 			Devcore:      capacity.CUCount,
-			Type:         "amd-gpu",
+			Type:         deviceType,
 			Numa:         numa,
 			Mode:         "",
 			Health:       true,
@@ -539,51 +561,24 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 	return response, nil
 }
 
-// allocationUUIDSep separates node name from the local topology key in DeviceInfo.ID / scheduler UUIDs.
-const allocationUUIDSep = "~"
+// deviceDataFromAllocationUUID resolves the AMD SMI UUID published in
+// DeviceInfo.ID to the local topology required to prepare a container.
+func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]interface{}, error) {
+	if topoKey, ok := p.amdSMIUUIDToTopology[uuid]; ok {
+		if d, found := p.AMDGPUs[topoKey]; found {
+			return d, nil
+		}
+		return nil, fmt.Errorf("AMD SMI UUID %q resolves to unavailable topology key %q", uuid, topoKey)
+	}
 
-// deviceDataFromAllocationUUID resolves amdgpu topology for a scheduler/device allocation UUID:
-// "<nodeName>~<topoKey>" where topoKey matches p.AMDGPUs (e.g. PCIe "0000:19:00.0").
-func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, expectNode string) (map[string]interface{}, error) {
-	var topoKeyEscaped string
-	sep := strings.Index(uuid, allocationUUIDSep)
-	if sep > 0 {
-		nodeInUUID := uuid[:sep]
-		topoKeyEscaped = uuid[sep+len(allocationUUIDSep):]
-		if expectNode != "" && nodeInUUID != expectNode {
-			return nil, fmt.Errorf("allocation UUID node %q does not match this node %q", nodeInUUID, expectNode)
-		}
-	} else {
-		// Backward/interop tolerance: accept bare topo key payloads.
-		topoKeyEscaped = uuid
+	return nil, fmt.Errorf("no local GPU topology entry for AMD SMI UUID %q", uuid)
+}
+
+func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
+	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok && rocrUUID != "" {
+		return rocrUUID, nil
 	}
-	if topoKeyEscaped == "" {
-		return nil, fmt.Errorf("invalid allocation UUID %q (empty topology key)", uuid)
-	}
-	topoKey, err := url.QueryUnescape(topoKeyEscaped)
-	if err != nil {
-		return nil, fmt.Errorf("invalid allocation UUID %q (cannot decode topology key): %w", uuid, err)
-	}
-	d, ok := p.AMDGPUs[topoKey]
-	if !ok {
-		// Graceful fallback for truncated values (e.g. "00.0" from legacy split conflicts):
-		// match by unique suffix among local topology keys.
-		var (
-			matchedKey string
-			matches    int
-		)
-		for k := range p.AMDGPUs {
-			if strings.HasSuffix(k, topoKey) {
-				matchedKey = k
-				matches++
-			}
-		}
-		if matches == 1 {
-			return p.AMDGPUs[matchedKey], nil
-		}
-		return nil, fmt.Errorf("no local GPU topology entry for key %q (UUID %q)", topoKey, uuid)
-	}
-	return d, nil
+	return "", fmt.Errorf("no ROCr UUID for AMD SMI UUID %q", uuid)
 }
 
 // Allocate is called during container creation so that the Device
@@ -634,6 +629,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		car := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{},
 		}
+		rocrVisibleDevices := make([]string, 0, len(devreq))
 
 		// KFD + DRI from annotation UUID topology.
 		car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
@@ -654,6 +650,12 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				utils.PodAllocationFailed(nodename, current, NodeLockName)
 				return &pluginapi.AllocateResponse{}, fmt.Errorf("invalid card/renderD in topology for UUID %q", d.UUID)
 			}
+			rocrUUID, rocrErr := p.rocrUUIDFromAllocationUUID(d.UUID)
+			if rocrErr != nil {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, rocrErr
+			}
+			rocrVisibleDevices = append(rocrVisibleDevices, rocrUUID)
 			for _, pair := range []struct {
 				kind  string
 				minor int
@@ -727,6 +729,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				}
 			}
 			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
+			// ROCr renumbers devices after this list is applied. HSA_CU_MASK uses
+			// those container-local indices, so it is built in the same order.
+			car.Envs["ROCR_VISIBLE_DEVICES"] = strings.Join(rocrVisibleDevices, ",")
 			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 			car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 		}

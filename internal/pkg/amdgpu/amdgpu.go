@@ -561,6 +561,57 @@ func parseDebugFSFirmwareInfo(path string) (map[string]uint32, map[string]uint32
 var topoDrmRenderMinorRe = regexp.MustCompile(`drm_render_minor\s(\d+)`)
 var topoLocationIdRe = regexp.MustCompile(`location_id\s(\d+)`)
 var topoDomainRe = regexp.MustCompile(`domain\s(\d+)`)
+var topoUniqueIDRe = regexp.MustCompile(`unique_id\s(\d+)`)
+
+// GetROCrUUIDsFromTopology returns the ROCr UUID for every KFD render node.
+// ROCr represents the KFD unique_id as GPU-<16 lowercase hex digits>, which
+// is the UUID spelling accepted by ROCR_VISIBLE_DEVICES on ROCm versions where
+// the AMD SMI UUID has a different format.
+func GetROCrUUIDsFromTopology(topoRootParam ...string) map[int]string {
+	topoRoot := "/sys/class/kfd/kfd"
+	if len(topoRootParam) == 1 {
+		topoRoot = topoRootParam[0]
+	}
+
+	uuids := make(map[int]string)
+	nodeFiles, err := filepath.Glob(topoRoot + "/topology/nodes/*/properties")
+	if err != nil {
+		glog.Errorf("glob KFD topology nodes: %v", err)
+		return uuids
+	}
+	for _, nodeFile := range nodeFiles {
+		renderMinor, err := ParseTopologyProperties(nodeFile, topoDrmRenderMinorRe)
+		if err != nil || renderMinor <= 0 {
+			continue
+		}
+		uniqueID, err := parseTopologyUniqueID(nodeFile)
+		if err != nil || uniqueID == 0 {
+			glog.Errorf("read ROCr UUID source from %s: %v", nodeFile, err)
+			continue
+		}
+		uuids[int(renderMinor)] = fmt.Sprintf("GPU-%016x", uniqueID)
+	}
+	return uuids
+}
+
+func parseTopologyUniqueID(path string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if match := topoUniqueIDRe.FindStringSubmatch(scanner.Text()); match != nil {
+			return strconv.ParseUint(match[1], 10, 64)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return 0, fmt.Errorf("unique_id not found")
+}
 
 func GetNodeIdsFromTopology(topoRootParam ...string) map[int]int {
 	topoRoot := "/sys/class/kfd/kfd"

@@ -35,6 +35,35 @@ func TestCountGPUDevFromTopology(t *testing.T) {
 	}
 }
 
+func TestDeviceDataFromAMDSMIUUID(t *testing.T) {
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:83:00.0": {"card": 1},
+		},
+		amdSMIUUIDToTopology: map[string]string{
+			"8eff74b5-0000-1000-801b-b56457addd1b": "0000:83:00.0",
+		},
+		amdSMIUUIDToROCrUUID: map[string]string{
+			"8eff74b5-0000-1000-801b-b56457addd1b": "GPU-466450b96fbde849",
+		},
+	}
+
+	device, err := p.deviceDataFromAllocationUUID("8eff74b5-0000-1000-801b-b56457addd1b", "node-a")
+	if err != nil {
+		t.Fatalf("resolve AMD SMI UUID: %v", err)
+	}
+	if device["card"] != 1 {
+		t.Fatalf("resolved device = %#v, want card 1", device)
+	}
+	rocrUUID, err := p.rocrUUIDFromAllocationUUID("8eff74b5-0000-1000-801b-b56457addd1b")
+	if err != nil {
+		t.Fatalf("resolve ROCr UUID: %v", err)
+	}
+	if rocrUUID != "GPU-466450b96fbde849" {
+		t.Fatalf("ROCr UUID = %q", rocrUUID)
+	}
+}
+
 func TestBuildCUAllocationsFromPods(t *testing.T) {
 	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{
 		{ID: "node~gpu0", Devcore: 8},
