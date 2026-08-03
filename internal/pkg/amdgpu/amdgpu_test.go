@@ -27,17 +27,19 @@ import (
 	"testing"
 )
 
-func hasAMDGPU(t *testing.T) bool {
-	devices := GetAMDGPUs()
-
-	if len(devices) <= 0 {
-		return false
+func hasAMDGPU() bool {
+	vendorFiles, _ := filepath.Glob("/sys/class/drm/card[0-9]*/device/vendor")
+	for _, vendorFile := range vendorFiles {
+		vendor, err := ioutil.ReadFile(vendorFile)
+		if err == nil && strings.TrimSpace(string(vendor)) == "0x1002" {
+			return true
+		}
 	}
-	return true
+	return false
 }
 
 func TestFirmwareVersionConsistent(t *testing.T) {
-	if !hasAMDGPU(t) {
+	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
 	}
 
@@ -69,7 +71,7 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 }
 
 func TestAMDGPUcountConsistent(t *testing.T) {
-	if !hasAMDGPU(t) {
+	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
 	}
 
@@ -99,13 +101,13 @@ func TestAMDGPUcountConsistent(t *testing.T) {
 }
 
 func TestHasAMDGPU(t *testing.T) {
-	if !hasAMDGPU(t) {
+	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
 	}
 }
 
 func TestDevFunctional(t *testing.T) {
-	if !hasAMDGPU(t) {
+	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
 	}
 
