@@ -1,114 +1,112 @@
-# AMD GPU Device Plugin for Kubernetes
+# HAMi AMD Device Plugin
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/ROCm/k8s-device-plugin)](https://goreportcard.com/report/github.com/ROCm/k8s-device-plugin)
+[![CI](https://github.com/Project-HAMi/amd-device-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Project-HAMi/amd-device-plugin/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Project-HAMi/amd-device-plugin)](LICENSE)
 
-## Introduction
+This repository contains the AMD device plugin used by [HAMi](https://github.com/Project-HAMi/HAMi) to discover AMD GPUs and enforce HAMi vGPU allocations on Kubernetes nodes. It is based on AMD's upstream [ROCm Kubernetes device plugin](https://github.com/ROCm/k8s-device-plugin).
 
-This is a [Kubernetes][k8s] [device plugin][dp] implementation that enables the registration of AMD GPU in a container cluster for compute workload.  With the appropriate hardware and this plugin deployed in your Kubernetes cluster, you will be able to run jobs that require AMD GPU.
+## Current capabilities
 
-This plugin is required by tools such as the [AMD GPU Operator](https://github.com/ROCm/gpu-operator) to expose AMD GPUs as schedulable resources.
+- Uses the AMD SMI C API through cgo to get device UUID implemented by building with ROCm base-image.
+- Publishes the hardware-bound AMD SMI UUID as `DeviceInfo.ID`.
+- Publishes the AMD SMI ASIC market name, for example `AMD Instinct MI300X VF`, as `DeviceInfo.Type`.
+- Publishes the standard PCI BDF in `custominfo.pciBDF`.
+- Reads physical VRAM and active CU capacity through `libdrm_amdgpu`.
+- Persists per-Pod CU ranges in `hami.io/amd-cu-allocated` and reconstructs allocation state after a device-plugin restart.
+- Applies `ROCR_VISIBLE_DEVICES` and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
+- Applies the requested memory limit through `HIP_DEVICE_MEMORY_LIMIT` and the `libamvgpu.so` `LD_AUDIT` hook.
 
-More information about [ROCm][rocm].
+The plugin registers devices in the `hami.io/node-amd-register` node annotation. A device entry has this shape:
 
-## Prerequisites
+```json
+{
+  "id": "8eff74b5-0000-1000-801b-b56457addd1b",
+  "index": 0,
+  "count": 10,
+  "devmem": 196288,
+  "devcore": 304,
+  "type": "AMD Instinct MI300X VF",
+  "numa": 0,
+  "health": true,
+  "devicevendor": "amd",
+  "custominfo": {
+    "pciBDF": "0000:83:00.0"
+  }
+}
+```
 
-* [ROCm capable machines][sysreq]
-* [kubeadm capable machines][kubeadm] (if you are using kubeadm to deploy your k8s cluster)
-* [ROCm kernel][rock] ([Installation guide][rocminstall]) or latest AMD GPU Linux driver ([Installation guide][amdgpuinstall])
-* A [Kubernetes deployment][k8sinstall]
-* If device health checks are enabled, the pods must be allowed to run in privileged mode (for example the `--allow-privileged=true` flag for kube-apiserver), in order to access `/dev/kfd`
+## Requirements
 
-## Limitations
+- Linux `amd64` AMD GPU node supported by ROCm.
+- Kubernetes and a compatible HAMi scheduler deployment.
+- AMD GPU kernel driver, `/dev/kfd`, `/dev/dri`, KFD topology under `/sys`, and `libdrm_amdgpu`.
+- AMD SMI from ROCm 7.0.2. The image carries the matching AMD SMI userspace library; the host must provide the compatible kernel driver and device interfaces.
+- Permission for the DaemonSet service account to read Pods and patch Node/Pod annotations and the HAMi node lock.
 
-* This plugin targets Kubernetes v1.18+.
+GPUs for which AMD SMI does not return a UUID are deliberately not registered. There is no node-name/BDF-derived compatibility ID.
 
-## Deployment
-
-The device plugin needs to be run on all the nodes that are equipped with AMD GPU.  The simplest way of doing so is to create a Kubernetes [DaemonSet][ds], which runs a copy of a pod on all (or some) Nodes in the cluster.  We have a pre-built Docker image on [DockerHub][dhk8samdgpudp] that you can use for your DaemonSet.  This repository also has a pre-defined yaml file named `k8s-ds-amdgpu-dp.yaml`.  You can create a DaemonSet in your Kubernetes cluster by running this command:
+## Build
 
 ```bash
-kubectl create -f k8s-ds-amdgpu-dp.yaml
+docker build -t ghcr.io/project-hami/amd-device-plugin:dev .
 ```
 
-or directly pull from the web using
+The Docker build compiles the cgo code against the ROCm 7.0.2 AMD SMI SDK and temporarily packages the checked-in `libamvgpu.so`. CI verifies that the hook exists and uses the same Dockerfile for the published image, so a missing hook fails the image build.
+
+## Deploy with Helm
+
+The device-plugin image currently includes the repository's `libamvgpu.so` under `/opt/hami/lib/amd`, separate from the host-mounted destination. Following HAMi's hook-delivery model, the device-plugin container mounts the node's `<hostHookPath>/vgpu` directory and runs `amd-vgpu-init.sh` from a `postStart` lifecycle hook. The script compares the bundled and installed files and atomically updates `<hostHookPath>/vgpu/libamvgpu.so` when needed. With the default `hostHookPath=/usr/local`, Allocate then mounts `/usr/local/vgpu/libamvgpu.so` from the host into workload containers.
+
+This bundled binary is a temporary delivery mechanism. It will be replaced by an artifact obtained from the official `amd-hami-core` repository once that project provides a release and consumption pipeline. Set `dp.hookInstaller.enabled=false` only when the hook is managed on every node by another mechanism.
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
+helm dependency build ./helm/amd-gpu
+helm upgrade --install amd-gpu ./helm/amd-gpu \
+  --namespace kube-system \
+  --create-namespace \
+  --set dp.image.repository=ghcr.io/project-hami/amd-device-plugin \
+  --set dp.image.tag=main
 ```
 
-If you want to enable the experimental device health check, please use `k8s-ds-amdgpu-dp-health.yaml` **after** `--allow-privileged=true` is set for kube-apiserver.
+Images are published to GitHub Container Registry after CI succeeds on `main` and version tags. The GHCR package must be public for deployment without credentials; otherwise configure `imagePullSecrets`.
 
-### Helm Chart
-
-If you want to deploy this device plugin using Helm, a [Helm Chart][helmamdgpu] is available via [Artifact Hub][artifacthub].
-
-## Example workload
-
-You can restrict workloads to a node with a GPU by adding `resources.limits` to the pod definition.  An example pod definition is provided in `example/pod/alexnet-gpu.yaml`.  This pod runs the timing benchmark for AlexNet on AMD GPU and then goes to sleep. You can create the pod by running:
+Verify registration:
 
 ```bash
-kubectl create -f alexnet-gpu.yaml
+kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
 ```
 
-or
-bash
-```
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/alexnet-gpu.yaml
-```
+## Memory-isolation compatibility
 
-and then check the pod status by running
+CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.
+
+The hook currently checked into this repository requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The current allocation path injects the hook for every HAMi AMD allocation, including whole-GPU requests, so incompatible workload images are not yet supported safely.
+
+See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
+
+## Validation status
+
+The AMD SMI UUID, product type, BDF, VRAM and CU registration path has been validated on a real ROCm 7.0.2 `AMD Instinct MI300X VF` node. Multi-GPU `ROCR_VISIBLE_DEVICES` ordering still requires validation on nodes with more than one allocatable GPU.
+
+## Development
+
+Run the same checks used by CI:
 
 ```bash
-kubectl describe pods
+docker build --target builder -t amd-device-plugin-builder:test .
+docker run --rm \
+  --workdir /go/src/github.com/ROCm/k8s-device-plugin \
+  --env LD_LIBRARY_PATH=/opt/rocm/lib \
+  amd-device-plugin-builder:test \
+  bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.26 && go test ./...'
+
+helm dependency build ./helm/amd-gpu
+helm lint ./helm/amd-gpu
+helm template amd-gpu ./helm/amd-gpu --namespace kube-system >/dev/null
 ```
 
-After the pod is created and running, you can see the benchmark result by running:
+Hardware-dependent tests skip automatically when no AMD GPU is present. Real-node validation is still required for changes to device discovery, AMD SMI calls, ROCr visibility, CU masks, or memory interception.
 
-```bash
-kubectl logs alexnet-tf-gpu-pod alexnet-tf-gpu-container
-```
+## License
 
-For comparison, an example pod definition of running the same benchmark with CPU is provided in `example/pod/alexnet-cpu.yaml`.
-
-## Labelling node with additional GPU properties
-
-Please see [AMD GPU Kubernetes Node Labeller](cmd/k8s-node-labeller/README.md) for details.  An example configuration is in [k8s-ds-amdgpu-labeller.yaml](k8s-ds-amdgpu-labeller.yaml):
-
-```bash
-kubectl create -f k8s-ds-amdgpu-labeller.yaml
-```
-
-or
-
-```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-labeller.yaml
-```
-
-# Health per GPU
-
-* Extends more granular health detection per GPU using the exporter health
-  service over grpc socket service mounted on /var/lib/amd-metrics-exporter/
-
-## Notes
-
-* This plugin uses [`go modules`][gm] for dependencies management
-* Please consult the `Dockerfile` on how to build and use this plugin independent of a docker image
-
-## TODOs
-
-* ~~Add proper GPU health check (health check without `/dev/kfd` access.)~~
-
-[artifacthub]: https://artifacthub.io/packages/helm/amd-gpu-helm/amd-gpu
-[ds]: https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/
-[dp]: https://kubernetes.io/docs/concepts/cluster-administration/device-plugins/
-[helmamdgpu]: https://artifacthub.io/packages/helm/amd-gpu-helm/amd-gpu
-[rocm]: https://rocm.docs.amd.com/en/latest/what-is-rocm.html
-[rock]: https://github.com/ROCm/ROCK-Kernel-Driver
-[rocminstall]: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/tutorial/quick-start.html
-[amdgpuinstall]: https://amdgpu-install.readthedocs.io/en/latest/
-[sysreq]: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html
-[gm]: https://blog.golang.org/using-go-modules
-[kubeadm]: https://kubernetes.io/docs/setup/independent/install-kubeadm/#before-you-begin
-[k8sinstall]: https://kubernetes.io/docs/setup/independent/install-kubeadm
-[k8s]: https://kubernetes.io
-[dhk8samdgpudp]: https://hub.docker.com/r/rocm/k8s-device-plugin/
+Apache License 2.0. See [LICENSE](LICENSE).

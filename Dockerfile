@@ -32,7 +32,7 @@ RUN go install \
 
 FROM rocm-runtime
 LABEL \
-    org.opencontainers.image.source="https://github.com/ROCm/k8s-device-plugin" \
+    org.opencontainers.image.source="https://github.com/Project-HAMi/amd-device-plugin" \
     org.opencontainers.image.authors="Kenny Ho <Kenny.Ho@amd.com>" \
     org.opencontainers.image.vendor="Advanced Micro Devices, Inc." \
     org.opencontainers.image.licenses="Apache-2.0"
@@ -40,8 +40,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # The executable records the libamd_smi.so.26 SONAME. Override the runtime
 # target so it uses the Ubuntu 22.04-built, but still ROCm 7.0.2, library.
 COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm-7.0.2/lib/libamd_smi.so.26.0.70002
-RUN mkdir -p /usr/local/vgpu
+RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
+# Temporary packaging path: keep the checked-in hook in this image so the
+# DaemonSet postStart hook can install it on each node, matching HAMi's hook
+# deployment model. Replace it with the official amd-hami-core artifact later.
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
+RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
+    && test -s /opt/hami/lib/amd/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]

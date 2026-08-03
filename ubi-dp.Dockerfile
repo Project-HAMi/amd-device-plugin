@@ -49,8 +49,13 @@ RUN mkdir -p /licenses && \
     dnf install -y hwloc && \
     dnf clean all
 ADD ./LICENSE /licenses/LICENSE
-RUN mkdir -p /usr/local/vgpu
+RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /usr/local/vgpu/libamvgpu.so
+# Temporary HAMi-style hook packaging; switch the source to the official
+# amd-hami-core artifact after that repository publishes one.
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
+COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
+RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
+    && test -s /opt/hami/lib/amd/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]

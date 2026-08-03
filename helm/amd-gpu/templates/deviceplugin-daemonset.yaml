@@ -34,6 +34,17 @@ spec:
       containers:
         - name: {{ .Chart.Name }}-dp-cntr
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
+          {{- if .Values.dp.hookInstaller.enabled }}
+          # Temporary HAMi-style delivery: copy the image-bundled hook into
+          # the hostPath after the device-plugin container is created.
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /opt/hami/bin/amd-vgpu-init.sh
+                  - {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
+          {{- end }}
           env:
             - name: NODE_NAME
               valueFrom:
@@ -50,8 +61,10 @@ spec:
               mountPath: /sys
             - name: health
               mountPath: /var/lib/amd-metrics-exporter/
-            - name: host-hook
-              mountPath: {{ .Values.dp.hostHookPath | quote }}
+            {{- if .Values.dp.hookInstaller.enabled }}
+            - name: host-vgpu-hook
+              mountPath: {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.dp.resources | nindent 12 }}
       volumes:
@@ -65,7 +78,9 @@ spec:
           hostPath:
             path: /var/lib/amd-metrics-exporter/
             type : DirectoryOrCreate
-        - name: host-hook
+        {{- if .Values.dp.hookInstaller.enabled }}
+        - name: host-vgpu-hook
           hostPath:
-            path: {{ .Values.dp.hostHookPath | quote }}
+            path: {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
             type: DirectoryOrCreate
+        {{- end }}
