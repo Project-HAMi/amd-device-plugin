@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/cuallocation"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/utils"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

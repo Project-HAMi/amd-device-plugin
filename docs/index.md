@@ -1,12 +1,14 @@
-# AMD GPU Device Plugin for Kubernetes
+# HAMi AMD Device Plugin
 
-The AMD GPU Device Plugin for Kubernetes enables the use of AMD GPUs as schedulable resources in Kubernetes clusters. This plugin allows you to run GPU-accelerated workloads such as machine learning, scientific computing, and visualization applications on Kubernetes.
+The HAMi AMD Device Plugin discovers AMD GPUs, reports hardware identity through HAMi node annotations, and enforces HAMi fractional GPU allocations in Kubernetes clusters.
+
+> The top-level [README](../README.md) and Helm chart are the canonical deployment documentation for the HAMi fork. Some detailed pages below describe inherited upstream ROCm functionality and examples.
 
 ## Features
 
 - Implements the Kubernetes Device Plugin API for AMD GPUs
 - Exposes AMD GPUs as `amd.com/gpu` resources in Kubernetes
-- Provides automated node labeling with detailed GPU properties (device ID, VRAM, compute units, etc.)
+- Reports AMD SMI UUID, product type, PCI BDF, VRAM, and compute units to HAMi
 - Enables fine-grained GPU allocation for containers
 
 ## System Requirements
@@ -19,18 +21,14 @@ See the [ROCm System Requirements](https://rocm.docs.amd.com/projects/install-on
 
 ## Quick Start
 
-To deploy the device plugin, run it on all nodes equipped with AMD GPUs. The simplest way to do this is by creating a Kubernetes [DaemonSet](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/). A pre-built Docker image is available on [DockerHub](https://hub.docker.com/r/rocm/k8s-device-plugin), and a predefined YAML file named [k8s-ds-amdgpu-dp.yaml](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml) is included in this repository.
+The supported `v0.0.1` deployment is the repository Helm chart. It installs the ServiceAccount/RBAC required by HAMi annotations and delivers the bundled memory hook to the host.
 
 Create a DaemonSet in your Kubernetes cluster with the following command:
 
 ```bash
-kubectl create -f k8s-ds-amdgpu-dp.yaml
-```
-
-Alternatively, you can pull directly from the web:
-
-```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
+helm upgrade --install amd-gpu ./helm/amd-gpu \
+  --namespace kube-system \
+  --create-namespace
 ```
 
 ### Deploy the Node Labeler (Optional)
@@ -57,10 +55,10 @@ k8s-node-01      8
 
 ## Example Workload
 
-You can restrict workloads to a node with a GPU by adding `resources.limits` to the pod definition. An example pod definition is provided in [example/pod/pytorch.yaml](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/pytorch.yaml). Create the pod by running:
+You can restrict workloads to a node with a GPU by adding `resources.limits` to the pod definition. An example pod definition is provided in [example/pod/pytorch.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml). Create the pod by running:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/pytorch.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml
 ```
 
 Check the pod status with:

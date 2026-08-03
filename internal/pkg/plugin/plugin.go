@@ -31,11 +31,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/allocator"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/amdgpu"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/cuallocation"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/exporter"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/utils"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/allocator"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/exporter"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	"golang.org/x/net/context"
@@ -206,6 +206,11 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			// Do not fall back to a node/BDF-derived ID. The scheduler must only
 			// see stable, hardware-bound AMD SMI UUIDs.
 			glog.Errorf("skip GPU %s: AMD SMI did not return a UUID for topology BDF %s", key, bdf)
+			continue
+		}
+		renderD, ok := deviceData["renderD"].(int)
+		if !ok || renderD <= 0 {
+			glog.Errorf("skip GPU %s: missing or invalid render node in topology", key)
 			continue
 		}
 		rocrUUID, found := rocrUUIDs[renderD]

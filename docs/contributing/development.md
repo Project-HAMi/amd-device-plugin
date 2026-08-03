@@ -15,8 +15,8 @@ Before you begin development, ensure you have the following prerequisites:
 To contribute to the project, start by cloning the repository:
 
 ```bash
-git clone https://github.com/ROCm/k8s-device-plugin.git
-cd k8s-device-plugin
+git clone https://github.com/Project-HAMi/amd-device-plugin.git
+cd amd-device-plugin
 ```
 
 ### Branching Strategy

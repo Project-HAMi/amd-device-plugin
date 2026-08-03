@@ -16,6 +16,7 @@ spec:
       labels:
         name: {{ .Chart.Name }}-dp-ds
     spec:
+      serviceAccountName: {{ include "amd-gpu.devicePluginServiceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -53,7 +54,7 @@ spec:
             - name: HOST_HOOK_PATH
               value: {{ .Values.dp.hostHookPath | quote }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml .Values.dp.securityContext | nindent 12 }}
           volumeMounts:
             - name: dp
               mountPath: /var/lib/kubelet/device-plugins

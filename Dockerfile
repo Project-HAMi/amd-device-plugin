@@ -24,17 +24,17 @@ COPY --from=amdsmi-sdk /opt/rocm/include/amd_smi /opt/rocm/include/amd_smi
 COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm/lib/libamd_smi.so
 COPY --from=amdsmi-sdk /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/rocm/lib/libstdc++.so.6
 RUN ln -s libstdc++.so.6 /opt/rocm/lib/libstdc++.so
-RUN mkdir -p /go/src/github.com/ROCm/k8s-device-plugin
-ADD . /go/src/github.com/ROCm/k8s-device-plugin
-WORKDIR /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-device-plugin
+RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
+ADD . /go/src/github.com/Project-HAMi/amd-device-plugin
+WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-device-plugin
 RUN go install \
-    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/ROCm/k8s-device-plugin/ describe --always --long --dirty 2>/dev/null || echo unknown)"
+    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty 2>/dev/null || echo unknown)"
 
 FROM rocm-runtime
 LABEL \
     org.opencontainers.image.source="https://github.com/Project-HAMi/amd-device-plugin" \
-    org.opencontainers.image.authors="Kenny Ho <Kenny.Ho@amd.com>" \
-    org.opencontainers.image.vendor="Advanced Micro Devices, Inc." \
+    org.opencontainers.image.authors="Project-HAMi maintainers" \
+    org.opencontainers.image.vendor="Project-HAMi" \
     org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdrm2 libhwloc15 && rm -rf /var/lib/apt/lists/*
 # The executable records the libamd_smi.so.26 SONAME. Override the runtime
@@ -46,8 +46,8 @@ COPY --from=builder /go/bin/k8s-device-plugin .
 # Temporary packaging path: keep the checked-in hook in this image so the
 # DaemonSet postStart hook can install it on each node, matching HAMi's hook
 # deployment model. Replace it with the official amd-hami-core artifact later.
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
+COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
+COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
 RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
     && test -s /opt/hami/lib/amd/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]

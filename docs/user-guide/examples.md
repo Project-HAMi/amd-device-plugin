@@ -40,7 +40,7 @@ spec:
 To run the example:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/pytorch.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml
 ```
 
 Check the output with:
@@ -49,7 +49,7 @@ Check the output with:
 kubectl logs pytorch-gpu-pod-example
 ```
 
-This example manifest is available for download here: [https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/pytorch.yaml](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/pytorch.yaml)
+This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml)
 
 ## Multiple GPU Example
 
@@ -102,7 +102,7 @@ spec:
 To run the example:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-non-privileged.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml
 ```
 
 Check the output with:
@@ -111,7 +111,7 @@ Check the output with:
 kubectl logs jax-multigpu-pod
 ```
 
-This example manifest is available for download here: [https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-mult-gpu.yaml](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-mult-gpu.yaml)
+This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-mult-gpu.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-mult-gpu.yaml)
 
 ## Non-privileged Pod with GPU Access Example
 
@@ -168,7 +168,7 @@ spec:
 To run the example:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-non-privileged.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml
 ```
 
 Check the output with:
@@ -177,4 +177,4 @@ Check the output with:
 kubectl logs jax-non-privileged-multi-gpu-pod
 ```
 
-This example manifest is available for download here: [https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-non-privileged.yaml](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/example/pod/jax-non-privileged.yaml)
+This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml)

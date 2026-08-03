@@ -31,6 +31,18 @@ jobs:
         with:
           version: v3.20.2
 
+      # chart-releaser expects its pages branch to exist. Bootstrap an empty
+      # branch on the first release without modifying the checked-out tree.
+      - name: Ensure chart repository branch exists
+        env:
+          CR_PAGES_BRANCH: helm-chart-release
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${CR_PAGES_BRANCH}" >/dev/null; then
+            empty_tree="$(git hash-object -t tree /dev/null)"
+            initial_commit="$(printf 'Initialize Helm chart repository\n' | git commit-tree "${empty_tree}")"
+            git push origin "${initial_commit}:refs/heads/${CR_PAGES_BRANCH}"
+          fi
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         with:

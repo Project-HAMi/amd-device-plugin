@@ -23,9 +23,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/amdgpu"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/hwloc"
-	"github.com/ROCm/k8s-device-plugin/internal/pkg/plugin"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/hwloc"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/plugin"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 )

@@ -1,18 +1,12 @@
 # AMD GPU Helm Chart
 
-![Version: 0.21.0](https://img.shields.io/badge/Version-0.21.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.31.0.9](https://img.shields.io/badge/AppVersion-1.31.0.9-informational?style=flat-square)
+![Version: 0.0.1](https://img.shields.io/badge/Version-0.0.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.0.1](https://img.shields.io/badge/AppVersion-0.0.1-informational?style=flat-square)
 
-A Helm chart for deploying Kubernetes AMD GPU device plugin
+HAMi AMD device plugin for fractional GPU allocation on Kubernetes
 
 ## Requirements
 
 Kubernetes: `>= 1.18.0`
-
-## Optional Dependencies
-
-| Repository | Name | Version |
-|------------|------|---------|
-| https://kubernetes-sigs.github.io/node-feature-discovery/charts | node-feature-discovery | 0.8.1 |
 
 ## Values
 
@@ -20,14 +14,13 @@ Kubernetes: `>= 1.18.0`
 |-----|------|---------|-------------|
 | dp.image.repository | string | `"ghcr.io/project-hami/amd-device-plugin"` |  |
 | dp.image.pullPolicy | string | `"IfNotPresent"` |  |
-| dp.image.tag | string | `"main"` |  |
+| dp.image.tag | string | `"0.0.1"` |  |
 | dp.hookInstaller.enabled | bool | `true` | Temporarily install the image-bundled `libamvgpu.so` to the node with a HAMi-style postStart hook. |
 | dp.hostHookPath | string | `"/usr/local"` | Host path prefix; the hook is installed under `<hostHookPath>/vgpu`. |
+| dp.securityContext.privileged | bool | `true` | Allow the plugin to query AMD GPU device nodes on the host. |
+| dp.serviceAccount.create | bool | `true` | Create the service account and RBAC needed to register devices and persist allocations. |
+| dp.serviceAccount.name | string | `""` | Override the device-plugin service account name. |
 | imagePullSecrets | list | `[]` |  |
-| labeller.enabled | bool | `false` |  |
-| lbl.image.repository | string | `"docker.io/rocm/k8s-device-plugin"` |  |
-| lbl.image.tag | string | `"labeller-latest"` |  |
-| nfd.enabled | bool | `false` |  |
 | node_selector_enabled | bool | `false` |  |
 | node_selector."feature.node.kubernetes.io/pci-0300_1002.present" | string | `"true"` |  |
 | securityContext.allowPrivilegeEscalation | bool | `false` |  |

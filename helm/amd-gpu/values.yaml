@@ -1,15 +1,20 @@
-nfd:
-  enabled: false
-
-labeller:
-  enabled: false
-
 dp:
   image:
     repository: ghcr.io/project-hami/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "main"
+    tag: "0.0.1"
     pullPolicy: IfNotPresent
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  # The plugin queries host GPU devices and passes them to workloads.
+  securityContext:
+    privileged: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
   # Host path prefix for vGPU hook files on host.
   # The HAMi-style postStart installer creates
   # <hostHookPath>/vgpu/libamvgpu.so on the host.
@@ -26,42 +31,7 @@ dp:
     rollingUpdate:
       maxUnavailable: 1
 
-lbl:
-  image:
-    repository: docker.io/rocm/k8s-device-plugin
-    tag: "labeller-1.31.0.9"
-  serviceAccount:
-    annotations: {}
-  securityContext:
-    privileged: true # Needed for /dev
-    capabilities:
-      drop:
-        - ALL
-      add:
-        - CAP_SYS_ADMIN
-    readOnlyRootFilesystem: false # true if -logtostderr flag set in labeller
-  # If you do want to specify resources, uncomment the following lines, 
-  # adjust them as necessary, and remove the curly braces after 'resources:'.
-  resources: {}
-    # limits:
-    #   memory: 20Mi
-    #   cpu: 100m
-    # requests:
-    #   memory: 30Mi
-    #   cpu: 150m
-  # Set daemonsets updateStrategy for labeller
-  updateStrategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-
 imagePullSecrets: []
-
-securityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-    - ALL
 
 tolerations:
   - key: CriticalAddonsOnly

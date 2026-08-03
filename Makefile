@@ -1,18 +1,18 @@
-# Makefile for building and packaging ROCm K8s Device Plugin Docker images
+# Makefile for building and packaging HAMi AMD Device Plugin images
 
 # Use bash with pipefail to catch errors in pipe chains
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
 # Image repository and version
-IMAGE_REPO ?= docker.io/rocm/k8s-device-plugin
-IMAGE_VERSION ?= latest
+IMAGE_REPO ?= ghcr.io/project-hami/amd-device-plugin
+IMAGE_VERSION ?= 0.0.1
 
-# Image tags based on the repository's tagging scheme
-# Alpine device plugin: latest / <version>
-# Alpine labeller: labeller-latest / labeller-<version>
-# UBI device plugin: rhubi-latest / rhubi-<version>
-# UBI labeller: labeller-rhubi-latest / labeller-rhubi-<version>
+# Image tags based on the repository's tagging scheme.
+# Device plugin: <version>
+# Labeller: labeller-<version>
+# UBI device plugin: rhubi-<version>
+# UBI labeller: labeller-rhubi-<version>
 
 DEVICE_PLUGIN_TAG ?= $(IMAGE_VERSION)
 LABELLER_TAG ?= labeller-$(IMAGE_VERSION)
@@ -102,7 +102,7 @@ clean:
 
 # Help target
 help:
-	@echo "ROCm K8s Device Plugin - Makefile targets"
+	@echo "HAMi AMD Device Plugin - Makefile targets"
 	@echo ""
 	@echo "Usage: make [target] [IMAGE_VERSION=<version>]"
 	@echo ""
@@ -128,7 +128,7 @@ help:
 	@echo "  help                   - Show this help message"
 	@echo ""
 	@echo "Variables:"
-	@echo "  IMAGE_VERSION          - Version suffix for tags (default: latest)"
+	@echo "  IMAGE_VERSION          - Version suffix for tags (default: 0.0.1)"
 	@echo "  OUTPUT_DIR             - Base output directory (default: ./dist)"
 	@echo "  TAR_DIR                - Directory for tarball output (default: ./dist/tarballs)"
 	@echo ""
@@ -139,7 +139,7 @@ help:
 	@echo "  UBI labeller:          $(IMAGE_REPO):$(UBI_LABELLER_TAG)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make all                                # Builds all with 'latest' version"
-	@echo "  make build-all IMAGE_VERSION=1.31.0.9   # Build all with version 1.31.0.9"
+	@echo "  make all                                # Builds all with version 0.0.1"
+	@echo "  make build-all IMAGE_VERSION=0.0.1      # Build all with an explicit version"
 	@echo "  make save-device-plugin                 # Build and save device plugin only"
 	@echo "  make clean                              # Clean up images and tar files"

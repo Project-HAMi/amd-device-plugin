@@ -24,25 +24,25 @@ RUN wget https://golang.org/dl/go1.23.3.linux-amd64.tar.gz && \
     rm go1.23.3.linux-amd64.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
-RUN mkdir -p /go/src/github.com/ROCm/k8s-device-plugin
-ADD . /go/src/github.com/ROCm/k8s-device-plugin
-WORKDIR /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller
+RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
+ADD . /go/src/github.com/Project-HAMi/amd-device-plugin
+WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller
 RUN go install \
-    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/ROCm/k8s-device-plugin/ describe --always --long --dirty)"
+    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty)"
 RUN wget https://gitlab.freedesktop.org/mesa/libdrm/-/raw/main/data/amdgpu.ids
-RUN echo "74B9,   00, AMD Instinct MI325X VF" >> /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
-RUN echo "738E,   01, AMD Instinct MI100" >> /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
-RUN echo "73A2,   C0, AMD Radeon Pro W6900X" >> /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
-RUN echo "73AB,   C0, AMD Radeon Pro W6800X" >> /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
-RUN echo "74BC,   00, AMD Instinct MI308X HF VF" >> /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
+RUN echo "74B9,   00, AMD Instinct MI325X VF" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
+RUN echo "738E,   01, AMD Instinct MI100" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
+RUN echo "73A2,   C0, AMD Radeon Pro W6900X" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
+RUN echo "73AB,   C0, AMD Radeon Pro W6800X" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
+RUN echo "74BC,   00, AMD Instinct MI308X HF VF" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4
 LABEL \
     name="amd-k8s-node-labeller" \ 
-    maintainer="shrey.ajmera@amd.com,yan.sun3@amd.com,praveenkumar.shanmugam@amd.com,nitish.bhat@amd.com,sriram.ravishankar@amd.com,udaybhaskar.biluri@amd.com" \
-    vendor="Advanced Micro Devices, Inc." \
-    version="latest" \
-    release="latest" \
+    maintainer="Project-HAMi maintainers" \
+    vendor="Project-HAMi" \
+    version="0.0.1" \
+    release="0.0.1" \
     summary="The AMD Node Labeller automatically detects and labels Kubernetes nodes with AMD GPU hardware." \
     description="The AMD Node Labeller automatically detects and labels Kubernetes nodes with AMD GPU hardware. This tool automatically labels nodes with GPU properties if a node has one or more AMD GPU installed."
 RUN mkdir -p /licenses && \
@@ -51,5 +51,5 @@ RUN mkdir -p /licenses && \
 ADD ./LICENSE /licenses/LICENSE
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-node-labeller .
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-node-labeller/amdgpu.ids /usr/share/libdrm/amdgpu.ids
+COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids /usr/share/libdrm/amdgpu.ids
 CMD ["./k8s-node-labeller"]

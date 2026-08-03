@@ -2,7 +2,7 @@
 
 ## Overview
 
-[Device Plugin](https://github.com/ROCm/k8s-device-plugin) daemon set discovers and makes the AMD GPUs available to Kubernetes cluster. Allocation logic determines which set of GPUs/resources are allocated when a Job/Pod requests for them. The allocation logic can run an alogrithm to determine which GPUs should be picked out of the available ones.
+[Device Plugin](https://github.com/Project-HAMi/amd-device-plugin) daemon set discovers and makes the AMD GPUs available to Kubernetes cluster. Allocation logic determines which set of GPUs/resources are allocated when a Job/Pod requests for them. The allocation logic can run an alogrithm to determine which GPUs should be picked out of the available ones.
 
 ### Allocator package
 

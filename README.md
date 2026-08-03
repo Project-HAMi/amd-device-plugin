@@ -7,7 +7,7 @@ This repository contains the AMD device plugin used by [HAMi](https://github.com
 
 ## Current capabilities
 
-- Uses the AMD SMI C API through cgo to get device UUID implemented by building with ROCm base-image.
+- Uses the AMD SMI C API through cgo to query device UUIDs and product names.
 - Publishes the hardware-bound AMD SMI UUID as `DeviceInfo.ID`.
 - Publishes the AMD SMI ASIC market name, for example `AMD Instinct MI300X VF`, as `DeviceInfo.Type`.
 - Publishes the standard PCI BDF in `custominfo.pciBDF`.
@@ -48,7 +48,7 @@ GPUs for which AMD SMI does not return a UUID are deliberately not registered. T
 ## Build
 
 ```bash
-docker build -t ghcr.io/project-hami/amd-device-plugin:dev .
+docker build -t ghcr.io/project-hami/amd-device-plugin:0.0.1 .
 ```
 
 The Docker build compiles the cgo code against the ROCm 7.0.2 AMD SMI SDK and temporarily packages the checked-in `libamvgpu.so`. CI verifies that the hook exists and uses the same Dockerfile for the published image, so a missing hook fails the image build.
@@ -60,15 +60,12 @@ The device-plugin image currently includes the repository's `libamvgpu.so` under
 This bundled binary is a temporary delivery mechanism. It will be replaced by an artifact obtained from the official `amd-hami-core` repository once that project provides a release and consumption pipeline. Set `dp.hookInstaller.enabled=false` only when the hook is managed on every node by another mechanism.
 
 ```bash
-helm dependency build ./helm/amd-gpu
 helm upgrade --install amd-gpu ./helm/amd-gpu \
   --namespace kube-system \
-  --create-namespace \
-  --set dp.image.repository=ghcr.io/project-hami/amd-device-plugin \
-  --set dp.image.tag=main
+  --create-namespace
 ```
 
-Images are published to GitHub Container Registry after CI succeeds on `main` and version tags. The GHCR package must be public for deployment without credentials; otherwise configure `imagePullSecrets`.
+Chart `0.0.1` deploys image `ghcr.io/project-hami/amd-device-plugin:0.0.1` by default. Images are published to GitHub Container Registry after CI succeeds on `main` and version tags. The GHCR package must be public for deployment without credentials; otherwise configure `imagePullSecrets`.
 
 Verify registration:
 
@@ -95,12 +92,11 @@ Run the same checks used by CI:
 ```bash
 docker build --target builder -t amd-device-plugin-builder:test .
 docker run --rm \
-  --workdir /go/src/github.com/ROCm/k8s-device-plugin \
+  --workdir /go/src/github.com/Project-HAMi/amd-device-plugin \
   --env LD_LIBRARY_PATH=/opt/rocm/lib \
   amd-device-plugin-builder:test \
   bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.26 && go test ./...'
 
-helm dependency build ./helm/amd-gpu
 helm lint ./helm/amd-gpu
 helm template amd-gpu ./helm/amd-gpu --namespace kube-system >/dev/null
 ```

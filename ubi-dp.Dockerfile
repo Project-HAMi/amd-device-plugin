@@ -24,20 +24,20 @@ RUN wget https://golang.org/dl/go1.23.3.linux-amd64.tar.gz && \
     rm go1.23.3.linux-amd64.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
-RUN mkdir -p /go/src/github.com/ROCm/k8s-device-plugin
-ADD . /go/src/github.com/ROCm/k8s-device-plugin
-WORKDIR /go/src/github.com/ROCm/k8s-device-plugin/cmd/k8s-device-plugin
+RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
+ADD . /go/src/github.com/Project-HAMi/amd-device-plugin
+WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-device-plugin
 RUN go install \
-    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/ROCm/k8s-device-plugin/ describe --always --long --dirty)"
+    -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty)"
 
 
 FROM registry.access.redhat.com/ubi9/ubi-init:9.4
 LABEL \
     name="amd-k8s-device-plugin" \ 
-    maintainer="shrey.ajmera@amd.com,yan.sun3@amd.com,praveenkumar.shanmugam@amd.com,nitish.bhat@amd.com,sriram.ravishankar@amd.com,udaybhaskar.biluri@amd.com" \
-    vendor="Advanced Micro Devices, Inc." \
-    version="latest" \
-    release="latest" \
+    maintainer="Project-HAMi maintainers" \
+    vendor="Project-HAMi" \
+    version="0.0.1" \
+    release="0.0.1" \
     summary="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads." \
     description="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads. With the appropriate hardware and this plugin deployed in your Kubernetes cluster, you will be able to run jobs that require AMD GPU."
 RUN mkdir -p /licenses && \
@@ -54,8 +54,8 @@ WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
 # Temporary HAMi-style hook packaging; switch the source to the official
 # amd-hami-core artifact after that repository publishes one.
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
-COPY --from=builder /go/src/github.com/ROCm/k8s-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
+COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
+COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
 RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
     && test -s /opt/hami/lib/amd/libamvgpu.so
 CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5"]

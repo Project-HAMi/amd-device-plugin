@@ -1,13 +1,14 @@
 apiVersion: v2
 name: amd-gpu
-description: A Helm chart for deploying Kubernetes AMD GPU device plugin
+description: HAMi AMD device plugin for fractional GPU allocation on Kubernetes
 type: application
 home: https://github.com/Project-HAMi/amd-device-plugin
 sources:
   - https://github.com/Project-HAMi/amd-device-plugin
 icon: https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/helm/logo.png
 maintainers:
-  - name: Kenny Ho <Kenny.Ho@amd.com>
+  - name: Project-HAMi maintainers
+    url: https://github.com/Project-HAMi
 keywords:
   - kubernetes
   - cluster
@@ -15,11 +16,5 @@ keywords:
   - gpu
 
 kubeVersion: ">= 1.18.0-0"
-version: 0.21.0
-appVersion: "1.31.0.9"
-
-dependencies:
-- name: node-feature-discovery
-  version: ">= 0.8.1-0"
-  repository: "https://kubernetes-sigs.github.io/node-feature-discovery/charts"
-  condition: nfd.enabled
+version: 0.0.1
+appVersion: "0.0.1"

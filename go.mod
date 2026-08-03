@@ -1,4 +1,4 @@
-module github.com/ROCm/k8s-device-plugin
+module github.com/Project-HAMi/amd-device-plugin
 
 go 1.25.0
 

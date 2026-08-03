@@ -1,4 +1,1 @@
 {{ .Chart.Name }}-device-plugin-daemonset deployed in namespace '{{ .Release.Namespace }}'
-{{- if .Values.labeller.enabled }}
-{{ .Chart.Name }}-labeller-daemonset deployed in namespace '{{ .Release.Namespace }}'
-{{- end }}

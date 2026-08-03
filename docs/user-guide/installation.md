@@ -2,6 +2,8 @@
 
 This guide walks through the process of installing the AMD GPU device plugin on a Kubernetes cluster.
 
+> For HAMi fractional GPU deployments, use the Helm instructions in the top-level [README](../../README.md). The raw DaemonSet variants below are inherited upstream examples and do not install the HAMi RBAC or host memory hook.
+
 ## Prerequisites
 
 Before installing the AMD GPU device plugin, ensure your environment meets the following requirements:
@@ -34,7 +36,7 @@ kubectl create -f k8s-ds-amdgpu-dp.yaml
 **Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp.yaml
 ```
 
 ### Option 1.a: Standard Device Plugin with Init Container
@@ -50,7 +52,7 @@ kubectl create -f k8s-ds-amdgpu-dp-with-init-container.yaml
 **Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp-with-init-container.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-with-init-container.yaml
 ```
 
 ### Option 2: Device Plugin with Health Checks
@@ -110,7 +112,7 @@ kubectl create -f k8s-ds-amdgpu-dp-health.yaml
 **Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp-health.yaml
+kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-health.yaml
 ```
 
 ### Option 3: Using AMD GPU Operator
@@ -226,7 +228,7 @@ If you installed the standard device plugin (Option 1):
 ```bash
 kubectl delete -f k8s-ds-amdgpu-dp.yaml
 # Or using the web URL
-kubectl delete -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
+kubectl delete -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp.yaml
 ```
 
 If you installed the device plugin with health checks (Option 2):
@@ -234,5 +236,5 @@ If you installed the device plugin with health checks (Option 2):
 ```bash
 kubectl delete -f k8s-ds-amdgpu-dp-health.yaml
 # Or using the web URL
-kubectl delete -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp-health.yaml
+kubectl delete -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-health.yaml
 ```

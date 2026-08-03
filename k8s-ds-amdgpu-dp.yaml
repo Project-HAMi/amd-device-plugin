@@ -20,7 +20,7 @@ spec:
       - key: CriticalAddonsOnly
         operator: Exists
       containers:
-      - image: rocm/k8s-device-plugin
+      - image: ghcr.io/project-hami/amd-device-plugin:0.0.1
         name: amdgpu-dp-cntr
         securityContext:
           privileged: true

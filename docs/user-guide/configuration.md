@@ -50,7 +50,7 @@ Example deployment snippet:
 
 ```yaml
 containers:
-- image: rocm/k8s-device-plugin
+- image: ghcr.io/project-hami/amd-device-plugin:0.0.1
   name: amdgpu-dp-cntr
   env:
   - name: CONFIG_FILE_PATH
@@ -108,7 +108,7 @@ A minimal deployment that exposes AMD GPUs to Kubernetes:
 - Uses minimal security context settings
 - Suitable for basic GPU workloads
 
-[Download link](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml)
+[Download link](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp.yaml)
 
 ### Enhanced Device Plugin (k8s-ds-amdgpu-dp-health.yaml)
 
@@ -118,7 +118,7 @@ A more comprehensive deployment of the device plugin that includes additional vo
 - A dedicated mount for metrics data
 - Privileged execution context for direct hardware access
 
-[Download link](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp-health.yaml)
+[Download link](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-health.yaml)
 
 ### Node Labeller (k8s-ds-amdgpu-labeller.yaml)
 
@@ -149,7 +149,7 @@ These 3 labels have these respective possible values
 - `amd.com/memory-partitioning-supported`: ["true", "false"]
 - `amd.com/compute-memory-partition`: ["spx_nps1", "cpx_nps1" ,"cpx_nps4", ...]
 
-[Download link](https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-labeller.yaml)
+[Download link](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-labeller.yaml)
 
 ## Resource Naming Strategy
 

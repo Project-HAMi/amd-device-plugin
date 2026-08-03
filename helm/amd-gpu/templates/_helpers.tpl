@@ -51,12 +51,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+Create the name of the device-plugin service account to use.
 */}}
-{{- define "amd-gpu.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "amd-gpu.fullname" .) .Values.serviceAccount.name }}
+{{- define "amd-gpu.devicePluginServiceAccountName" -}}
+{{- if .Values.dp.serviceAccount.create }}
+{{- default (printf "%s-device-plugin" (include "amd-gpu.fullname" .)) .Values.dp.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- default "default" .Values.dp.serviceAccount.name }}
 {{- end }}
 {{- end }}
