@@ -25,7 +25,7 @@ RUN echo "73A2,   C0, AMD Radeon Pro W6900X" >> /go/src/github.com/Project-HAMi/
 RUN echo "73AB,   C0, AMD Radeon Pro W6800X" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 RUN echo "74BC,   00, AMD Instinct MI308X HF VF" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 
-FROM alpine:3.21.3
+FROM alpine:3.24.1
 LABEL \
     org.opencontainers.image.source="https://github.com/Project-HAMi/amd-device-plugin" \
     org.opencontainers.image.authors="Project-HAMi maintainers" \
