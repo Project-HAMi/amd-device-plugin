@@ -30,7 +30,7 @@ WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-device-plugin
 RUN go install \
     -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty)"
 
-FROM rocm/dev-ubuntu-22.04:7.0.2 AS hami-core
+FROM rocm/dev-ubuntu-22.04:7.2.4 AS hami-core
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*

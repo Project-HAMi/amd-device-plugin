@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 FROM rocm/dev-ubuntu-24.04:7.0.2 AS rocm-runtime
-FROM rocm/dev-ubuntu-22.04:7.0.2 AS amdsmi-sdk
+FROM rocm/dev-ubuntu-22.04:7.2.4 AS amdsmi-sdk
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
