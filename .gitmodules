@@ -1,0 +1,3 @@
+[submodule "amd-hami-core"]
+	path = amd-hami-core
+	url = https://github.com/Project-HAMi/amd-hami-core.git

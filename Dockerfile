@@ -13,6 +13,11 @@
 #  limitations under the License.
 FROM rocm/dev-ubuntu-24.04:7.0.2 AS rocm-runtime
 FROM rocm/dev-ubuntu-22.04:7.0.2 AS amdsmi-sdk
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    cmake build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY amd-hami-core/ /build/amd-hami-core/
+RUN cd /build/amd-hami-core && make -f Makefile.hip clean all
 
 FROM docker.io/golang:1.25 AS builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -43,10 +48,7 @@ COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/r
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
-# Temporary packaging path: keep the checked-in hook in this image so the
-# DaemonSet postStart hook can install it on each node, matching HAMi's hook
-# deployment model. Replace it with the official amd-hami-core artifact later.
-COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
+COPY --from=amdsmi-sdk /build/amd-hami-core/build-hip/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
 COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
 RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
     && test -s /opt/hami/lib/amd/libamvgpu.so

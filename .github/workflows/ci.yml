@@ -27,19 +27,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: true
 
-      # Temporary source until amd-hami-core publishes an official hook
-      # artifact consumed by this image build.
-      - name: Verify bundled AMD vGPU hook
+      - name: Verify amd-hami-core submodule
         run: |
-          test -s ./libamvgpu.so
+          test -d ./amd-hami-core
+          test -f ./amd-hami-core/Makefile.hip
+          test -f ./amd-hami-core/CMakeLists.txt.hip
+          test -d ./amd-hami-core/src
           test -s ./scripts/amd-vgpu-init.sh
           sh -n ./scripts/amd-vgpu-init.sh
-          hook_dir="$(mktemp -d)"
-          trap 'rm -rf "${hook_dir}"' EXIT
-          AMD_VGPU_HOOK_SOURCE=./libamvgpu.so sh ./scripts/amd-vgpu-init.sh "${hook_dir}"
-          cmp ./libamvgpu.so "${hook_dir}/libamvgpu.so"
-          test "$(stat -c '%a' "${hook_dir}/libamvgpu.so")" = 555
 
       # The package uses cgo with AMD SMI and libdrm_amdgpu. Reusing the
       # Dockerfile builder keeps CI on the exact SDK used by release images.
@@ -60,6 +58,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: true
 
       - name: Install Helm
         uses: azure/setup-helm@v5
@@ -84,6 +84,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
