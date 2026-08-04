@@ -19,7 +19,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY amd-hami-core/ /build/amd-hami-core/
 RUN cd /build/amd-hami-core && make -f Makefile.hip clean all
 
-FROM docker.io/golang:1.25 AS builder
+FROM docker.io/golang:1.26 AS builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     git pkg-config build-essential libdrm-dev libhwloc-dev \
     && rm -rf /var/lib/apt/lists/*
