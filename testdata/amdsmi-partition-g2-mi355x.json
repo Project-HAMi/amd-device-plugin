@@ -1,0 +1,326 @@
+{
+    "current_partition": [
+        {
+            "gpu_id": 2,
+            "memory": "NPS1",
+            "accelerator_type": "SPX",
+            "accelerator_profile_index": 0,
+            "partition_id": "0"
+        }
+    ],
+    "memory_partition": [
+        {
+            "gpu_id": 2,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        }
+    ],
+    "partition_profiles": [
+        {
+            "gpu_id": 2,
+            "profile_index": 0,
+            "memory_partition_caps": "NPS1",
+            "accelerator_type": "SPX*",
+            "partition_id": "0",
+            "num_partitions": 1,
+            "num_resources": 4,
+            "resource_index": 0,
+            "resource_type": "XCC",
+            "resource_instances": 8,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 1,
+            "resource_type": "DECODER",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 2,
+            "resource_type": "DMA",
+            "resource_instances": 16,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 3,
+            "resource_type": "JPEG",
+            "resource_instances": 40,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": 1,
+            "memory_partition_caps": "NPS1,NPS2",
+            "accelerator_type": "DPX",
+            "partition_id": "N/A",
+            "num_partitions": 2,
+            "num_resources": 4,
+            "resource_index": 4,
+            "resource_type": "XCC",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 5,
+            "resource_type": "DECODER",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 6,
+            "resource_type": "DMA",
+            "resource_instances": 8,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 7,
+            "resource_type": "JPEG",
+            "resource_instances": 20,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": 2,
+            "memory_partition_caps": "NPS1",
+            "accelerator_type": "QPX",
+            "partition_id": "N/A",
+            "num_partitions": 4,
+            "num_resources": 4,
+            "resource_index": 8,
+            "resource_type": "XCC",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 9,
+            "resource_type": "DECODER",
+            "resource_instances": 1,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 10,
+            "resource_type": "DMA",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 11,
+            "resource_type": "JPEG",
+            "resource_instances": 10,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": 3,
+            "memory_partition_caps": "NPS1",
+            "accelerator_type": "CPX",
+            "partition_id": "N/A",
+            "num_partitions": 8,
+            "num_resources": 4,
+            "resource_index": 12,
+            "resource_type": "XCC",
+            "resource_instances": 1,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 13,
+            "resource_type": "DECODER",
+            "resource_instances": 1,
+            "resources_shared": 2
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 14,
+            "resource_type": "DMA",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "gpu_id": "",
+            "profile_index": "",
+            "memory_partition_caps": "",
+            "accelerator_type": "",
+            "partition_id": "",
+            "num_partitions": "",
+            "num_resources": "",
+            "resource_index": 15,
+            "resource_type": "JPEG",
+            "resource_instances": 10,
+            "resources_shared": 2
+        }
+    ],
+    "partition_resources": [
+        {
+            "resource_index": 0,
+            "resource_type": "XCC",
+            "resource_instances": 8,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 1,
+            "resource_type": "DECODER",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 2,
+            "resource_type": "DMA",
+            "resource_instances": 16,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 3,
+            "resource_type": "JPEG",
+            "resource_instances": 40,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 4,
+            "resource_type": "XCC",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 5,
+            "resource_type": "DECODER",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 6,
+            "resource_type": "DMA",
+            "resource_instances": 8,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 7,
+            "resource_type": "JPEG",
+            "resource_instances": 20,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 8,
+            "resource_type": "XCC",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 9,
+            "resource_type": "DECODER",
+            "resource_instances": 1,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 10,
+            "resource_type": "DMA",
+            "resource_instances": 4,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 11,
+            "resource_type": "JPEG",
+            "resource_instances": 10,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 12,
+            "resource_type": "XCC",
+            "resource_instances": 1,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 13,
+            "resource_type": "DECODER",
+            "resource_instances": 1,
+            "resources_shared": 2
+        },
+        {
+            "resource_index": 14,
+            "resource_type": "DMA",
+            "resource_instances": 2,
+            "resources_shared": 1
+        },
+        {
+            "resource_index": 15,
+            "resource_type": "JPEG",
+            "resource_instances": 10,
+            "resources_shared": 2
+        }
+    ]
+}
