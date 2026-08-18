@@ -20,6 +20,10 @@ Sibling fixtures with the same node's data:
   from the node register annotation, market names from amd-smi static).
 - amdsmi-static-mi355x.json: raw `amd-smi static --json` output (asic serial,
   vram, clocks, RAS, xgmi links).
+- amdsmi-xgmi-mi355x.json: raw `amd-smi xgmi --json` output (per-GPU xGMI
+  link metrics).
+- amdsmi-topology-mi355x.json: raw `amd-smi topology --json` output (per-GPU
+  link matrix with weights, hops, bandwidth and coherence).
 - amdsmi-partition-mi355x.json: raw `amd-smi partition --json` output
   (current memory/compute partition per GPU, partition profiles and resources).
 - amdsmi-partition-m-mi355x.json: raw `amd-smi partition -m --json` output
