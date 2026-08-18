@@ -76,6 +76,81 @@ Verify registration:
 kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
 ```
 
+## Operating modes
+
+The plugin follows HAMi's Ascend vNPU model: one plugin registration, per-pod mode
+selection. Every device is registered in both forms and the scheduler picks the
+form per pod based on the pod annotation `hami.io/amd-mode`:
+
+- absent or `rocm` (default): soft mode. The device is published as a CU-maskable
+  device (Count 10) and the scheduler allocates CU slices via the amd-hami-core
+  hook library (`HSA_CU_MASK`, `HIP_DEVICE_MEMORY_LIMIT`, `LD_AUDIT`).
+- `spx`, `cpx`, `dpx` or `qpx`: hard partition mode. The same XCP compute
+  partition is published as a whole device (Count 1, ID `<rocr-uuid>#<mode>`)
+  and the scheduler allocates it exclusively without a CU mask. The node must be
+  switched to the matching compute partition profile first, e.g.:
+
+  ```bash
+  echo spx > /sys/class/drm/card0/device/current_compute_partition
+  echo nps1 > /sys/class/drm/card0/device/current_memory_partition
+  reboot   # partition changes require a reset
+  ```
+
+  Physical Instinct parts expose XCP compute partitions and serve both modes,
+  discrete GPUs and AI MAX APUs (MI300A/MI350A) alike. Virtio Instinct devices
+  (SR-IOV VFs) and partition-less embedded APUs register no hard entries and
+  only serve rocm mode; `hami.io/amd-mode: spx` cannot be scheduled there.
+
+The register annotation (`hami.io/node-amd-register`) carries one entry per
+form: soft entries have `Mode` empty, hard entries carry `Mode` equal to the
+compute partition type. The scheduler branches on `Mode` exactly like HAMi
+branches on the NVIDIA `MigMode` and the Ascend `huawei.com/vnpu-mode` values.
+Allocated devices must be written back as the published `DeviceInfo.ID`
+(`amd-smi` UUID for whole GPUs, `GPU-<unique_id>` or `<rocr-uuid>#<mode>` for
+partitions); the plugin resolves all of them.
+
+Whole-GPU devices whose KFD `unique_id` is 0 (embedded APUs without a PCI
+Device Serial Number) cannot be addressed by `GPU-<unique_id>`; ROCr addresses
+them by agent index and the plugin publishes that index as the ROCr-visible
+id. Such nodes expose no XCP partitions and only serve rocm mode; parts with a
+PCI Device Serial Number register by `GPU-<unique_id>` instead.
+
+### Partition profiles
+
+An Instinct GPU can be carved into compute partitions; which partitions exist
+and how they split the silicon depends on the selected profile. MI355X-class
+GPUs (8 XCCs) support four profiles, reported per GPU by
+`amd-smi partition -g <gpu-id> --json`:
+
+| profile | type       | memory caps | partitions x XCC |
+|---------|------------|-------------|-------------------|
+| 0       | SPX (default) | NPS1     | 1 x 8             |
+| 1       | DPX        | NPS1,NPS2   | 2 x 4             |
+| 2       | QPX        | NPS1        | 4 x 2             |
+| 3       | CPX        | NPS1        | 8 x 1             |
+
+- `profile` is the `profile_index` passed to the AMD SMI setter
+  (`amdsmi_set_gpu_accelerator_partition_profile`). The amd-smi CLI marks the
+  current profile with `*` (SPX here).
+- `partitions x XCC` is what the profile yields: e.g. QPX splits the GPU into
+  4 partitions of 2 XCCs each. Every partition appears as an XCP device
+  (`/sys/devices/platform/amdgpu_xcp_*`) and is registered by the plugin as a
+  hard entry of that mode.
+- `memory caps` lists the NPS modes the profile can run with (DPX also works
+  under NPS2; the others are NPS1-only on this part).
+
+Changing the profile requires the GPU to be idle (no workloads; see the
+`amdsmi_set_gpu_*_partition` docs). Compute partition changes are per-GPU and
+take effect live - the XCP devices appear without a reset. A memory partition
+change requires an amdgpu driver reload, which resets the device nodes of
+every GPU on the node: that is a node-wide quiet-window operation, not a
+single-GPU one.
+
+The plugin registers the partitions of the mode each GPU is currently in, and
+advertises the available profiles per GPU (`partitionProfiles` in
+DeviceInfo.CustomInfo of the register annotation) so schedulers can see which
+modes a GPU can be switched to.
+
 ## Memory-isolation compatibility
 
 CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.
