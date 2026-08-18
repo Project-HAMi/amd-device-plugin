@@ -151,6 +151,37 @@ advertises the available profiles per GPU (`partitionProfiles` in
 DeviceInfo.CustomInfo of the register annotation) so schedulers can see which
 modes a GPU can be switched to.
 
+### Profile storage
+
+The profile data lives in this plugin's own register annotation
+(`hami.io/node-amd-register`), following the storage model of HAMi's NVIDIA
+device plugin, which is the reference implementation in the Project-HAMi/HAMi
+scheduler repository and not part of this repository. That plugin queries
+NVML at registration and publishes the per-GPU MIG profile capacity
+(`migProfiles` inside each device entry of `hami.io/node-nvidia-register`);
+the scheduler never queries hardware and reads profile capacity from the
+annotation instead. This plugin mirrors the model on the AMD side: it
+discovers the profiles from AMD SMI at registration and publishes them per
+whole GPU under `custominfo.partitionProfiles`, one entry per profile with
+`profile_index`, partition type, memory caps, partition count and XCC per
+partition.
+
+The difference from MIG is the switching cadence, not the idle requirement:
+changing either a MIG mode or an AMD partition profile requires an idle GPU
+(HAMi's NVIDIA plugin start-up refuses to reset MIG-enabled GPUs that still
+have running allocations). MIG mode enablement is a one-time node-level
+operation at plugin start-up that resets the GPU; afterwards MIG instances
+are carved on demand from the fixed NVML profile menu. An AMD compute partition switch
+is per-GPU and takes effect live - the XCP devices appear without a reset -
+while a memory partition switch requires a node-wide amdgpu driver reload. In
+both cases the stored profiles are the static menu of what the silicon can
+do, and the annotation carries the current mode (the device entries
+themselves, with their `Mode` and `partitionProfile` fields) next to the
+modes the GPU can be switched to (`custominfo.partitionProfiles`).
+Allocation state stays where HAMi keeps it for every device: in the pod
+annotations, as XCP device IDs for hard partitions and as
+`hami.io/amd-cu-allocated` CU ranges in soft mode.
+
 ## Memory-isolation compatibility
 
 CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.

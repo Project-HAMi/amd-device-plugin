@@ -151,6 +151,16 @@ type DeviceCapacity struct {
 	CUCount int32
 }
 
+// PartitionCapacity divides whole-GPU capacity across a GPU's XCP partitions.
+// Floor division under-advertises rather than over-committing.
+func PartitionCapacity(whole DeviceCapacity, partitions int) DeviceCapacity {
+	if partitions > 1 {
+		whole.VRAMMiB /= int32(partitions)
+		whole.CUCount /= int32(partitions)
+	}
+	return whole
+}
+
 // GetDeviceCapacity reads VRAM and active CU count through libdrm_amdgpu for
 // one DRM card. It intentionally avoids node-scoped labels so heterogeneous
 // nodes and SR-IOV virtual functions retain per-device values.

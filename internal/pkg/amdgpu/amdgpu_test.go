@@ -410,3 +410,30 @@ func TestGetROCrIndexesFromTopology(t *testing.T) {
 		t.Error("renderD129 has a real unique_id and must not get an index fallback")
 	}
 }
+
+func TestPartitionCapacity(t *testing.T) {
+	// MI355X whole-GPU values: 294896 MB VRAM (amdsmi-static fixture) and
+	// 304 CUs (8 XCCs x 38).
+	whole := DeviceCapacity{VRAMMiB: 287984, CUCount: 304}
+
+	tests := []struct {
+		name        string
+		partitions  int
+		wantVRAMMiB int32
+		wantCUCount int32
+	}{
+		{"SPX", 1, 287984, 304},
+		{"DPX", 2, 143992, 152},
+		{"QPX", 4, 71996, 76},
+		{"CPX", 8, 35998, 38},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PartitionCapacity(whole, tt.partitions)
+			if got.VRAMMiB != tt.wantVRAMMiB || got.CUCount != tt.wantCUCount {
+				t.Errorf("PartitionCapacity(%d) = %d MiB, %d CUs; want %d MiB, %d CUs",
+					tt.partitions, got.VRAMMiB, got.CUCount, tt.wantVRAMMiB, tt.wantCUCount)
+			}
+		})
+	}
+}

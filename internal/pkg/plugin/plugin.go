@@ -278,6 +278,30 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	}
 	p.AMDGPUs = amdgpu.GetAMDGPUs(root)
 
+	// Whole-GPU capacity is read once per GPU through libdrm. XCP partitions
+	// share their parent's PCI BDF and get an even share of that capacity.
+	wholeCardByBDF := make(map[string]int)
+	xcpCountByBDF := make(map[string]int)
+	for key, deviceData := range p.AMDGPUs {
+		bdf, _ := deviceData["devID"].(string)
+		if bdf == "" {
+			continue
+		}
+		if strings.HasPrefix(key, "amdgpu_xcp_") {
+			xcpCountByBDF[bdf]++
+		} else {
+			wholeCardByBDF[bdf], _ = deviceData["card"].(int)
+		}
+	}
+	capacityByBDF := make(map[string]amdgpu.DeviceCapacity, len(wholeCardByBDF))
+	for bdf, card := range wholeCardByBDF {
+		if capacity, err := amdgpu.GetDeviceCapacity(fmt.Sprintf("card%d", card)); err != nil {
+			glog.Warningf("libdrm capacity lookup failed for GPU %s (card%d): %v", bdf, card, err)
+		} else {
+			capacityByBDF[bdf] = capacity
+		}
+	}
+
 	keys := make([]string, 0, len(p.AMDGPUs))
 	for key := range p.AMDGPUs {
 		keys = append(keys, key)
@@ -329,15 +353,16 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 
 		card, _ := deviceData["card"].(int)
 		numa, _ := deviceData["numaNode"].(int)
-		capacity, capacityErr := amdgpu.GetDeviceCapacity(fmt.Sprintf("card%d", card))
-		if capacityErr != nil {
-			glog.Warningf("libdrm capacity lookup failed for GPU %s (card%d): %v", key, card, capacityErr)
-		}
-
 		bdf, ok := deviceData["devID"].(string)
 		if !ok || bdf == "" {
 			glog.Errorf("skip GPU %s: missing PCI BDF in topology", key)
 			continue
+		}
+		capacity := capacityByBDF[bdf]
+		if strings.HasPrefix(key, "amdgpu_xcp_") {
+			// XCP partitions advertise an even share of the whole GPU's
+			// VRAM and CU count, not the full-GPU capacity.
+			capacity = amdgpu.PartitionCapacity(capacity, xcpCountByBDF[bdf])
 		}
 		renderD, ok := deviceData["renderD"].(int)
 		if !ok || renderD <= 0 {
