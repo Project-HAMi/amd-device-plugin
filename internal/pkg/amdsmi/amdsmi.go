@@ -58,6 +58,57 @@ static amdsmi_status_t amdsmi_product_name_for_bdf(const char *bdf_text,
 	snprintf(market_name, AMDSMI_MAX_STRING_LENGTH, "%s", asic_info.market_name);
 	return AMDSMI_STATUS_SUCCESS;
 }
+
+static amdsmi_status_t amdsmi_partition_profiles_for_bdf(
+		const char *bdf_text, amdsmi_accelerator_partition_profile_config_t *config) {
+	unsigned long long domain;
+	unsigned int bus, device, function;
+	char trailing;
+	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
+	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
+		return AMDSMI_STATUS_INVAL;
+	}
+
+	amdsmi_bdf_t bdf = {0};
+	bdf.bdf.domain_number = domain;
+	bdf.bdf.bus_number = bus;
+	bdf.bdf.device_number = device;
+	bdf.bdf.function_number = function;
+	amdsmi_processor_handle processor = NULL;
+	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	if (status != AMDSMI_STATUS_SUCCESS) {
+		return status;
+	}
+	return amdsmi_get_gpu_accelerator_partition_profile_config(processor, config);
+}
+
+static uint32_t amdsmi_nps_cap_mask(amdsmi_nps_caps_t caps) {
+	return caps.nps_cap_mask;
+}
+
+static amdsmi_status_t amdsmi_memory_partition_for_bdf(const char *bdf_text,
+                                                       char *memory_partition) {
+	unsigned long long domain;
+	unsigned int bus, device, function;
+	char trailing;
+	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
+	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
+		return AMDSMI_STATUS_INVAL;
+	}
+
+	amdsmi_bdf_t bdf = {0};
+	bdf.bdf.domain_number = domain;
+	bdf.bdf.bus_number = bus;
+	bdf.bdf.device_number = device;
+	bdf.bdf.function_number = function;
+	amdsmi_processor_handle processor = NULL;
+	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	if (status != AMDSMI_STATUS_SUCCESS) {
+		return status;
+	}
+	return amdsmi_get_gpu_memory_partition(processor, memory_partition,
+	                                       AMDSMI_MAX_STRING_LENGTH);
+}
 */
 import "C"
 
@@ -148,6 +199,147 @@ func GetAMDSMIProductNames(bdfs []string) (map[string]string, error) {
 		return namesByBDF, fmt.Errorf("AMD SMI product-name lookup failed for %s", strings.Join(failures, ", "))
 	}
 	return namesByBDF, nil
+}
+
+// GetAMDSCurrentMemoryPartitions resolves the current memory partition (NPS1,
+// NPS2, ...) by PCI BDF through the AMD SMI C API, lowercased for the
+// sysfs spelling used in topology device data.
+func GetAMDSCurrentMemoryPartitions(bdfs []string) (map[string]string, error) {
+	amdSMIMu.Lock()
+	defer amdSMIMu.Unlock()
+
+	if status := C.amdsmi_init(C.AMDSMI_INIT_AMD_GPUS); status != C.AMDSMI_STATUS_SUCCESS {
+		return nil, fmt.Errorf("amdsmi_init: status %d", status)
+	}
+	defer C.amdsmi_shut_down()
+
+	partitionByBDF := make(map[string]string, len(bdfs))
+	var failures []string
+	for _, rawBDF := range bdfs {
+		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
+		bdf := normalizeBDF(rawBDF)
+		if bdf == "" {
+			continue
+		}
+		cBDF := C.CString(bdf)
+		var partition [C.AMDSMI_MAX_STRING_LENGTH]C.char
+		status := C.amdsmi_memory_partition_for_bdf(cBDF, &partition[0])
+		C.free(unsafe.Pointer(cBDF))
+		if status != C.AMDSMI_STATUS_SUCCESS {
+			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
+			continue
+		}
+		if value := strings.ToLower(strings.TrimSpace(C.GoString(&partition[0]))); value != "" {
+			partitionByBDF[bdf] = value
+			partitionByBDF[rawBDF] = value
+		}
+	}
+	if len(failures) > 0 {
+		return partitionByBDF, fmt.Errorf("AMD SMI memory-partition lookup failed for %s", strings.Join(failures, ", "))
+	}
+	return partitionByBDF, nil
+}
+
+// PartitionProfile describes one accelerator partition profile a GPU can be
+// set to: the profile_index passed to amdsmi_set_gpu_accelerator_partition_profile,
+// the partition type, the memory partition modes it supports and the resulting
+// partition geometry.
+type PartitionProfile struct {
+	ProfileIndex    int
+	Type            string
+	MemoryCaps      string
+	NumPartitions   int
+	XCCPerPartition int
+}
+
+// GetAMDGPUPartitionProfiles resolves the accelerator partition profiles each
+// GPU supports (SPX/DPX/QPX/CPX with partition counts), keyed by BDF.
+func GetAMDGPUPartitionProfiles(bdfs []string) (map[string][]PartitionProfile, error) {
+	amdSMIMu.Lock()
+	defer amdSMIMu.Unlock()
+
+	if status := C.amdsmi_init(C.AMDSMI_INIT_AMD_GPUS); status != C.AMDSMI_STATUS_SUCCESS {
+		return nil, fmt.Errorf("amdsmi_init: status %d", status)
+	}
+	defer C.amdsmi_shut_down()
+
+	profilesByBDF := make(map[string][]PartitionProfile, len(bdfs))
+	var failures []string
+	for _, rawBDF := range bdfs {
+		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
+		bdf := normalizeBDF(rawBDF)
+		if bdf == "" {
+			continue
+		}
+		cBDF := C.CString(bdf)
+		var config C.amdsmi_accelerator_partition_profile_config_t
+		status := C.amdsmi_partition_profiles_for_bdf(cBDF, &config)
+		C.free(unsafe.Pointer(cBDF))
+		if status != C.AMDSMI_STATUS_SUCCESS {
+			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
+			continue
+		}
+		profiles := make([]PartitionProfile, 0, int(config.num_profiles))
+		for i := 0; i < int(config.num_profiles); i++ {
+			profile := config.profiles[i]
+			profiles = append(profiles, PartitionProfile{
+				ProfileIndex:    int(profile.profile_index),
+				Type:            acceleratorPartitionTypeString(profile.profile_type),
+				MemoryCaps:      npsCapsString(C.amdsmi_nps_cap_mask(profile.memory_caps)),
+				NumPartitions:   int(profile.num_partitions),
+				XCCPerPartition: xccPerPartition(config, profile.profile_index),
+			})
+		}
+		profilesByBDF[bdf] = profiles
+		profilesByBDF[rawBDF] = profiles
+	}
+	if len(failures) > 0 {
+		return profilesByBDF, fmt.Errorf("AMD SMI partition-profile lookup failed for %s", strings.Join(failures, ", "))
+	}
+	return profilesByBDF, nil
+}
+
+func xccPerPartition(config C.amdsmi_accelerator_partition_profile_config_t, profileIndex C.uint) int {
+	for j := 0; j < int(config.num_resource_profiles); j++ {
+		res := config.resource_profiles[j]
+		if res.profile_index == profileIndex && res.resource_type == C.AMDSMI_ACCELERATOR_XCC {
+			return int(res.partition_resource)
+		}
+	}
+	return 0
+}
+
+func acceleratorPartitionTypeString(t C.amdsmi_accelerator_partition_type_t) string {
+	switch t {
+	case C.AMDSMI_ACCELERATOR_PARTITION_SPX:
+		return "SPX"
+	case C.AMDSMI_ACCELERATOR_PARTITION_DPX:
+		return "DPX"
+	case C.AMDSMI_ACCELERATOR_PARTITION_TPX:
+		return "TPX"
+	case C.AMDSMI_ACCELERATOR_PARTITION_QPX:
+		return "QPX"
+	case C.AMDSMI_ACCELERATOR_PARTITION_CPX:
+		return "CPX"
+	}
+	return ""
+}
+
+func npsCapsString(mask C.uint) string {
+	caps := make([]string, 0, 4)
+	if mask&1 != 0 {
+		caps = append(caps, "NPS1")
+	}
+	if mask&2 != 0 {
+		caps = append(caps, "NPS2")
+	}
+	if mask&4 != 0 {
+		caps = append(caps, "NPS4")
+	}
+	if mask&8 != 0 {
+		caps = append(caps, "NPS8")
+	}
+	return strings.Join(caps, ",")
 }
 
 func normalizeBDF(bdf string) string {
