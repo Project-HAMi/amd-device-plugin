@@ -98,17 +98,17 @@ const (
 )
 
 type DeviceInfo struct {
-	ID              string          `json:"id,omitempty"`
-	Index           uint            `json:"index,omitempty"`
-	Count           int32           `json:"count,omitempty"`
-	Devmem          int32           `json:"devmem,omitempty"`
-	Devcore         int32           `json:"devcore,omitempty"`
-	Type            string          `json:"type,omitempty"`
-	Numa            int             `json:"numa,omitempty"`
-	Mode            string          `json:"mode,omitempty"`
-	Health          bool            `json:"health,omitempty"`
-	DeviceVendor    string          `json:"devicevendor,omitempty"`
-	CustomInfo      map[string]any  `json:"custominfo,omitempty"`
+	ID           string         `json:"id,omitempty"`
+	Index        uint           `json:"index,omitempty"`
+	Count        int32          `json:"count,omitempty"`
+	Devmem       int32          `json:"devmem,omitempty"`
+	Devcore      int32          `json:"devcore,omitempty"`
+	Type         string         `json:"type,omitempty"`
+	Numa         int            `json:"numa,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	Health       bool           `json:"health,omitempty"`
+	DeviceVendor string         `json:"devicevendor,omitempty"`
+	CustomInfo   map[string]any `json:"custominfo,omitempty"`
 }
 
 type ContainerDevice struct {
@@ -153,7 +153,12 @@ var (
 
 func init() {
 	InRequestDevices = make(map[string]string)
-	InRequestDevices["amd"] = DeviceToAllocate
+	// Upstream HAMi (>= 2.9) writes the committed allocation under
+	// hami.io/amd-devices-allocated. The fork's own scheduler writes the same
+	// payload under hami.io/amd-devices-to-allocate first. Read both; the
+	// second key is only consulted when the first has no payload.
+	InRequestDevices["amd"] = DeviceAllocation
+	InRequestDevices["amd-pending"] = DeviceToAllocate
 	SupportDevices = make(map[string]string)
 	SupportDevices["amd"] = DeviceAllocation
 }
@@ -232,4 +237,3 @@ func EncodePodSingleDevice(pd PodSingleDevice) string {
 	glog.Infof("Encoded pod single devices %s", res)
 	return res
 }
-
