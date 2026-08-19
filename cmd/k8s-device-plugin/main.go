@@ -77,9 +77,12 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 			}
 		}
 	} else {
-		// Heterogeneous node reports resources based on partition types if strategy is mixed. Heterogeneous is not allowed if Strategy is single
+		// Heterogeneous node reports resources based on partition types if strategy is mixed. With the single
+		// strategy the kubelet list still carries every device, so mixed styles (e.g. one busy GPU stuck in spx
+		// while the rest flipped to qpx) must not abort the plugin; the devices register under "gpu" as-is.
 		if resourceNamingStrategy == StrategySingle {
-			return resources, fmt.Errorf("partitions of different styles across GPUs in a node are not supported with the single strategy, start the device plugin with the mixed strategy")
+			glog.Warningf("Partitions of different styles across GPUs in a node; reporting all devices under %q", "gpu")
+			resources = []string{"gpu"}
 		} else if resourceNamingStrategy == StrategyMixed {
 			for partitionType, count := range partitionCountMap {
 				if count > 0 {

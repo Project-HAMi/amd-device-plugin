@@ -2,7 +2,7 @@ dp:
   image:
     repository: ghcr.io/fishman/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "0.0.16"
+    tag: "0.0.17"
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true

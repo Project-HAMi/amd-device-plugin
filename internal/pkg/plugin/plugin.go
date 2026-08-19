@@ -232,9 +232,11 @@ func (p *AMDGPUPlugin) Start() error {
 				bdfs = append(bdfs, bdf)
 			}
 		}
+		flipStart := time.Now()
 		if err := amdgpu.SetGPUComputePartitions(bdfs, p.computePartition); err != nil {
 			glog.Warningf("compute-partition flip to %s incomplete: %v", p.computePartition, err)
 		}
+		glog.V(2).Infof("compute-partition flip to %s took %s", p.computePartition, time.Since(flipStart))
 	}
 
 	err := p.devAllocator.Init(p.getDevices(), "")
@@ -805,7 +807,14 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 			glog.Infof("ListAndWatch: sending %d split devices for resource %s", len(devList), p.Resource)
 			s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
 		} else {
-			glog.Warningf("ListAndWatch: no devices for resource %s; partition types: %v", p.Resource, resourceTypeDevs)
+			// Mixed node under the single strategy: the resource name is
+			// "gpu", not a partition type, so publish every device.
+			devList := make([]*pluginapi.Device, 0)
+			for _, devs := range resourceTypeDevs {
+				devList = append(devList, devs...)
+			}
+			glog.Infof("ListAndWatch: sending %d split devices for resource %s (mixed node)", len(devList), p.Resource)
+			s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
 		}
 	}
 
