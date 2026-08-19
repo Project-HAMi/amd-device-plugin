@@ -1,17 +1,26 @@
 dp:
   image:
-    repository: ghcr.io/project-hami/amd-device-plugin
+    repository: ghcr.io/fishman/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "0.0.1"
+    tag: "0.0.17"
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
     name: ""
     annotations: {}
   # The plugin queries host GPU devices and passes them to workloads.
+  # "cu" registers whole GPUs as soft devices sliced by CU (default);
+  # "partition" registers hard compute partitions (id#mode, Count 1).
+  # A node annotation hami.io/amd-operating-mode: cu|partition overrides
+  # this per node.
+  operatingMode: "cu"
+  # Target compute partition type (spx/dpx/qpx/cpx) the plugin applies to
+  # every GPU via the AMD SMI API at startup, only when operatingMode is
+  # "partition". Empty leaves the hardware mode untouched. A node annotation
+  # hami.io/amd-compute-partition overrides this per node.
+  computePartition: ""
   securityContext:
     privileged: true
-    allowPrivilegeEscalation: false
     capabilities:
       drop:
         - ALL
@@ -31,7 +40,8 @@ dp:
     rollingUpdate:
       maxUnavailable: 1
 
-imagePullSecrets: []
+imagePullSecrets:
+  - name: ghcr-fishman
 
 tolerations:
   - key: CriticalAddonsOnly

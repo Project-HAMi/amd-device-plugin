@@ -1,0 +1,10 @@
+{
+  "0000:05:00.0": {"uuid": "c6ff75a3-0000-1000-802a-c130ee448403", "type": "AMD Instinct MI355X"},
+  "0000:15:00.0": {"uuid": "f3ff75a3-0000-1000-802c-b37ceef6feb5", "type": "AMD Instinct MI355X"},
+  "0000:65:00.0": {"uuid": "8aff75a3-0000-1000-80a2-810481bf6315", "type": "AMD Instinct MI355X"},
+  "0000:75:00.0": {"uuid": "08ff75a3-0000-1000-80da-82c12ef81b5d", "type": "AMD Instinct MI355X"},
+  "0000:85:00.0": {"uuid": "cfff75a3-0000-1000-8010-e0d8795d487e", "type": "AMD Instinct MI355X"},
+  "0000:95:00.0": {"uuid": "13ff75a3-0000-1000-8003-b4d1d1d0c537", "type": "AMD Instinct MI355X"},
+  "0000:e5:00.0": {"uuid": "64ff75a3-0000-1000-8002-daab8ae76e4e", "type": "AMD Instinct MI355X"},
+  "0000:f5:00.0": {"uuid": "e8ff75a3-0000-1000-808f-a10fb8782ebc", "type": "AMD Instinct MI355X"}
+}

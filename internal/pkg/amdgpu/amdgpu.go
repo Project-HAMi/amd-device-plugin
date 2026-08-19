@@ -72,6 +72,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -142,6 +143,16 @@ func GetCardFamilyName(cardName string) (string, error) {
 type DeviceCapacity struct {
 	VRAMMiB int32
 	CUCount int32
+}
+
+// PartitionCapacity divides whole-GPU capacity across a GPU's XCP partitions.
+// Floor division under-advertises rather than over-committing.
+func PartitionCapacity(whole DeviceCapacity, partitions int) DeviceCapacity {
+	if partitions > 1 {
+		whole.VRAMMiB /= int32(partitions)
+		whole.CUCount /= int32(partitions)
+	}
+	return whole
 }
 
 // GetDeviceCapacity reads VRAM and active CU count through libdrm_amdgpu for
@@ -215,19 +226,24 @@ func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
 }
 
 // GetAMDGPUs return a map of AMD GPU on a node identified by the part of the pci address
-func GetAMDGPUs() map[string]map[string]interface{} {
-	if _, err := os.Stat("/sys/module/amdgpu/drivers/"); err != nil {
+func GetAMDGPUs(sysfsRoot ...string) map[string]map[string]interface{} {
+	root := "/sys"
+	if len(sysfsRoot) == 1 {
+		root = sysfsRoot[0]
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "module/amdgpu/drivers/")); err != nil {
 		glog.Fatalf("amdgpu driver unavailable. exiting with exit code 2. error: %s", err)
 	}
 
 	//ex: /sys/module/amdgpu/drivers/pci:amdgpu/0000:19:00.0
-	matches, _ := filepath.Glob("/sys/module/amdgpu/drivers/pci:amdgpu/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:*")
+	matches, _ := filepath.Glob(filepath.Join(root, "module/amdgpu/drivers/pci:amdgpu/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:*"))
 
 	devID := ""
 	devices := make(map[string]map[string]interface{})
 	card, renderD, nodeId := 0, 128, 0
-	renderDevIds := GetDevIdsFromTopology()
-	renderNodeIds := GetNodeIdsFromTopology()
+	renderDevIds := GetDevIdsFromTopology(filepath.Join(root, "class/kfd/kfd"))
+	renderNodeIds := GetNodeIdsFromTopology(filepath.Join(root, "class/kfd/kfd"))
 
 	for _, path := range matches {
 		computePartitionFile := filepath.Join(path, "current_compute_partition")
@@ -287,7 +303,7 @@ func GetAMDGPUs() map[string]map[string]interface{} {
 
 	// certain products have additional devices (such as MI300's partitions)
 	//ex: /sys/devices/platform/amdgpu_xcp_30
-	platformMatches, _ := filepath.Glob("/sys/devices/platform/amdgpu_xcp_*")
+	platformMatches, _ := filepath.Glob(filepath.Join(root, "devices/platform/amdgpu_xcp_*"))
 
 	for _, path := range platformMatches {
 		glog.Info(path)
@@ -592,6 +608,51 @@ func GetROCrUUIDsFromTopology(topoRootParam ...string) map[int]string {
 		uuids[int(renderMinor)] = fmt.Sprintf("GPU-%016x", uniqueID)
 	}
 	return uuids
+}
+
+// GetROCrIndexesFromTopology returns the ROCr agent index of every KFD GPU
+// node with unique_id 0, which ROCr addresses by index instead of GPU-<unique_id>.
+func GetROCrIndexesFromTopology(topoRootParam ...string) map[int]int {
+	topoRoot := "/sys/class/kfd/kfd"
+	if len(topoRootParam) == 1 {
+		topoRoot = topoRootParam[0]
+	}
+
+	type nodeInfo struct {
+		num      int
+		renderD  int
+		uniqueID uint64
+	}
+	var nodes []nodeInfo
+	paths, err := filepath.Glob(topoRoot + "/topology/nodes/*/properties")
+	if err != nil {
+		glog.Errorf("glob KFD topology nodes: %v", err)
+		return nil
+	}
+	for _, p := range paths {
+		num, err := strconv.Atoi(filepath.Base(filepath.Dir(p)))
+		if err != nil {
+			continue
+		}
+		renderMinor, err := ParseTopologyProperties(p, topoDrmRenderMinorRe)
+		if err != nil || renderMinor <= 0 {
+			continue
+		}
+		uniqueID, err := parseTopologyUniqueID(p)
+		if err != nil {
+			continue
+		}
+		nodes = append(nodes, nodeInfo{num: num, renderD: int(renderMinor), uniqueID: uniqueID})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].num < nodes[j].num })
+
+	indexes := make(map[int]int)
+	for i, n := range nodes {
+		if n.uniqueID == 0 {
+			indexes[n.renderD] = i
+		}
+	}
+	return indexes
 }
 
 func parseTopologyUniqueID(path string) (uint64, error) {

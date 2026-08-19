@@ -1,0 +1,976 @@
+{
+    "xgmi_metric": [
+        [
+            {
+                "gpu": 0,
+                "bdf": "0000:05:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 17933,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17939,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 17936,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17942,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17933,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 35721,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17853,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 17937,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17926,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 17929,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 17930,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17937,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 1,
+                "bdf": "0000:15:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17933,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17939,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 35856,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17929,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17837,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 17937,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 17932,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17941,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 2,
+                "bdf": "0000:65:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17936,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 35881,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17947,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17935,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 35880,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17936,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17942,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 17870,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17874,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 17939,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17937,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 3,
+                "bdf": "0000:75:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 35867,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17923,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 17939,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17945,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 17935,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17936,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 35866,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17941,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17939,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 17944,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17934,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 17870,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17871,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 4,
+                "bdf": "0000:85:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17861,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17928,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17933,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 35846,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17945,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17937,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 5,
+                "bdf": "0000:95:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17937,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17842,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17942,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17938,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17930,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17939,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17941,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 6,
+                "bdf": "0000:e5:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17929,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17937,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17870,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17944,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17923,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17941,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17940,
+                                "unit": "KB"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "gpu": 7,
+                "bdf": "0000:f5:00.0",
+                "link_metrics": {
+                    "bit_rate": {
+                        "value": 38,
+                        "unit": "Gb/s"
+                    },
+                    "max_bandwidth": {
+                        "value": 608,
+                        "unit": "Gb/s"
+                    },
+                    "link_type": "XGMI",
+                    "links": [
+                        {
+                            "gpu": 0,
+                            "bdf": "0000:05:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17930,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 1,
+                            "bdf": "0000:15:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17932,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 2,
+                            "bdf": "0000:65:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17939,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 3,
+                            "bdf": "0000:75:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17870,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 4,
+                            "bdf": "0000:85:00.0",
+                            "read": {
+                                "value": 17937,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17921,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 5,
+                            "bdf": "0000:95:00.0",
+                            "read": {
+                                "value": 0,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17953,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 6,
+                            "bdf": "0000:e5:00.0",
+                            "read": {
+                                "value": 35880,
+                                "unit": "KB"
+                            },
+                            "write": {
+                                "value": 17932,
+                                "unit": "KB"
+                            }
+                        },
+                        {
+                            "gpu": 7,
+                            "bdf": "0000:f5:00.0",
+                            "read": "N/A",
+                            "write": "N/A"
+                        }
+                    ]
+                }
+            }
+        ]
+    ],
+    "link_status": [
+        {
+            "gpu": 0,
+            "bdf": "0000:05:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 1,
+            "bdf": "0000:15:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 2,
+            "bdf": "0000:65:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 3,
+            "bdf": "0000:75:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 4,
+            "bdf": "0000:85:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 5,
+            "bdf": "0000:95:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 6,
+            "bdf": "0000:e5:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        },
+        {
+            "gpu": 7,
+            "bdf": "0000:f5:00.0",
+            "link_status": [
+                "X",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U",
+                "U"
+            ]
+        }
+    ]
+}

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -54,7 +55,9 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 			parseDebugFSFirmwareInfo("/sys/kernel/debug/dri/" + card[4:] + "/amdgpu_firmware_info")
 		featVersion, fwVersion, err := GetFirmwareVersions(card)
 		if err != nil {
-			t.Errorf("Fail to get firmware version %s", err.Error())
+			// Device exists but the DRM node is not usable (e.g. accel not
+			// working on handheld/APU kernels); nothing to compare.
+			t.Skipf("Skipping, DRM device %s not usable: %s", card, err.Error())
 		}
 
 		for k := range featVersion {
@@ -273,5 +276,137 @@ func TestROCrUUIDsFromTopology(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ROCr UUIDs = %#v, want %#v", got, want)
+	}
+}
+
+func writeTopologyProperties(t *testing.T, root string, node int, renderMinor, uniqueID uint64) {
+	t.Helper()
+	dir := filepath.Join(root, "topology", "nodes", fmt.Sprintf("%d", node))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("simd_count 24\ndrm_render_minor %d\nunique_id %d\n", renderMinor, uniqueID)
+	if err := os.WriteFile(filepath.Join(dir, "properties"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mi355xSysfs is the captured sysfs tree of an 8x MI355X node in SPX/NPS1 on
+// kernel 6.8.0-136 (testdata/sysfs-mi355x-spx/README.md).
+const mi355xSysfs = "../../../testdata/sysfs-mi355x-spx/sys"
+const mi355xKFD = mi355xSysfs + "/class/kfd/kfd"
+
+func TestGetAMDGPUsFromFixture(t *testing.T) {
+	devices := GetAMDGPUs(mi355xSysfs)
+
+	want := map[string]struct {
+		card, renderD, nodeId, numaNode int
+		devID                           string
+	}{
+		"0000:75:00.0": {card: 1, renderD: 128, nodeId: 8, numaNode: 0, devID: "0000:75:00:0"},
+		"0000:05:00.0": {card: 9, renderD: 136, nodeId: 9, numaNode: 1, devID: "0000:05:00:0"},
+		"0000:65:00.0": {card: 17, renderD: 144, nodeId: 10, numaNode: 3, devID: "0000:65:00:0"},
+		"0000:15:00.0": {card: 25, renderD: 152, nodeId: 11, numaNode: 2, devID: "0000:15:00:0"},
+		"0000:f5:00.0": {card: 33, renderD: 160, nodeId: 12, numaNode: 4, devID: "0000:f5:00:0"},
+		"0000:85:00.0": {card: 41, renderD: 168, nodeId: 13, numaNode: 5, devID: "0000:85:00:0"},
+		"0000:e5:00.0": {card: 49, renderD: 176, nodeId: 14, numaNode: 7, devID: "0000:e5:00:0"},
+		"0000:95:00.0": {card: 57, renderD: 184, nodeId: 15, numaNode: 6, devID: "0000:95:00:0"},
+	}
+	if len(devices) != len(want) {
+		t.Fatalf("GetAMDGPUs returned %d devices, want %d: %v", len(devices), len(want), devices)
+	}
+	for bdf, exp := range want {
+		dev, ok := devices[bdf]
+		if !ok {
+			t.Errorf("missing device %s", bdf)
+			continue
+		}
+		if dev["card"] != exp.card || dev["renderD"] != exp.renderD || dev["nodeId"] != exp.nodeId || dev["numaNode"] != exp.numaNode {
+			t.Errorf("%s: got card=%v renderD=%v nodeId=%v numaNode=%v, want card=%d renderD=%d nodeId=%d numaNode=%d",
+				bdf, dev["card"], dev["renderD"], dev["nodeId"], dev["numaNode"], exp.card, exp.renderD, exp.nodeId, exp.numaNode)
+		}
+		if dev["devID"] != exp.devID {
+			t.Errorf("%s: devID=%v, want %s", bdf, dev["devID"], exp.devID)
+		}
+		if dev["computePartitionType"] != "spx" || dev["memoryPartitionType"] != "nps1" {
+			t.Errorf("%s: partition=%v/%v, want spx/nps1", bdf, dev["computePartitionType"], dev["memoryPartitionType"])
+		}
+	}
+	for key := range devices {
+		if strings.HasPrefix(key, "amdgpu_xcp_") {
+			t.Errorf("unexpected XCP entry %s: this kernel does not publish XCP render minors in KFD topology", key)
+		}
+	}
+}
+
+func TestGetDevIdsFromTopologyMI355X(t *testing.T) {
+	got := GetDevIdsFromTopology(mi355xKFD)
+	want := map[int]string{
+		128: "0000:75:00:0", 136: "0000:05:00:0", 144: "0000:65:00:0", 152: "0000:15:00:0",
+		160: "0000:f5:00:0", 168: "0000:85:00:0", 176: "0000:e5:00:0", 184: "0000:95:00:0",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("renderDevIds = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetROCrUUIDsFromTopologyMI355X(t *testing.T) {
+	got := GetROCrUUIDsFromTopology(mi355xKFD)
+	want := map[int]string{
+		128: "GPU-08da82c12ef81b5d",
+		136: "GPU-c62ac130ee448403",
+		144: "GPU-8aa2810481bf6315",
+		152: "GPU-f32cb37ceef6feb5",
+		160: "GPU-e88fa10fb8782ebc",
+		168: "GPU-cf10e0d8795d487e",
+		176: "GPU-6402daab8ae76e4e",
+		184: "GPU-1303b4d1d1d0c537",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ROCr UUIDs = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetROCrIndexesFromTopology(t *testing.T) {
+	root := t.TempDir()
+	// node 0 is the CPU (no renderD), node 1 is an APU with unique_id 0,
+	// node 2 is a discrete GPU with a real unique_id.
+	writeTopologyProperties(t, root, 0, 0, 0)
+	writeTopologyProperties(t, root, 1, 128, 0)
+	writeTopologyProperties(t, root, 2, 129, 5)
+
+	got := GetROCrIndexesFromTopology(root)
+	if idx, ok := got[128]; !ok || idx != 0 {
+		t.Errorf("index for renderD128 = %d, %v; want 0, true", idx, ok)
+	}
+	if _, ok := got[129]; ok {
+		t.Error("renderD129 has a real unique_id and must not get an index fallback")
+	}
+}
+
+func TestPartitionCapacity(t *testing.T) {
+	// MI355X whole-GPU values: 294896 MB VRAM (amdsmi-static fixture) and
+	// 304 CUs (8 XCCs x 38).
+	whole := DeviceCapacity{VRAMMiB: 287984, CUCount: 304}
+
+	tests := []struct {
+		name        string
+		partitions  int
+		wantVRAMMiB int32
+		wantCUCount int32
+	}{
+		{"SPX", 1, 287984, 304},
+		{"DPX", 2, 143992, 152},
+		{"QPX", 4, 71996, 76},
+		{"CPX", 8, 35998, 38},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PartitionCapacity(whole, tt.partitions)
+			if got.VRAMMiB != tt.wantVRAMMiB || got.CUCount != tt.wantCUCount {
+				t.Errorf("PartitionCapacity(%d) = %d MiB, %d CUs; want %d MiB, %d CUs",
+					tt.partitions, got.VRAMMiB, got.CUCount, tt.wantVRAMMiB, tt.wantCUCount)
+			}
+		})
 	}
 }

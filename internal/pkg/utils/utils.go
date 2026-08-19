@@ -292,13 +292,15 @@ func GetNextDeviceRequest(dtype string, p corev1.Pod) (corev1.Container, Contain
 	klog.Infof("pod annotation decode value is %+v", pdevices)
 	res := ContainerDevices{}
 
-	pd, ok := pdevices[dtype]
-	if !ok {
-		return corev1.Container{}, res, fmt.Errorf("device request not found")
-	}
-	for ctridx, ctrDevice := range pd {
-		if len(ctrDevice) > 0 {
-			return p.Spec.Containers[ctridx], ctrDevice, nil
+	for _, key := range []string{dtype, dtype + "-pending"} {
+		pd, ok := pdevices[key]
+		if !ok {
+			continue
+		}
+		for ctridx, ctrDevice := range pd {
+			if len(ctrDevice) > 0 {
+				return p.Spec.Containers[ctridx], ctrDevice, nil
+			}
 		}
 	}
 	return corev1.Container{}, res, fmt.Errorf("device request not found")
@@ -309,26 +311,29 @@ func EraseNextDeviceTypeFromAnnotation(dtype string, p corev1.Pod) error {
 	if err != nil {
 		return err
 	}
-	res := PodSingleDevice{}
-	pd, ok := pdevices[dtype]
-	if !ok {
-		return fmt.Errorf("erase device annotation not found")
-	}
-	found := false
-	for _, val := range pd {
-		if found {
-			res = append(res, val)
-		} else {
-			if len(val) > 0 {
-				found = true
-				res = append(res, ContainerDevices{})
-			} else {
+	for _, key := range []string{dtype, dtype + "-pending"} {
+		pd, ok := pdevices[key]
+		if !ok || len(pd) == 0 {
+			continue
+		}
+		res := PodSingleDevice{}
+		found := false
+		for _, val := range pd {
+			if found {
 				res = append(res, val)
+			} else {
+				if len(val) > 0 {
+					found = true
+					res = append(res, ContainerDevices{})
+				} else {
+					res = append(res, val)
+				}
 			}
 		}
+		klog.Infoln("After erase res=", res)
+		newannos := make(map[string]string)
+		newannos[InRequestDevices[key]] = EncodePodSingleDevice(res)
+		return PatchPodAnnotations(&p, newannos)
 	}
-	klog.Infoln("After erase res=", res)
-	newannos := make(map[string]string)
-	newannos[InRequestDevices[dtype]] = EncodePodSingleDevice(res)
-	return PatchPodAnnotations(&p, newannos)
+	return fmt.Errorf("erase device annotation not found")
 }
