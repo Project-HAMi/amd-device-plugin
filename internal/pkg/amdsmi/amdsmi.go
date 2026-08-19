@@ -121,10 +121,64 @@ import (
 
 var amdSMIMu sync.Mutex
 
-// GetAMDSMIUUIDs resolves AMD SMI UUIDs by PCI BDF. AMD SMI initialization is
-// process-global, so calls are serialized and always balanced with shut_down.
-// An individual BDF failure does not discard UUIDs obtained for other devices.
+// amdSMICache serves AMD SMI lookups that are static per card layout (device
+// UUID, product name, partition profiles): the first call fetches and stores
+// them, later calls serve the cache and only fetch BDFs never seen before
+// (e.g. a GPU hotplugged after boot). The current memory partition is NOT
+// cached: it changes with the partition configuration.
+type amdSMICache[T any] struct {
+	mu      sync.Mutex
+	data    map[string]T
+	fetcher func([]string) (map[string]T, error)
+}
+
+func newAMDSCache[T any](fetcher func([]string) (map[string]T, error)) *amdSMICache[T] {
+	return &amdSMICache[T]{data: make(map[string]T), fetcher: fetcher}
+}
+
+func (c *amdSMICache[T]) Get(bdfs []string) (map[string]T, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	missing := make([]string, 0, len(bdfs))
+	for _, bdf := range bdfs {
+		if _, ok := c.data[bdf]; !ok {
+			missing = append(missing, bdf)
+		}
+	}
+	if len(missing) > 0 {
+		fresh, err := c.fetcher(missing)
+		for k, v := range fresh {
+			c.data[k] = v
+		}
+		if err != nil {
+			// Keep what succeeded; retry the failures on the next call.
+			return c.data, err
+		}
+	}
+	out := make(map[string]T, len(bdfs))
+	for _, bdf := range bdfs {
+		if v, ok := c.data[bdf]; ok {
+			out[bdf] = v
+		}
+	}
+	return out, nil
+}
+
+var (
+	amdSMICUUIDs     = newAMDSCache(fetchAMDSUUIDs)
+	amdSMIProduct    = newAMDSCache(fetchAMDSMIProductNames)
+	amdSMIPartitions = newAMDSCache(fetchAMDGPUPartitionProfiles)
+)
+
+// GetAMDSMIUUIDs resolves AMD SMI UUIDs by PCI BDF, cached after the first
+// call. AMD SMI initialization is process-global, so calls are serialized and
+// always balanced with shut_down. An individual BDF failure does not discard
+// UUIDs obtained for other devices.
 func GetAMDSMIUUIDs(bdfs []string) (map[string]string, error) {
+	return amdSMICUUIDs.Get(bdfs)
+}
+
+func fetchAMDSUUIDs(bdfs []string) (map[string]string, error) {
 	amdSMIMu.Lock()
 	defer amdSMIMu.Unlock()
 
@@ -163,9 +217,14 @@ func GetAMDSMIUUIDs(bdfs []string) (map[string]string, error) {
 	return uuidByBDF, nil
 }
 
-// GetAMDSMIProductNames resolves the AMD SMI ASIC market_name by PCI BDF.
-// This is the user-facing product name reported in DeviceInfo.Type.
+// GetAMDSMIProductNames resolves the AMD SMI ASIC market_name by PCI BDF,
+// cached after the first call. This is the user-facing product name reported
+// in DeviceInfo.Type.
 func GetAMDSMIProductNames(bdfs []string) (map[string]string, error) {
+	return amdSMIProduct.Get(bdfs)
+}
+
+func fetchAMDSMIProductNames(bdfs []string) (map[string]string, error) {
 	amdSMIMu.Lock()
 	defer amdSMIMu.Unlock()
 
@@ -253,8 +312,13 @@ type PartitionProfile struct {
 }
 
 // GetAMDGPUPartitionProfiles resolves the accelerator partition profiles each
-// GPU supports (SPX/DPX/QPX/CPX with partition counts), keyed by BDF.
+// GPU supports (SPX/DPX/QPX/CPX with partition counts), keyed by BDF. The
+// profile list is static per card, so it is cached after the first call.
 func GetAMDGPUPartitionProfiles(bdfs []string) (map[string][]PartitionProfile, error) {
+	return amdSMIPartitions.Get(bdfs)
+}
+
+func fetchAMDGPUPartitionProfiles(bdfs []string) (map[string][]PartitionProfile, error) {
 	amdSMIMu.Lock()
 	defer amdSMIMu.Unlock()
 

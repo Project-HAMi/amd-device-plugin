@@ -106,6 +106,10 @@ type AMDGPUPlugin struct {
 	// keys). Upstream HAMi invents flat "AMDGPU-<i>" device ids over node
 	// capacity; device i resolves to GPU sortedBDFs[i/splitCount].
 	sortedBDFs []string
+	// partitionTemplates is the boot-time catalog of compute x NPS
+	// combinations per card, with the NPS->physical memory lookup applied.
+	// Held in memory only; never written to disk (immutable-OS friendly).
+	partitionTemplates []amdgpu.DevicePartitionTemplates
 	// bdfToROCrUUID maps a topology key to its ROCr UUID, for resolving
 	// whole-GPU allocations and "<bdf>#<slot>" kubelet split ids during
 	// Allocate.
@@ -199,6 +203,18 @@ func (p *AMDGPUPlugin) Start() error {
 	// Initialize deviceCache before Allocate rebuilds CU occupancy from Pod annotations.
 	if err := p.RegisterInAnnotation(); err != nil {
 		return fmt.Errorf("initialize device cache: %w", err)
+	}
+
+	// Boot-time partition template catalog: per card, the valid compute x NPS
+	// combinations and the NPS->physical-memory lookup. In-memory only;
+	// regenerated on every boot.
+	p.partitionTemplates, err = amdgpu.GeneratePartitionTemplates()
+	if err != nil {
+		glog.Warningf("partition template generation failed: %v", err)
+	}
+	for _, t := range p.partitionTemplates {
+		glog.Infof("partition templates for %s (%s): current %s/%s physicalMemory=%d, %d combos",
+			t.BDF, t.Product, t.CurrentComputePartition, t.CurrentMemoryPartition, t.CurrentPhysicalMemory, len(t.Templates))
 	}
 
 	return nil
