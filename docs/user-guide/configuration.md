@@ -9,6 +9,35 @@ The device plugin can be configured using the following environment variables:
 | Environment Variable | Type | Default | Description |
 |-----|------|---------|-------------|
 | `AMD_GPU_DEVICE_COUNT` | Integer | Auto-detected | Number of AMD GPUs available on the node |
+| `OPERATING_MODE` | String | `cu` | Registration mode: `cu` (soft whole-GPU + CU slices) or `partition` (hard compute partitions). Overridable per node via the `hami.io/amd-operating-mode` node annotation. |
+
+## Operating Modes
+
+The plugin registers AMD GPUs in one of two modes:
+
+- **cu mode (default)**: each whole GPU registers as a soft device (default
+  split count, `Mode` empty) and is sliced by CU and memory. This is the
+  historical HAMi behavior.
+- **partition mode**: devices register as hard compute partitions with a
+  `#<compute-type>` suffix (`GPU-xxx#spx`, `GPU-xxx#qpx`), `Mode` set to the
+  partition type and `Count: 1`. The kubelet-facing device list publishes
+  only the hard entries (no soft splits). Whole GPUs with more than one
+  partition (dpx/qpx/cpx) are replaced by their `amdgpu_xcp_*` partitions;
+  single-partition (spx) whole GPUs register as one hard device.
+
+Mode resolution, lowest to highest precedence:
+
+1. Default `cu` when nothing is set.
+2. `OPERATING_MODE` environment variable (chart value `dp.operatingMode`).
+3. The `hami.io/amd-operating-mode` node annotation, which overrides the env
+   per node (the NVIDIA `nvidia.com/mig.config` pattern).
+
+The annotation is read once at plugin start; changing it requires a plugin
+pod restart. The plugin logs the resolved mode as `operating mode: <mode>`.
+
+Partition counts are per GPU: `amd-smi set -g <id> --compute-partition qpx`
+flips a single GPU; mix spx and qpx GPUs on one node. See
+[MI355X Partitioning](mi355x-partitioning.md) for kernel caveats.
 
 ### Why Limit GPU Exposure?
 

@@ -1,0 +1,27 @@
+# HAMi scheduler device config for QPX mode.
+#
+# Merge the `amd` block below into the `device-config.yaml` data of the
+# kube-system/hami-scheduler-device ConfigMap that the hami chart renders,
+# or point the chart at this file, then let the checksummed scheduler
+# rollout pick it up:
+#
+#   kubectl edit cm -n kube-system hami-scheduler-device
+#   # or: kubectl create configmap hami-scheduler-device --from-file=...
+#
+# The scheduler reads /device-config.yaml from this ConfigMap; changing it
+# rolls the hami-scheduler Deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hami-scheduler-device
+  namespace: kube-system
+data:
+  device-config.yaml: |
+    version: v1
+    amd:
+      resourceCountName: "amd.com/gpu"
+      resourceMemoryName: "amd.com/gpumem"
+      resourceCoreName: "amd.com/gpucores"
+      deviceSplitCount: 1
+      defaultCores: 0
+      defaultMemory: 0

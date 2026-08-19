@@ -59,6 +59,29 @@ static amdsmi_status_t amdsmi_product_name_for_bdf(const char *bdf_text,
 	return AMDSMI_STATUS_SUCCESS;
 }
 
+static amdsmi_status_t amdsmi_set_partition_for_bdf(const char *bdf_text,
+                                                    unsigned int profile_index) {
+	unsigned long long domain;
+	unsigned int bus, device, function;
+	char trailing;
+	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
+	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
+		return AMDSMI_STATUS_INVAL;
+	}
+
+	amdsmi_bdf_t bdf = {0};
+	bdf.bdf.domain_number = domain;
+	bdf.bdf.bus_number = bus;
+	bdf.bdf.device_number = device;
+	bdf.bdf.function_number = function;
+	amdsmi_processor_handle processor = NULL;
+	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	if (status != AMDSMI_STATUS_SUCCESS) {
+		return status;
+	}
+	return amdsmi_set_gpu_accelerator_partition_profile(processor, profile_index);
+}
+
 static amdsmi_status_t amdsmi_partition_profiles_for_bdf(
 		const char *bdf_text, amdsmi_accelerator_partition_profile_config_t *config) {
 	unsigned long long domain;
@@ -335,24 +358,10 @@ func fetchAMDGPUPartitionProfiles(bdfs []string) (map[string][]PartitionProfile,
 		if bdf == "" {
 			continue
 		}
-		cBDF := C.CString(bdf)
-		var config C.amdsmi_accelerator_partition_profile_config_t
-		status := C.amdsmi_partition_profiles_for_bdf(cBDF, &config)
-		C.free(unsafe.Pointer(cBDF))
-		if status != C.AMDSMI_STATUS_SUCCESS {
-			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
+		profiles, err := partitionProfilesForBDF(bdf)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s (%v)", bdf, err))
 			continue
-		}
-		profiles := make([]PartitionProfile, 0, int(config.num_profiles))
-		for i := 0; i < int(config.num_profiles); i++ {
-			profile := config.profiles[i]
-			profiles = append(profiles, PartitionProfile{
-				ProfileIndex:    int(profile.profile_index),
-				Type:            acceleratorPartitionTypeString(profile.profile_type),
-				MemoryCaps:      npsCapsString(C.amdsmi_nps_cap_mask(profile.memory_caps)),
-				NumPartitions:   int(profile.num_partitions),
-				XCCPerPartition: xccPerPartition(config, profile.profile_index),
-			})
 		}
 		profilesByBDF[bdf] = profiles
 		profilesByBDF[rawBDF] = profiles
@@ -361,6 +370,85 @@ func fetchAMDGPUPartitionProfiles(bdfs []string) (map[string][]PartitionProfile,
 		return profilesByBDF, fmt.Errorf("AMD SMI partition-profile lookup failed for %s", strings.Join(failures, ", "))
 	}
 	return profilesByBDF, nil
+}
+
+// partitionProfilesForBDF resolves the accelerator partition profiles for a
+// single BDF. The caller holds amdSMIMu.
+func partitionProfilesForBDF(bdf string) ([]PartitionProfile, error) {
+	cBDF := C.CString(bdf)
+	var config C.amdsmi_accelerator_partition_profile_config_t
+	status := C.amdsmi_partition_profiles_for_bdf(cBDF, &config)
+	C.free(unsafe.Pointer(cBDF))
+	if status != C.AMDSMI_STATUS_SUCCESS {
+		return nil, fmt.Errorf("partition-profile lookup failed (status %d)", status)
+	}
+	profiles := make([]PartitionProfile, 0, int(config.num_profiles))
+	for i := 0; i < int(config.num_profiles); i++ {
+		profile := config.profiles[i]
+		profiles = append(profiles, PartitionProfile{
+			ProfileIndex:    int(profile.profile_index),
+			Type:            acceleratorPartitionTypeString(profile.profile_type),
+			MemoryCaps:      npsCapsString(C.amdsmi_nps_cap_mask(profile.memory_caps)),
+			NumPartitions:   int(profile.num_partitions),
+			XCCPerPartition: xccPerPartition(config, profile.profile_index),
+		})
+	}
+	return profiles, nil
+}
+
+// SetGPUComputePartitions flips every GPU to the given compute partition
+// type (spx/dpx/qpx/cpx) through the AMD SMI C API. The profile index comes
+// from the accelerator partition profiles each GPU supports. A GPU with
+// running processes fails (busy) and is reported per BDF; the rest still
+// flip. GPUs already in the target mode are left untouched.
+func SetGPUComputePartitions(bdfs []string, computeType string) error {
+	if len(bdfs) == 0 {
+		return nil
+	}
+	amdSMIMu.Lock()
+	defer amdSMIMu.Unlock()
+
+	if status := C.amdsmi_init(C.AMDSMI_INIT_AMD_GPUS); status != C.AMDSMI_STATUS_SUCCESS {
+		return fmt.Errorf("amdsmi_init: status %d", status)
+	}
+	defer C.amdsmi_shut_down()
+
+	var failures []string
+	seen := make(map[string]bool)
+	for _, rawBDF := range bdfs {
+		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
+		bdf := normalizeBDF(rawBDF)
+		if bdf == "" || seen[bdf] {
+			continue
+		}
+		seen[bdf] = true
+		profiles, err := partitionProfilesForBDF(bdf)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s (profiles: %v)", bdf, err))
+			continue
+		}
+		profileIndex := -1
+		for _, profile := range profiles {
+			if strings.EqualFold(profile.Type, computeType) {
+				profileIndex = profile.ProfileIndex
+				break
+			}
+		}
+		if profileIndex < 0 {
+			failures = append(failures, fmt.Sprintf("%s (no %s profile)", bdf, computeType))
+			continue
+		}
+		cBDF := C.CString(bdf)
+		status := C.amdsmi_set_partition_for_bdf(cBDF, C.uint(profileIndex))
+		C.free(unsafe.Pointer(cBDF))
+		if status != C.AMDSMI_STATUS_SUCCESS {
+			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("compute-partition set failed for %s", strings.Join(failures, ", "))
+	}
+	return nil
 }
 
 func xccPerPartition(config C.amdsmi_accelerator_partition_profile_config_t, profileIndex C.uint) int {

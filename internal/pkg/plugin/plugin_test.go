@@ -289,23 +289,38 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 
 func TestIsSchedulableTopologyKey(t *testing.T) {
 	wholeGPU := map[string]interface{}{"devID": "0000:05:00.0", "computePartitionType": "spx", "memoryPartitionType": "nps1"}
-	partitionedParent := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "cpx", "memoryPartitionType": "nps1"}
+	qpxParent := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
 	noPartition := map[string]interface{}{"devID": "0000:75:00.0", "computePartitionType": "", "memoryPartitionType": ""}
-	xcp := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "cpx", "memoryPartitionType": "nps1"}
-	withChildren := xcpChildrenByBDF(map[string]map[string]interface{}{"amdgpu_xcp_30": xcp})
-	withoutChildren := xcpChildrenByBDF(map[string]map[string]interface{}{"0000:05:00.0": wholeGPU})
+	xcp := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
+	// partitionsByBDF: spx=1, qpx=4, none=0 (unknown -> spx default).
+	partitions := map[string]int{"0000:05:00.0": 1, "0000:15:00.0": 4}
 
-	if !isSchedulableTopologyKey("amdgpu_xcp_30", xcp, withChildren) {
-		t.Error("XCP partition should be schedulable")
+	cu := &AMDGPUPlugin{operatingMode: "cu"}
+	if !cu.isSchedulableTopologyKey("0000:05:00.0", wholeGPU, partitions) {
+		t.Error("cu mode: SPX whole GPU should be schedulable")
 	}
-	if !isSchedulableTopologyKey("0000:05:00.0", wholeGPU, withoutChildren) {
-		t.Error("SPX whole GPU with no XCP children should be schedulable (gfx950)")
+	if !cu.isSchedulableTopologyKey("0000:15:00.0", qpxParent, partitions) {
+		t.Error("cu mode: QPX whole GPU should be schedulable (CU slicing over the whole GPU)")
 	}
-	if isSchedulableTopologyKey("0000:15:00.0", partitionedParent, withChildren) {
-		t.Error("XCP parent whose BDF has partition children has no capacity and must be skipped")
+	if cu.isSchedulableTopologyKey("amdgpu_xcp_30", xcp, partitions) {
+		t.Error("cu mode: XCP partition must not register")
 	}
-	if !isSchedulableTopologyKey("0000:75:00.0", noPartition, withoutChildren) {
-		t.Error("GPU without partition support should be schedulable")
+	if !cu.isSchedulableTopologyKey("0000:75:00.0", noPartition, partitions) {
+		t.Error("cu mode: GPU without partition support should be schedulable")
+	}
+
+	partition := &AMDGPUPlugin{operatingMode: "partition"}
+	if !partition.isSchedulableTopologyKey("0000:05:00.0", wholeGPU, partitions) {
+		t.Error("partition mode: SPX whole GPU (1 partition) should register as a hard device")
+	}
+	if partition.isSchedulableTopologyKey("0000:15:00.0", qpxParent, partitions) {
+		t.Error("partition mode: QPX whole GPU is replaced by its XCP partitions")
+	}
+	if !partition.isSchedulableTopologyKey("amdgpu_xcp_30", xcp, partitions) {
+		t.Error("partition mode: XCP partition should register")
+	}
+	if !partition.isSchedulableTopologyKey("0000:75:00.0", noPartition, partitions) {
+		t.Error("partition mode: GPU without partitions has no hard form but still registers soft")
 	}
 }
 
@@ -315,7 +330,7 @@ func TestHardEntryRegistration(t *testing.T) {
 	wholeGPU := map[string]interface{}{"computePartitionType": "spx", "memoryPartitionType": "nps1"}
 
 	soft := &utils.DeviceInfo{ID: "GPU-466450b96fbde849", Count: int32(splitCount), Mode: ""}
-	if !(&AMDGPUPlugin{}).registerHardEntry("amdgpu_xcp_30", xcp, soft) {
+	if !(&AMDGPUPlugin{operatingMode: "cu"}).registerHardEntry("amdgpu_xcp_30", xcp, soft) {
 		t.Fatal("XCP partition should register a hard entry")
 	}
 	if soft.ID != "GPU-466450b96fbde849#cpx" || soft.Mode != "cpx" || soft.Count != 1 {
@@ -323,12 +338,20 @@ func TestHardEntryRegistration(t *testing.T) {
 	}
 
 	soft = &utils.DeviceInfo{ID: "uuid-1", Count: int32(splitCount)}
-	if (&AMDGPUPlugin{}).registerHardEntry("0000:05:00.0", wholeGPU, soft) {
-		t.Fatal("hard entries are only for XCP partitions, not GPU parents")
+	if (&AMDGPUPlugin{operatingMode: "cu"}).registerHardEntry("0000:05:00.0", wholeGPU, soft) {
+		t.Fatal("cu mode: GPU parents must not get a hard entry")
 	}
 	soft = &utils.DeviceInfo{ID: "uuid-2", Count: int32(splitCount)}
-	if (&AMDGPUPlugin{}).registerHardEntry("0000:75:00.0", noPartition, soft) {
-		t.Fatal("GPU without partitions should not get a hard entry")
+	if (&AMDGPUPlugin{operatingMode: "partition"}).registerHardEntry("0000:05:00.0", wholeGPU, soft) {
+		if soft.ID != "uuid-2#spx" || soft.Mode != "spx" || soft.Count != 1 {
+			t.Fatalf("partition-mode hard entry = %+v, want ID uuid-2#spx, Mode=spx, Count=1", soft)
+		}
+	} else {
+		t.Fatal("partition mode: SPX whole GPU should get a hard entry")
+	}
+	soft = &utils.DeviceInfo{ID: "uuid-3", Count: int32(splitCount)}
+	if (&AMDGPUPlugin{operatingMode: "partition"}).registerHardEntry("0000:75:00.0", noPartition, soft) {
+		t.Fatal("GPU without a compute partition type should not get a hard entry")
 	}
 }
 
@@ -517,10 +540,10 @@ func loadMemoryPartitionGolden(t *testing.T, path string) []string {
 // captured MI355X sysfs tree (kernel 6.8.0-136) with an injected AMD SMI
 // golden, so it runs on machines without GPUs or AMD SMI. On this kernel the
 // XCP render minors are absent from KFD topology, so discovery yields only
-// the 8 whole-GPU entries and every one of them is an SPX-partitioned parent
-// without allocatable capacity: nothing registers. Pinning that behavior;
-// fixing XCP discovery on this kernel must flip the expected count to 8 soft
-// + 56 hard entries.
+// the 8 whole-GPU entries. cu mode registers them as soft devices (Count 10,
+// unsuffixed); partition mode registers one hard #spx device per GPU
+// (Count 1). XCP partition registration on this kernel is impossible by
+// construction; it appears on kernels whose KFD topology exposes XCP nodes.
 func TestRegistrationFromFixture(t *testing.T) {
 	root := "../../../testdata/sysfs-mi355x-spx/sys"
 	golden := loadAmdsmiGolden(t, "../../../testdata/amdsmi-mi355x.json")
@@ -533,55 +556,72 @@ func TestRegistrationFromFixture(t *testing.T) {
 	profiles := loadPartitionProfilesGolden(t, "../../../testdata/amdsmi-partition-g3-mi355x.json")
 	profileBDFs := map[string]bool{}
 
-	p := NewAMDGPUPlugin(
-		WithSysfsRoot(root),
-		WithAmdSMI(
-			func(bdfs []string) (map[string]string, error) {
-				uuidByBDF := map[string]string{}
-				for _, bdf := range bdfs {
-					if entry, ok := golden[fixtureBDF(bdf)]; ok {
-						uuidByBDF[bdf] = entry.UUID
+	newPlugin := func(mode string) *AMDGPUPlugin {
+		p := NewAMDGPUPlugin(
+			WithSysfsRoot(root),
+			WithAmdSMI(
+				func(bdfs []string) (map[string]string, error) {
+					uuidByBDF := map[string]string{}
+					for _, bdf := range bdfs {
+						if entry, ok := golden[fixtureBDF(bdf)]; ok {
+							uuidByBDF[bdf] = entry.UUID
+						}
 					}
-				}
-				return uuidByBDF, nil
-			},
-			func(bdfs []string) (map[string]string, error) {
-				namesByBDF := map[string]string{}
-				for _, bdf := range bdfs {
-					if entry, ok := golden[fixtureBDF(bdf)]; ok {
-						namesByBDF[bdf] = entry.Type
+					return uuidByBDF, nil
+				},
+				func(bdfs []string) (map[string]string, error) {
+					namesByBDF := map[string]string{}
+					for _, bdf := range bdfs {
+						if entry, ok := golden[fixtureBDF(bdf)]; ok {
+							namesByBDF[bdf] = entry.Type
+						}
 					}
-				}
-				return namesByBDF, nil
-			},
-			func(bdfs []string) (map[string]string, error) {
-				partitionsByBDF := map[string]string{}
+					return namesByBDF, nil
+				},
+				func(bdfs []string) (map[string]string, error) {
+					partitionsByBDF := map[string]string{}
+					for _, bdf := range bdfs {
+						partitionsByBDF[bdf] = memoryPartitions[0]
+					}
+					return partitionsByBDF, nil
+				},
+			),
+			WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdsmi.PartitionProfile, error) {
+				profilesByBDF := map[string][]amdsmi.PartitionProfile{}
 				for _, bdf := range bdfs {
-					partitionsByBDF[bdf] = memoryPartitions[0]
+					profileBDFs[bdf] = true
+					profilesByBDF[bdf] = profiles
 				}
-				return partitionsByBDF, nil
-			},
-		),
-		WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdsmi.PartitionProfile, error) {
-			profilesByBDF := map[string][]amdsmi.PartitionProfile{}
-			for _, bdf := range bdfs {
-				profileBDFs[bdf] = true
-				profilesByBDF[bdf] = profiles
-			}
-			return profilesByBDF, nil
-		}),
-	)
-	devices := p.getAPIDevices()
-	if len(devices) != 0 {
-		t.Fatalf("registered %d devices, want 0 on this kernel: %+v", len(devices), devices)
+				return profilesByBDF, nil
+			}),
+		)
+		p.operatingMode = mode
+		return p
 	}
-	if len(p.AMDGPUs) != 8 {
-		t.Fatalf("discovery returned %d entries, want 8 whole GPUs: %v", len(p.AMDGPUs), p.AMDGPUs)
+
+	cu := newPlugin("cu")
+	cuDevices := cu.getAPIDevices()
+	if len(cuDevices) != 8 {
+		t.Fatalf("cu mode: registered %d devices, want 8: %+v", len(cuDevices), cuDevices)
 	}
-	if len(profileBDFs) != 8 {
-		t.Errorf("partition-profile lookup consulted %d BDFs, want 8: %v", len(profileBDFs), profileBDFs)
+	for _, d := range cuDevices {
+		if d.Count != int32(splitCount) || d.Mode != "" || strings.Contains(d.ID, "#") {
+			t.Fatalf("cu mode device = %+v, want Count=%d, Mode empty, unsuffixed ID", d, splitCount)
+		}
 	}
-	for key, deviceData := range p.AMDGPUs {
+
+	partition := newPlugin("partition")
+	partitionDevices := partition.getAPIDevices()
+	if len(partitionDevices) != 8 {
+		t.Fatalf("partition mode: registered %d devices, want 8: %+v", len(partitionDevices), partitionDevices)
+	}
+	for _, d := range partitionDevices {
+		if d.Count != 1 || d.Mode != "spx" || !strings.HasSuffix(d.ID, "#spx") {
+			t.Fatalf("partition mode device = %+v, want Count=1, Mode=spx, #spx ID", d)
+		}
+	}
+
+	for key, deviceData := range cu.AMDGPUs {
 		if strings.HasPrefix(key, "amdgpu_xcp_") {
 			t.Error("XCP entries must not reach registration on this kernel")
 		}
@@ -591,6 +631,9 @@ func TestRegistrationFromFixture(t *testing.T) {
 		if mpt, _ := deviceData["memoryPartitionType"].(string); mpt != "nps1" {
 			t.Errorf("%s: memoryPartitionType %q, want nps1 from amd-smi", key, mpt)
 		}
+	}
+	if len(profileBDFs) != 8 {
+		t.Errorf("partition-profile lookup consulted %d BDFs, want 8: %v", len(profileBDFs), profileBDFs)
 	}
 }
 
