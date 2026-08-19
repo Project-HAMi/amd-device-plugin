@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
@@ -288,21 +288,23 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 }
 
 func TestIsSchedulableTopologyKey(t *testing.T) {
-	wholeGPU := map[string]interface{}{"computePartitionType": "spx", "memoryPartitionType": "nps1"}
-	partitionedParent := map[string]interface{}{"computePartitionType": "cpx", "memoryPartitionType": "nps1"}
-	noPartition := map[string]interface{}{"computePartitionType": "", "memoryPartitionType": ""}
-	xcp := map[string]interface{}{"computePartitionType": "cpx", "memoryPartitionType": "nps1"}
+	wholeGPU := map[string]interface{}{"devID": "0000:05:00.0", "computePartitionType": "spx", "memoryPartitionType": "nps1"}
+	partitionedParent := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "cpx", "memoryPartitionType": "nps1"}
+	noPartition := map[string]interface{}{"devID": "0000:75:00.0", "computePartitionType": "", "memoryPartitionType": ""}
+	xcp := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "cpx", "memoryPartitionType": "nps1"}
+	withChildren := xcpChildrenByBDF(map[string]map[string]interface{}{"amdgpu_xcp_30": xcp})
+	withoutChildren := xcpChildrenByBDF(map[string]map[string]interface{}{"0000:05:00.0": wholeGPU})
 
-	if !isSchedulableTopologyKey("amdgpu_xcp_30", xcp) {
+	if !isSchedulableTopologyKey("amdgpu_xcp_30", xcp, withChildren) {
 		t.Error("XCP partition should be schedulable")
 	}
-	if isSchedulableTopologyKey("0000:05:00.0", wholeGPU) {
-		t.Error("SPX-partitioned GPU parent has no capacity and must be skipped")
+	if !isSchedulableTopologyKey("0000:05:00.0", wholeGPU, withoutChildren) {
+		t.Error("SPX whole GPU with no XCP children should be schedulable (gfx950)")
 	}
-	if isSchedulableTopologyKey("0000:15:00.0", partitionedParent) {
-		t.Error("partitioned GPU parent has no capacity and must be skipped")
+	if isSchedulableTopologyKey("0000:15:00.0", partitionedParent, withChildren) {
+		t.Error("XCP parent whose BDF has partition children has no capacity and must be skipped")
 	}
-	if !isSchedulableTopologyKey("0000:75:00.0", noPartition) {
+	if !isSchedulableTopologyKey("0000:75:00.0", noPartition, withoutChildren) {
 		t.Error("GPU without partition support should be schedulable")
 	}
 }
@@ -425,7 +427,7 @@ func (f *flexibleInt) UnmarshalJSON(b []byte) error {
 // loadPartitionProfilesGolden parses a raw amd-smi partition -g capture into
 // PartitionProfile. Profile rows carry the header fields; the following rows
 // only detail other resource types (DECODER/DMA/JPEG) and are skipped.
-func loadPartitionProfilesGolden(t *testing.T, path string) []amdgpu.PartitionProfile {
+func loadPartitionProfilesGolden(t *testing.T, path string) []amdsmi.PartitionProfile {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -444,12 +446,12 @@ func loadPartitionProfilesGolden(t *testing.T, path string) []amdgpu.PartitionPr
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatal(err)
 	}
-	profiles := []amdgpu.PartitionProfile{}
+	profiles := []amdsmi.PartitionProfile{}
 	for _, row := range raw.PartitionProfiles {
 		if row.AcceleratorType == "" {
 			continue
 		}
-		profiles = append(profiles, amdgpu.PartitionProfile{
+		profiles = append(profiles, amdsmi.PartitionProfile{
 			ProfileIndex:    int(row.ProfileIndex),
 			Type:            strings.TrimSuffix(row.AcceleratorType, "*"),
 			MemoryCaps:      row.MemoryCaps,
@@ -462,7 +464,7 @@ func loadPartitionProfilesGolden(t *testing.T, path string) []amdgpu.PartitionPr
 
 func TestPartitionProfilesFromFixture(t *testing.T) {
 	profiles := loadPartitionProfilesGolden(t, "../../../testdata/amdsmi-partition-g3-mi355x.json")
-	want := []amdgpu.PartitionProfile{
+	want := []amdsmi.PartitionProfile{
 		{ProfileIndex: 0, Type: "SPX", MemoryCaps: "NPS1", NumPartitions: 1, XCCPerPartition: 8},
 		{ProfileIndex: 1, Type: "DPX", MemoryCaps: "NPS1,NPS2", NumPartitions: 2, XCCPerPartition: 4},
 		{ProfileIndex: 2, Type: "QPX", MemoryCaps: "NPS1", NumPartitions: 4, XCCPerPartition: 2},
@@ -560,8 +562,8 @@ func TestRegistrationFromFixture(t *testing.T) {
 				return partitionsByBDF, nil
 			},
 		),
-		WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdgpu.PartitionProfile, error) {
-			profilesByBDF := map[string][]amdgpu.PartitionProfile{}
+		WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdsmi.PartitionProfile, error) {
+			profilesByBDF := map[string][]amdsmi.PartitionProfile{}
 			for _, bdf := range bdfs {
 				profileBDFs[bdf] = true
 				profilesByBDF[bdf] = profiles
