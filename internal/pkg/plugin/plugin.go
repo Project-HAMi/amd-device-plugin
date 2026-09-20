@@ -737,6 +737,14 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			// ROCr renumbers devices after this list is applied. HSA_CU_MASK uses
 			// those container-local indices, so it is built in the same order.
 			car.Envs["ROCR_VISIBLE_DEVICES"] = strings.Join(rocrVisibleDevices, ",")
+			// HIP/Ray/PyTorch read HIP_VISIBLE_DEVICES (CUDA-compatible semantics).
+			// Ray errors if only ROCR_VISIBLE_DEVICES is set; inject matching
+			// container-local indices so both layers agree after ROCr renumbering.
+			hipVisibleDevices := make([]string, len(rocrVisibleDevices))
+			for i := range rocrVisibleDevices {
+				hipVisibleDevices[i] = strconv.Itoa(i)
+			}
+			car.Envs["HIP_VISIBLE_DEVICES"] = strings.Join(hipVisibleDevices, ",")
 			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 			car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 		}

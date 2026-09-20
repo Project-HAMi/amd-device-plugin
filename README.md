@@ -13,7 +13,7 @@ This repository contains the AMD device plugin used by [HAMi](https://github.com
 - Publishes the standard PCI BDF in `custominfo.pciBDF`.
 - Reads physical VRAM and active CU capacity through `libdrm_amdgpu`.
 - Persists per-Pod CU ranges in `hami.io/amd-cu-allocated` and reconstructs allocation state after a device-plugin restart.
-- Applies `ROCR_VISIBLE_DEVICES` and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
+- Applies `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
 - Applies the requested memory limit through `HIP_DEVICE_MEMORY_LIMIT` and the `libamvgpu.so` `LD_AUDIT` hook.
 
 The plugin registers devices in the `hami.io/node-amd-register` node annotation. A device entry has this shape:
