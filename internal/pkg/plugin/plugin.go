@@ -64,6 +64,9 @@ type AMDGPUPlugin struct {
 	// amdSMIUUIDToROCrUUID maps the scheduler-facing AMD SMI UUID to the UUID
 	// spelling understood by ROCR_VISIBLE_DEVICES.
 	amdSMIUUIDToROCrUUID map[string]string
+	// bdfToROCrUUID maps the topology BDF to its ROCr UUID for kubelet split
+	// ids ("<bdf>#<slot>") resolved during Allocate.
+	bdfToROCrUUID map[string]string
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -173,6 +176,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	}
 	p.amdSMIUUIDToTopology = make(map[string]string, len(amdSMIUUIDs))
 	p.amdSMIUUIDToROCrUUID = make(map[string]string, len(amdSMIUUIDs))
+	p.bdfToROCrUUID = make(map[string]string, len(p.AMDGPUs))
 	rocrUUIDs := amdgpu.GetROCrUUIDsFromTopology()
 	amdSMIProductNames, err := amdgpu.GetAMDSMIProductNames(bdfs)
 	if err != nil {
@@ -222,6 +226,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		// device node. Allocate uses the in-memory UUID -> topology map below.
 		p.amdSMIUUIDToTopology[uuid] = key
 		p.amdSMIUUIDToROCrUUID[uuid] = rocrUUID
+		p.bdfToROCrUUID[key] = rocrUUID
 		// key is the standard PCI BDF spelling (domain:bus:device.function).
 		// The KFD topology bdf above uses a fourth colon-separated component.
 		customInfo := map[string]any{"pciBDF": strings.ToLower(key)}
@@ -575,13 +580,23 @@ func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]
 		}
 		return nil, fmt.Errorf("AMD SMI UUID %q resolves to unavailable topology key %q", uuid, topoKey)
 	}
-
+	// kubelet split ids are "<bdf>#<slot>"; resolve the bare BDF directly.
+	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
+		if d, found := p.AMDGPUs[bdf]; found {
+			return d, nil
+		}
+	}
 	return nil, fmt.Errorf("no local GPU topology entry for AMD SMI UUID %q", uuid)
 }
 
 func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
 	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok && rocrUUID != "" {
 		return rocrUUID, nil
+	}
+	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
+		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok && rocrUUID != "" {
+			return rocrUUID, nil
+		}
 	}
 	return "", fmt.Errorf("no ROCr UUID for AMD SMI UUID %q", uuid)
 }
@@ -619,16 +634,26 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
 	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
+	// True when any container requests sliced (cores > 0) devices; the CU
+	// persistence and node lock guard shared occupancy only.
+	slicedCU := false
 	for idx := range r.ContainerRequests {
 		currentCtr, devreq, err := utils.GetNextDeviceRequest("amd", *current)
 		glog.Infof("deviceAllocateFromAnnotation(container=%s)=%+v", currentCtr.Name, devreq)
-		if err != nil {
-			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, err
-		}
-		if len(devreq) != len(r.ContainerRequests[idx].DevicesIDs) {
-			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, fmt.Errorf("device number not matched")
+		if err != nil || len(devreq) != len(r.ContainerRequests[idx].DevicesIDs) {
+			// The fork scheduler's annotation key is not the one this plugin
+			// reads; fall back to kubelet's own allocation (whole GPU).
+			glog.Warningf("annotation allocation unavailable (%v); using kubelet device ids %v", err, r.ContainerRequests[idx].DevicesIDs)
+			devreq = utils.ContainerDevices{}
+			for _, id := range r.ContainerRequests[idx].DevicesIDs {
+				devreq = append(devreq, utils.ContainerDevice{UUID: id, Type: "AMDGPU", Usedcores: 0})
+			}
+		} else {
+			err = utils.EraseNextDeviceTypeFromAnnotation("amd", *current)
+			if err != nil {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, err
+			}
 		}
 
 		car := pluginapi.ContainerAllocateResponse{
@@ -677,12 +702,6 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			}
 		}
 
-		err = utils.EraseNextDeviceTypeFromAnnotation("amd", *current)
-		if err != nil {
-			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, err
-		}
-
 		if len(devreq) > 0 {
 			hsaCuSets := make([]string, 0, len(devreq))
 			for _, d := range devreq {
@@ -707,7 +726,12 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					}
 					cuAllocationSnapshot[d.UUID] = baseAllocation
 				}
-				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, int(d.Usedcores))
+				cores := int(d.Usedcores)
+				if cores == 0 {
+					// Whole GPU: mask every CU.
+					cores = totalCUs
+				}
+				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores)
 				if err != nil {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
@@ -717,6 +741,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				// Use container-local device index as GPU_list and ID_List as CU_list.
 				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
+				slicedCU = slicedCU || d.Usedcores > 0
 				if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
 					oldAllocation, err := idListToAllocation(oldList, totalCUs)
 					if err != nil {
@@ -752,7 +777,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		response.ContainerResponses = append(response.ContainerResponses, &car)
 	}
 
-	if len(podCuAllocList) > 0 {
+	// Whole-GPU allocations own the full card; their CU occupancy is not
+	// shared, so there is nothing to persist and no node lock to check.
+	if len(podCuAllocList) > 0 && slicedCU {
 		b, err := json.Marshal(podCuAllocList)
 		if err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
@@ -886,6 +913,18 @@ func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
 			return 0, fmt.Errorf("invalid cu count for device %s: %d", uuid, d.Devcore)
 		}
 		return int(d.Devcore), nil
+	}
+	// kubelet split ids ("<bdf>#<slot>") do not match DeviceInfo.ID; resolve
+	// the bare BDF against the registered pciBDF.
+	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
+		for _, d := range p.deviceCache {
+			if d == nil || d.Devcore <= 0 {
+				continue
+			}
+			if pciBDF, ok := d.CustomInfo["pciBDF"].(string); ok && pciBDF == bdf {
+				return int(d.Devcore), nil
+			}
+		}
 	}
 	return 0, fmt.Errorf("device %s not found in device cache", uuid)
 }
