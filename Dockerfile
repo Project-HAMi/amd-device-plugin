@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 FROM rocm/dev-ubuntu-24.04:7.2.4 AS rocm-runtime
-FROM rocm/dev-ubuntu-22.04:7.0.2 AS amdsmi-sdk
+FROM rocm/dev-ubuntu-22.04:7.2.4 AS amdsmi-sdk
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -23,10 +23,10 @@ FROM docker.io/golang:1.26 AS builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     git pkg-config build-essential libdrm-dev libhwloc-dev \
     && rm -rf /var/lib/apt/lists/*
-# Keep the AMD SMI API at ROCm 7.0.2, but take it from Ubuntu 22.04 so the
+# Keep the AMD SMI API at ROCm 7.2.4, but take it from Ubuntu 22.04 so the
 # library has an older glibc/libstdc++ baseline than the Ubuntu 24.04 runtime.
 COPY --from=amdsmi-sdk /opt/rocm/include/amd_smi /opt/rocm/include/amd_smi
-COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm/lib/libamd_smi.so
+COPY --from=amdsmi-sdk /opt/rocm-7.2.4/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm/lib/libamd_smi.so
 COPY --from=amdsmi-sdk /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/rocm/lib/libstdc++.so.6
 RUN ln -s libstdc++.so.6 /opt/rocm/lib/libstdc++.so
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
@@ -43,8 +43,8 @@ LABEL \
     org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdrm2 libhwloc15 && rm -rf /var/lib/apt/lists/*
 # The executable records the libamd_smi.so.26 SONAME. Override the runtime
-# target so it uses the Ubuntu 22.04-built, but still ROCm 7.0.2, library.
-COPY --from=amdsmi-sdk /opt/rocm-7.0.2/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm-7.0.2/lib/libamd_smi.so.26.0.70002
+# target so it uses the Ubuntu 22.04-built, but still ROCm 7.2.4, library.
+COPY --from=amdsmi-sdk /opt/rocm-7.2.4/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm-7.2.4/lib/libamd_smi.so.26.2.2
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
