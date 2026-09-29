@@ -243,7 +243,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		p.bdfToROCrUUID[key] = rocrUUID
 		// key is the standard PCI BDF spelling (domain:bus:device.function).
 		// The KFD topology bdf above uses a fourth colon-separated component.
-		customInfo := map[string]any{"pciBDF": strings.ToLower(key)}
+		customInfo := map[string]any{"pciBDF": strings.ToLower(key), "cuPerGroup": int(capacity.CUPerGroup)}
 		nodeId, _ := deviceData["nodeId"].(int)
 		if q, ok := computeQueues(kfdTopologyNodes, nodeId); ok {
 			customInfo["computeQueues"] = q
@@ -717,10 +717,19 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					// Whole GPU: mask every CU.
 					cores = totalCUs
 				}
-				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores)
+				group := p.getDeviceCUGroup(d.UUID)
+				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, group)
 				if err != nil {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
+				}
+				// Refuse to emit a mask that splits a group (a WGP on RDNA):
+				// such a mask is invalid and the slice would not work. This
+				// should never trigger given the group-aware allocator; it is
+				// a fail-closed guard rather than shipping a broken HSA_CU_MASK.
+				if !cuallocation.GroupAligned(deltaAllocation, totalCUs, group) {
+					utils.PodAllocationFailed(nodename, current, NodeLockName)
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("refusing invalid cu mask for %s: a %d-CU group would be split", d.UUID, group)
 				}
 				cuList := allocationToIDList(deltaAllocation, totalCUs)
 				// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
@@ -956,6 +965,43 @@ func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
 		return 0, fmt.Errorf("invalid cu count for device %s: %d", uuid, d.Devcore)
 	}
 	return int(d.Devcore), nil
+}
+
+// getDeviceCUGroup returns how many CUs must be masked together for a device: 2
+// on RDNA (a WGP pair), 1 on CDNA/GCN. A missing or unknown value falls back to
+// 1, which is always a valid mask.
+func (p *AMDGPUPlugin) getDeviceCUGroup(uuid string) int {
+	read := func(d *utils.DeviceInfo) (int, bool) {
+		if d == nil || d.CustomInfo == nil {
+			return 0, false
+		}
+		if g, ok := d.CustomInfo["cuPerGroup"].(int); ok && g > 0 {
+			return g, true
+		}
+		return 0, false
+	}
+	for _, d := range p.deviceCache {
+		if d != nil && d.ID == uuid {
+			if g, ok := read(d); ok {
+				return g
+			}
+			return 1
+		}
+	}
+	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
+		for _, d := range p.deviceCache {
+			if d == nil {
+				continue
+			}
+			if pciBDF, ok := d.CustomInfo["pciBDF"].(string); ok && pciBDF == bdf {
+				if g, ok := read(d); ok {
+					return g
+				}
+				return 1
+			}
+		}
+	}
+	return 1
 }
 
 func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1.Pod, expected string) (bool, error) {

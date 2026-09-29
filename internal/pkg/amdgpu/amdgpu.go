@@ -42,14 +42,18 @@ package amdgpu
 // #ifndef AMDGPU_FAMILY_GC_11_5_0
 // #define AMDGPU_FAMILY_GC_11_5_0 0x7fff0005
 // #endif
-// // RDNA4 (gfx12); the kernel value, so it matches even with older headers.
+// // RDNA4 (gfx12); kernel values, so they match even with older headers.
 // #ifndef AMDGPU_FAMILY_GC_12_0_0
 // #define AMDGPU_FAMILY_GC_12_0_0 152
+// #endif
+// #ifndef AMDGPU_FAMILY_GC_12_0_1
+// #define AMDGPU_FAMILY_GC_12_0_1 153
 // #endif
 //
 // static int amdgpu_query_device_capacity(amdgpu_device_handle dev,
 //                                         uint64_t *vram_bytes,
-//                                         uint32_t *cu_count) {
+//                                         uint32_t *cu_count,
+//                                         uint32_t *family_id) {
 //     struct amdgpu_gpu_info gpu_info = {0};
 //     int rc = amdgpu_query_gpu_info(dev, &gpu_info);
 //     if (rc < 0) {
@@ -65,6 +69,7 @@ package amdgpu
 //
 //     *vram_bytes = memory_info.vram_size;
 //     *cu_count = gpu_info.cu_active_number;
+//     *family_id = gpu_info.family_id;
 //     return 0;
 // }
 import "C"
@@ -118,6 +123,8 @@ func FamilyIDtoString(familyId uint32) (string, error) {
 		return "GC_11_5_0", nil
 	case C.AMDGPU_FAMILY_GC_12_0_0:
 		return "GC_12_0_0", nil
+	case C.AMDGPU_FAMILY_GC_12_0_1:
+		return "GC_12_0_1", nil
 	default:
 		ret := ""
 		err := fmt.Errorf("unknown family ID: %d", familyId)
@@ -143,11 +150,30 @@ func GetCardFamilyName(cardName string) (string, error) {
 	return FamilyIDtoString(uint32(info.family_id))
 }
 
+// CUsPerGroupForFamily returns how many CUs must be masked together on a GPU
+// family: 2 on RDNA, where the compute unit comes in WGP pairs and a mask that
+// enables a single CU of a pair is invalid, and 1 on CDNA/GCN, where a CU is
+// masked on its own. gfx10/gfx11/gfx12 (Navi and later) are RDNA.
+func CUsPerGroupForFamily(family string) int {
+	switch {
+	case family == "NV" || family == "VGH" || family == "YC",
+		strings.HasPrefix(family, "GC_10"),
+		strings.HasPrefix(family, "GC_11"),
+		strings.HasPrefix(family, "GC_12"):
+		return 2
+	default:
+		return 1
+	}
+}
+
 // DeviceCapacity describes the physical capacity HAMI needs for AMD vGPU
 // scheduling. VRAM is reported in MiB, while CUCount is the active CU count.
 type DeviceCapacity struct {
 	VRAMMiB int32
 	CUCount int32
+	// CUPerGroup is how many CUs must be masked together: 2 on RDNA (a WGP is
+	// a pair of CUs and a single-CU mask is invalid), 1 on CDNA/GCN.
+	CUPerGroup int32
 }
 
 // GetDeviceCapacity reads VRAM and active CU count through libdrm_amdgpu for
@@ -162,7 +188,8 @@ func GetDeviceCapacity(cardName string) (DeviceCapacity, error) {
 
 	var vramBytes C.uint64_t
 	var cuCount C.uint32_t
-	if rc := C.amdgpu_query_device_capacity(devHandle, &vramBytes, &cuCount); rc < 0 {
+	var familyID C.uint32_t
+	if rc := C.amdgpu_query_device_capacity(devHandle, &vramBytes, &cuCount, &familyID); rc < 0 {
 		return DeviceCapacity{}, fmt.Errorf("query device capacity for %s: %d", cardName, rc)
 	}
 
@@ -170,7 +197,13 @@ func GetDeviceCapacity(cardName string) (DeviceCapacity, error) {
 	if vramMiB == 0 || vramMiB > uint64(^uint32(0)>>1) || uint64(cuCount) > uint64(^uint32(0)>>1) {
 		return DeviceCapacity{}, fmt.Errorf("invalid device capacity for %s: vram=%d bytes cu=%d", cardName, uint64(vramBytes), uint32(cuCount))
 	}
-	return DeviceCapacity{VRAMMiB: int32(vramMiB), CUCount: int32(cuCount)}, nil
+	// family_id may be a family this build's headers do not name; an unknown
+	// family falls back to single-CU masking, which is always valid.
+	group := 1
+	if family, err := FamilyIDtoString(uint32(familyID)); err == nil {
+		group = CUsPerGroupForFamily(family)
+	}
+	return DeviceCapacity{VRAMMiB: int32(vramMiB), CUCount: int32(cuCount), CUPerGroup: int32(group)}, nil
 }
 
 func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
