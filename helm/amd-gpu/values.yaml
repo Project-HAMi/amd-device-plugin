@@ -11,7 +11,6 @@ dp:
   # The plugin queries host GPU devices and passes them to workloads.
   securityContext:
     privileged: true
-    allowPrivilegeEscalation: false
     capabilities:
       drop:
         - ALL

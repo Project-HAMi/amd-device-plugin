@@ -61,7 +61,12 @@ func NewBestEffortPolicy() *BestEffortPolicy {
 func (b *BestEffortPolicy) getDevicesFromIds(ids []string) []*Device {
 	var res []*Device
 	for _, id := range ids {
-		res = append(res, b.devicesMap[id])
+		d, ok := b.devicesMap[id]
+		if !ok {
+			glog.Warningf("GPA policy: device id %q is not registered by this plugin; a second device plugin is likely running on this node and kubelet merged its devices. Disable the other plugin (or drain the node) and restart this plugin", id)
+			continue
+		}
+		res = append(res, d)
 	}
 	return res
 }
