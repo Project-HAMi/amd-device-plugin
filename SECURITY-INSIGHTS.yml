@@ -1,0 +1,116 @@
+header:
+  schema-version: 2.0.0
+  last-updated: '2026-09-29'
+  last-reviewed: '2026-09-29'
+  url: https://github.com/Project-HAMi/amd-device-plugin/blob/main/SECURITY-INSIGHTS.yml
+  comment: |
+    Security metadata for the HAMi amd-device-plugin repository, following
+    the OpenSSF Security Insights specification.
+
+project:
+  name: HAMi
+  homepage: https://project-hami.io
+  documentation:
+    code-of-conduct: https://github.com/Project-HAMi/community/blob/main/CODE_OF_CONDUCT.md
+    governance: https://github.com/Project-HAMi/community/blob/main/community-membership.md
+  administrators:
+    - name: Li Mengxuan
+      affiliation: dynamia.ai
+      email: archlitchi@gmail.com
+      primary: true
+    - name: Xiao Zhang
+      affiliation: dynamia.ai
+      email: xiaozhang0210@hotmail.com
+      primary: false
+  repositories:
+    - name: HAMi
+      url: https://github.com/Project-HAMi/HAMi
+      comment: |
+        Main repository, heterogeneous AI computing virtualization
+        middleware for Kubernetes.
+    - name: amd-device-plugin
+      url: https://github.com/Project-HAMi/amd-device-plugin
+      comment: |
+        Kubernetes device plugin for AMD GPUs, supporting soft vGPU with HAMi.
+    - name: amd-hami-core
+      url: https://github.com/Project-HAMi/amd-hami-core
+      comment: |
+        LD_AUDIT library (libamvgpu.so) for AMD GPU memory limiting, built into
+        the amd-device-plugin release image.
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    contact:
+      name: HAMi maintainers
+      primary: true
+    security-policy: https://github.com/Project-HAMi/amd-device-plugin/blob/main/SECURITY.md
+    comment: |
+      Report vulnerabilities privately via GitHub Security Advisories:
+      https://github.com/Project-HAMi/amd-device-plugin/security/advisories/new
+      See SECURITY.md for the full policy, scope, and response process.
+
+repository:
+  url: https://github.com/Project-HAMi/amd-device-plugin
+  status: active
+  accepts-change-request: true
+  accepts-automated-change-request: true
+  bug-fixes-only: false
+  no-third-party-packages: false
+  core-team:
+    - name: Li Mengxuan
+      affiliation: dynamia.ai
+      email: archlitchi@gmail.com
+      primary: true
+    - name: Xiao Zhang
+      affiliation: dynamia.ai
+      email: xiaozhang0210@hotmail.com
+      primary: false
+  documentation:
+    security-policy: https://github.com/Project-HAMi/amd-device-plugin/blob/main/SECURITY.md
+  license:
+    url: https://github.com/Project-HAMi/amd-device-plugin/blob/main/LICENSE
+    expression: Apache-2.0
+  security:
+    assessments:
+      self:
+        comment: |
+          Dependencies are monitored with Dependabot and scanned in CI.
+          The Go toolchain and modules are updated promptly when
+          vulnerabilities are published.
+    tools:
+      - name: Dependabot
+        type: SCA
+        version: latest
+        rulesets:
+          - built-in
+        integration:
+          adhoc: false
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          Automated dependency update PRs for Go modules and GitHub Actions.
+      - name: CodeQL
+        type: SAST
+        version: latest
+        rulesets:
+          - built-in
+        integration:
+          adhoc: false
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          Static analysis on pull requests via GitHub Actions.
+      - name: GitHub secret scanning
+        type: secret-scanning
+        version: latest
+        rulesets:
+          - built-in
+        integration:
+          adhoc: false
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          GitHub native secret scanning with push protection.
