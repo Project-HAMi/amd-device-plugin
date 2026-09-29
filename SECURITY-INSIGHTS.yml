@@ -32,6 +32,11 @@ project:
       url: https://github.com/Project-HAMi/amd-device-plugin
       comment: |
         Kubernetes device plugin for AMD GPUs, supporting soft vGPU with HAMi.
+    - name: amd-hami-core
+      url: https://github.com/Project-HAMi/amd-hami-core
+      comment: |
+        LD_AUDIT library (libamvgpu.so) for AMD GPU memory limiting, built into
+        the amd-device-plugin release image.
   vulnerability-reporting:
     reports-accepted: true
     bug-bounty-available: false
