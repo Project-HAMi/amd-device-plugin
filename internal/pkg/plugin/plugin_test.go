@@ -127,7 +127,7 @@ func TestNextAllocationUsesPersistedPodState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebuild first Pod allocation: %v", err)
 	}
-	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4)
+	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4, 1)
 	if err != nil {
 		t.Fatalf("allocate second Pod: %v", err)
 	}
