@@ -3,7 +3,7 @@ module github.com/Project-HAMi/amd-device-plugin
 go 1.25.0
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/golang/glog v1.2.4
 	github.com/kubevirt/device-plugin-manager v1.19.5
 	golang.org/x/net v0.47.0
