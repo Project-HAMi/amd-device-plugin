@@ -231,6 +231,10 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		// key is the standard PCI BDF spelling (domain:bus:device.function).
 		// The KFD topology bdf above uses a fourth colon-separated component.
 		customInfo := map[string]any{"pciBDF": strings.ToLower(key)}
+		nodeId, _ := deviceData["nodeId"].(int)
+		if q, ok := computeQueues(kfdTopologyNodes, nodeId); ok {
+			customInfo["computeQueues"] = q
+		}
 		deviceType := "amd-gpu"
 		if productName, ok := amdSMIProductNames[strings.ToLower(bdf)]; ok && productName != "" {
 			deviceType = productName
@@ -882,6 +886,17 @@ func isWholeGPU(devreq utils.ContainerDevices) bool {
 		}
 	}
 	return true
+}
+
+const kfdTopologyNodes = "/sys/class/kfd/kfd/topology/nodes"
+
+var cpQueuesRe = regexp.MustCompile(`num_cp_queues\s(\d+)`)
+
+// computeQueues returns the user compute queue (HQD) slots KFD reports for a
+// GPU node. Processes sharing a GPU beyond these slots contend for dispatch.
+func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
+	q, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), cpQueuesRe)
+	return q, err == nil && q > 0
 }
 
 func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
