@@ -17,12 +17,12 @@
 package plugin
 
 import (
-	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	"strings"
 	"testing"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
+	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
