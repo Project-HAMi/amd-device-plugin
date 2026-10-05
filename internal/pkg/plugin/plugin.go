@@ -34,6 +34,7 @@ import (
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/allocator"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/exporter"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
@@ -183,7 +184,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			bdfs = append(bdfs, bdf)
 		}
 	}
-	amdSMIUUIDs, err := amdgpu.GetAMDSMIUUIDs(bdfs)
+	amdSMIUUIDs, err := amdsmi.GetAMDSMIUUIDs(bdfs)
 	if err != nil {
 		glog.Warningf("AMD SMI UUID lookup incomplete; GPUs without an AMD SMI UUID will not be registered: %v", err)
 	}
@@ -191,7 +192,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	p.amdSMIUUIDToROCrUUID = make(map[string]string, len(amdSMIUUIDs))
 	p.bdfToROCrUUID = make(map[string]string, len(p.AMDGPUs))
 	rocrUUIDs := amdgpu.GetROCrUUIDsFromTopology()
-	amdSMIProductNames, err := amdgpu.GetAMDSMIProductNames(bdfs)
+	amdSMIProductNames, err := amdsmi.GetAMDSMIProductNames(bdfs)
 	if err != nil {
 		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
 	}
