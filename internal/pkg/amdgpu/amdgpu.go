@@ -408,7 +408,7 @@ func AMDGPU(cardName string) bool {
 		vid := strings.TrimSpace(string(b))
 
 		// AMD vendor ID is 0x1002
-		if "0x1002" == vid {
+		if vid == "0x1002" {
 			return true
 		}
 	} else {

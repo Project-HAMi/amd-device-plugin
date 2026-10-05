@@ -447,10 +447,7 @@ func main() {
 	pred := predicate.TypedFuncs[*corev1.Node]{
 		// Create returns true if the Create event should be processed
 		CreateFunc: func(e event.TypedCreateEvent[*corev1.Node]) bool {
-			if hostname == e.Object.GetName() {
-				return true
-			}
-			return false
+			return hostname == e.Object.GetName()
 		},
 
 		// Delete returns true if the Delete event should be processed
