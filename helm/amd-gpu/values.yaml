@@ -24,6 +24,12 @@ dp:
   # How many workloads may share one GPU. On gfx12 (RDNA4) more than about 2
   # sharers contend for compute queues; see the README.
   splitCount: 10
+  # Inject GPUs through CDI instead of device nodes. The plugin writes an
+  # amd.com/gpu spec to specDir on the host; the container runtime must have
+  # CDI enabled and read that directory (containerd 2.x and CRI-O do by default).
+  cdi:
+    enabled: false
+    specDir: /var/run/cdi
   # Copy the libamvgpu.so hook built from amd-hami-core from the device-plugin
   # image to the mounted hostPath.
   hookInstaller:

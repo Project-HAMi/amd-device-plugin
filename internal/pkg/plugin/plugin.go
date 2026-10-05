@@ -60,7 +60,10 @@ type AMDGPUPlugin struct {
 	deviceCache                []*utils.DeviceInfo
 	Resource                   string
 	devAllocator               allocator.Policy
-	allocatorInitError         bool
+	// cdiSpecDir, when set, makes Allocate hand out CDI devices described
+	// by a spec written there instead of raw device nodes.
+	cdiSpecDir         string
+	allocatorInitError bool
 	// amdSMIUUIDToTopology maps the stable AMD SMI device UUID published in
 	// DeviceInfo.ID back to the local topology key required during Allocate.
 	amdSMIUUIDToTopology map[string]string
@@ -80,6 +83,13 @@ func NewAMDGPUPlugin(options ...AMDGPUPluginOption) *AMDGPUPlugin {
 		option(amdGpuPlugin)
 	}
 	return amdGpuPlugin
+}
+
+// WithCDISpecDir enables CDI device injection with specs written to dir.
+func WithCDISpecDir(dir string) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		p.cdiSpecDir = dir
+	}
 }
 
 func WithAllocator(a allocator.Policy) AMDGPUPluginOption {
@@ -401,6 +411,12 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	p.AMDGPUs = amdgpu.GetAMDGPUs()
 
 	glog.Infof("Found %d AMDGPUs", len(p.AMDGPUs))
+	if p.cdiSpecDir != "" {
+		if err := writeCDISpec(p.cdiSpecDir, p.AMDGPUs); err != nil {
+			glog.Errorf("write CDI spec to %s: %v; falling back to device nodes", p.cdiSpecDir, err)
+			p.cdiSpecDir = ""
+		}
+	}
 
 	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*splitCount)
 	var isHomogeneous bool
@@ -625,12 +641,14 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		}
 		rocrVisibleDevices := make([]string, 0, len(devreq))
 
-		// KFD + DRI from annotation UUID topology.
-		car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
-			HostPath:      "/dev/kfd",
-			ContainerPath: "/dev/kfd",
-			Permissions:   "rw",
-		})
+		// KFD + DRI from annotation UUID topology; with CDI the spec carries them.
+		if p.cdiSpecDir == "" {
+			car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
+				HostPath:      "/dev/kfd",
+				ContainerPath: "/dev/kfd",
+				Permissions:   "rw",
+			})
+		}
 		for _, d := range devreq {
 			glog.Infof("Allocating device from annotation UUID: %s", d.UUID)
 			deviceData, topoErr := p.deviceDataFromAllocationUUID(d.UUID, nodename)
@@ -650,6 +668,10 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				return &pluginapi.AllocateResponse{}, rocrErr
 			}
 			rocrVisibleDevices = append(rocrVisibleDevices, rocrUUID)
+			if p.cdiSpecDir != "" {
+				car.CdiDevices = append(car.CdiDevices, &pluginapi.CDIDevice{Name: cdiDeviceName(cardMinor)})
+				continue
+			}
 			for _, pair := range []struct {
 				kind  string
 				minor int
@@ -1077,6 +1099,8 @@ type AMDGPULister struct {
 	AllocatorPolicy string
 	// SplitCount overrides how many workloads may share one GPU when > 0.
 	SplitCount int
+	// CDISpecDir enables CDI device injection with specs written there.
+	CDISpecDir string
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1119,6 +1143,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithHeartbeat(l.Heartbeat),
 		WithResource(resourceLastName),
 		WithAllocator(policy),
+		WithCDISpecDir(l.CDISpecDir),
 	}
 	return NewAMDGPUPlugin(options...)
 }

@@ -37,7 +37,7 @@ spec:
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
           command: ["./k8s-device-plugin"]
-          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}"]
+          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}"{{ if .Values.dp.cdi.enabled }}, "-cdi_spec_dir={{ .Values.dp.cdi.specDir }}"{{ end }}]
           {{- if .Values.dp.hookInstaller.enabled }}
           # Temporary HAMi-style delivery: copy the image-bundled hook into
           # the hostPath after the device-plugin container is created.
@@ -64,6 +64,10 @@ spec:
               mountPath: /sys
             - name: health
               mountPath: /var/lib/amd-metrics-exporter/
+            {{- if .Values.dp.cdi.enabled }}
+            - name: cdi
+              mountPath: {{ .Values.dp.cdi.specDir | quote }}
+            {{- end }}
             {{- if .Values.dp.hookInstaller.enabled }}
             - name: host-vgpu-hook
               mountPath: {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
@@ -71,6 +75,12 @@ spec:
           resources:
             {{- toYaml .Values.dp.resources | nindent 12 }}
       volumes:
+        {{- if .Values.dp.cdi.enabled }}
+        - name: cdi
+          hostPath:
+            path: {{ .Values.dp.cdi.specDir | quote }}
+            type: DirectoryOrCreate
+        {{- end }}
         - name: dp
           hostPath:
             path: /var/lib/kubelet/device-plugins

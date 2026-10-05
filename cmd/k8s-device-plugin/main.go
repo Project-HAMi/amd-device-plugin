@@ -106,11 +106,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	var pulse int
-	var resourceNamingStrategy, allocatorPolicy string
+	var resourceNamingStrategy, allocatorPolicy, cdiSpecDir string
 	var splitCount int
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
 	flag.IntVar(&splitCount, "split_count", 10, "How many workloads may share one GPU (HAMi device Count). gfx12 GPUs contend above about 2.")
+	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	// this is also needed to enable glog usage in dpm
 	flag.Parse()
@@ -138,6 +139,7 @@ func main() {
 		Heartbeat:       make(chan bool),
 		AllocatorPolicy: allocatorPolicy,
 		SplitCount:      splitCount,
+		CDISpecDir:      cdiSpecDir,
 	}
 	manager := dpm.NewManager(&l)
 
