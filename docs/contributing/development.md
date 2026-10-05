@@ -6,7 +6,7 @@
 
 Before you begin development, ensure you have the following prerequisites:
 
-- A working installation of Go (version 1.23 or later).
+- A working installation of Go (the version in `go.mod`, currently 1.26.8 or later).
 - Access to a Kubernetes cluster for testing.
 - Familiarity with Git and GitHub workflows.
 
@@ -32,11 +32,11 @@ Make sure to name your branch descriptively to reflect the changes you are makin
 ## Development Workflow
 
 1. **Make Changes**: Implement your changes in the codebase.
-2. **Testing**: Ensure that your changes are covered by tests. Run existing tests and add new ones as necessary.
-3. **Commit Changes**: Commit your changes with a clear and concise commit message:
+2. **Testing**: Ensure that your changes are covered by tests. The code uses cgo with AMD SMI and libdrm, so run the tests in the builder image as described in the [README](../../README.md#development). Add new tests as necessary.
+3. **Commit Changes**: Commit your changes with a clear and concise commit message. Commits must be signed off (DCO), so use `-s`:
 
    ```bash
-   git commit -m "Add feature X to improve Y"
+   git commit -s -m "Add feature X to improve Y"
    ```
 
 4. **Push Changes**: Push your branch to the remote repository:
