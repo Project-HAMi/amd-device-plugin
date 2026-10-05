@@ -19,9 +19,9 @@ RUN dnf install -y 'dnf-command(config-manager)' && \
     rpm --import https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official && \
     dnf install git pkgconfig gcc gcc-c++ make glibc-devel binutils libdrm-devel wget tar gzip -y && \
     dnf clean all
-RUN wget https://golang.org/dl/go1.23.3.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz && \
-    rm go1.23.3.linux-amd64.tar.gz
+RUN wget https://golang.org/dl/go1.26.8.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz && \
+    rm go1.26.8.linux-amd64.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin

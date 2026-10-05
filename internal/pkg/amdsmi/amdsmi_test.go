@@ -1,4 +1,4 @@
-package amdgpu
+package amdsmi
 
 import "testing"
 

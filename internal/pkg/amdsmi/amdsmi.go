@@ -1,4 +1,4 @@
-package amdgpu
+package amdsmi
 
 /*
 #cgo CFLAGS: -I/opt/rocm/include
