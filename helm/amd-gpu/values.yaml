@@ -19,8 +19,8 @@ dp:
   # <hostHookPath>/vgpu/libamvgpu.so on the host.
   # Workload container path is fixed in plugin code: /usr/local/vgpu/libamvgpu.so
   hostHookPath: "/usr/local"
-  # Temporary: copy the checked-in libamvgpu.so from the device-plugin image
-  # to the mounted hostPath. The artifact will come from amd-hami-core later.
+  # Copy the libamvgpu.so hook built from amd-hami-core from the device-plugin
+  # image to the mounted hostPath.
   hookInstaller:
     enabled: true
   resources: {}

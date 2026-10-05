@@ -40,7 +40,7 @@ The plugin registers devices in the `hami.io/node-amd-register` node annotation.
 - Linux `amd64` AMD GPU node supported by ROCm.
 - Kubernetes and a compatible HAMi scheduler deployment.
 - AMD GPU kernel driver, `/dev/kfd`, `/dev/dri`, KFD topology under `/sys`, and `libdrm_amdgpu`.
-- AMD SMI from ROCm 7.0.2. The image carries the matching AMD SMI userspace library; the host must provide the compatible kernel driver and device interfaces.
+- AMD SMI from ROCm 7.2.4. The image carries the matching AMD SMI userspace library; the host must provide the compatible kernel driver and device interfaces.
 - Permission for the DaemonSet service account to read Pods and patch Node/Pod annotations and the HAMi node lock.
 
 GPUs for which AMD SMI does not return a UUID are deliberately not registered. There is no node-name/BDF-derived compatibility ID.
@@ -51,7 +51,7 @@ GPUs for which AMD SMI does not return a UUID are deliberately not registered. T
 docker build -t ghcr.io/project-hami/amd-device-plugin:0.0.1 .
 ```
 
-The Docker build compiles the cgo code against the ROCm 7.0.2 AMD SMI SDK and temporarily packages the checked-in `libamvgpu.so`. CI verifies that the hook exists and uses the same Dockerfile for the published image, so a missing hook fails the image build.
+The Docker build compiles the cgo code against the ROCm 7.2.4 AMD SMI SDK and packages the `libamvgpu.so` hook built from the `amd-hami-core` submodule. CI verifies that the hook exists and uses the same Dockerfile for the published image, so a missing hook fails the image build.
 
 ## Deploy with Helm
 
