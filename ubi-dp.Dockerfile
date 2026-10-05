@@ -22,6 +22,10 @@ RUN dnf install -y 'dnf-command(config-manager)' && \
 RUN wget https://golang.org/dl/go1.26.8.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz && \
     rm go1.26.8.linux-amd64.tar.gz
+# AMD SMI SDK at the same ROCm release as the main image.
+RUN printf '[rocm]\nname=ROCm 7.2.4\nbaseurl=https://repo.radeon.com/rocm/el9/7.2.4/main\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n' > /etc/yum.repos.d/rocm.repo && \
+    dnf install -y amd-smi-lib && \
+    dnf clean all
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
@@ -55,6 +59,10 @@ RUN mkdir -p /licenses && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/ && \
     dnf install -y hwloc && \
     dnf clean all
+RUN printf '[rocm]\nname=ROCm 7.2.4\nbaseurl=https://repo.radeon.com/rocm/el9/7.2.4/main\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n' > /etc/yum.repos.d/rocm.repo && \
+    dnf install -y amd-smi-lib && \
+    dnf clean all
+ENV LD_LIBRARY_PATH=/opt/rocm/lib
 ADD ./LICENSE /licenses/LICENSE
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
