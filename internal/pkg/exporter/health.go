@@ -98,7 +98,6 @@ func PopulatePerGPUDHealth(devs []*pluginapi.Device, defaultHealth string) {
 			if gpuHealth, ok := hMap[devs[i].ID]; ok {
 				devs[i].Health = gpuHealth
 			} else {
-				// revert to simpleHealthCheck if not found
 				devs[i].Health = defaultHealth
 			}
 		}
