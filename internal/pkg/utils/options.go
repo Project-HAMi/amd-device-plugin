@@ -32,27 +32,6 @@ const (
 	DefaultTimeout int     = 0 // seconds, 0 means no timeout, follow the default behavior of kubernetes client.
 )
 
-// WithQPS sets the QPS for the client.
-func WithQPS(qps float32) Option {
-	return func(c *rest.Config) {
-		c.QPS = qps
-	}
-}
-
-// WithBurst sets the burst for the client.
-func WithBurst(burst int) Option {
-	return func(c *rest.Config) {
-		c.Burst = burst
-	}
-}
-
-// WithTimeout sets the timeout for the client.
-func WithTimeout(timeout int) Option {
-	return func(c *rest.Config) {
-		c.Timeout = time.Duration(timeout) * time.Second
-	}
-}
-
 // WithDefaults sets default values for the client configuration.
 func WithDefaults() Option {
 	return func(c *rest.Config) {
