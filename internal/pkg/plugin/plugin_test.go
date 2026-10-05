@@ -22,6 +22,7 @@ import (
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
+	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -176,3 +177,6 @@ func TestIsWholeGPU(t *testing.T) {
 		}
 	}
 }
+
+// the kubelet device plugin API requires the server to embed UnimplementedDevicePluginServer
+var _ dpm.PluginInterface = (*AMDGPUPlugin)(nil)
