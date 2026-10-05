@@ -107,8 +107,10 @@ func main() {
 	}
 	var pulse int
 	var resourceNamingStrategy, allocatorPolicy string
+	var splitCount int
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
+	flag.IntVar(&splitCount, "split_count", 10, "How many workloads may share one GPU (HAMi device Count). gfx12 GPUs contend above about 2.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	// this is also needed to enable glog usage in dpm
 	flag.Parse()
@@ -118,6 +120,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if splitCount < 1 {
+		glog.Errorf("split_count must be at least 1, got %d", splitCount)
+		os.Exit(1)
+	}
 	if _, err := allocator.NewPolicy(allocatorPolicy); err != nil {
 		glog.Errorf("%v", err)
 		os.Exit(1)
@@ -131,6 +137,7 @@ func main() {
 		ResUpdateChan:   make(chan dpm.PluginNameList),
 		Heartbeat:       make(chan bool),
 		AllocatorPolicy: allocatorPolicy,
+		SplitCount:      splitCount,
 	}
 	manager := dpm.NewManager(&l)
 

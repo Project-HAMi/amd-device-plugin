@@ -21,6 +21,9 @@ dp:
   hostHookPath: "/usr/local"
   # Seconds between per-GPU health checks; 0 disables them.
   healthPulse: 10
+  # How many workloads may share one GPU. On gfx12 (RDNA4) more than about 2
+  # sharers contend for compute queues; see the README.
+  splitCount: 10
   # Copy the libamvgpu.so hook built from amd-hami-core from the device-plugin
   # image to the mounted hostPath.
   hookInstaller:

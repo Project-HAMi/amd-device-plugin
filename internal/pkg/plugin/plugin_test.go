@@ -211,3 +211,15 @@ func TestComputeQueues(t *testing.T) {
 		t.Error("missing node should not report compute queues")
 	}
 }
+
+func TestListerSplitCount(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	(&AMDGPULister{}).NewPlugin("gpu")
+	if splitCount != 10 {
+		t.Fatalf("default splitCount = %d, want 10", splitCount)
+	}
+	(&AMDGPULister{SplitCount: 2}).NewPlugin("gpu")
+	if splitCount != 2 {
+		t.Errorf("splitCount = %d, want 2", splitCount)
+	}
+}
