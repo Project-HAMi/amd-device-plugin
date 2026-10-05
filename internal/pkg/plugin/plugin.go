@@ -49,6 +49,7 @@ const defaultSplitCount = 10
 
 // Plugin is identical to DevicePluginServer interface of device plugin API.
 type AMDGPUPlugin struct {
+	pluginapi.UnimplementedDevicePluginServer
 	AMDGPUs                    map[string]map[string]interface{}
 	Heartbeat                  chan bool
 	signal                     chan os.Signal
@@ -640,12 +641,12 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	for idx := range r.ContainerRequests {
 		currentCtr, devreq, err := utils.GetNextDeviceRequest("amd", *current)
 		glog.Infof("deviceAllocateFromAnnotation(container=%s)=%+v", currentCtr.Name, devreq)
-		if err != nil || len(devreq) != len(r.ContainerRequests[idx].DevicesIDs) {
+		if err != nil || len(devreq) != len(r.ContainerRequests[idx].DevicesIds) {
 			// The fork scheduler's annotation key is not the one this plugin
 			// reads; fall back to kubelet's own allocation (whole GPU).
-			glog.Warningf("annotation allocation unavailable (%v); using kubelet device ids %v", err, r.ContainerRequests[idx].DevicesIDs)
+			glog.Warningf("annotation allocation unavailable (%v); using kubelet device ids %v", err, r.ContainerRequests[idx].DevicesIds)
 			devreq = utils.ContainerDevices{}
-			for _, id := range r.ContainerRequests[idx].DevicesIDs {
+			for _, id := range r.ContainerRequests[idx].DevicesIds {
 				devreq = append(devreq, utils.ContainerDevice{UUID: id, Type: "AMDGPU", Usedcores: 0})
 			}
 		} else {

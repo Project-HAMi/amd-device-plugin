@@ -17,6 +17,7 @@
 package plugin
 
 import (
+	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	"strings"
 	"testing"
 
@@ -176,3 +177,6 @@ func TestIsWholeGPU(t *testing.T) {
 		}
 	}
 }
+
+// the kubelet device plugin API requires the server to embed UnimplementedDevicePluginServer
+var _ dpm.PluginInterface = (*AMDGPUPlugin)(nil)
