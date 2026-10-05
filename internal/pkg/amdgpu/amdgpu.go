@@ -69,7 +69,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -217,7 +216,7 @@ func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
 
 // readPartition returns the lowercased content of a partition sysfs file, or "" if it does not exist
 func readPartition(file string) (string, error) {
-	data, err := ioutil.ReadFile(file)
+	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -256,7 +255,7 @@ func GetAMDGPUs() map[string]map[string]interface{} {
 			glog.Warningf("Failed to read 'current_memory_partition' file at %s: %s", memoryPartitionFile, err)
 		}
 
-		if data, err := ioutil.ReadFile(numaNodeFile); err == nil {
+		if data, err := os.ReadFile(numaNodeFile); err == nil {
 			numaNodeStr := strings.TrimSpace(string(data))
 			numaNode, err = strconv.Atoi(numaNodeStr)
 			if err != nil {
@@ -404,7 +403,7 @@ func IsMemoryPartitionSupported() bool {
 // AMDGPU check if a particular card is an AMD GPU by checking the device's vendor ID
 func AMDGPU(cardName string) bool {
 	sysfsVendorPath := "/sys/class/drm/" + cardName + "/device/vendor"
-	b, err := ioutil.ReadFile(sysfsVendorPath)
+	b, err := os.ReadFile(sysfsVendorPath)
 	if err == nil {
 		vid := strings.TrimSpace(string(b))
 

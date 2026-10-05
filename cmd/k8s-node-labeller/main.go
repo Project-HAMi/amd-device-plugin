@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -159,7 +158,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 		version := ""
 		for _, v := range gpus {
 			versionPath := fmt.Sprintf("/sys/class/drm/card%d/device/driver/module/version", v["card"])
-			b, err := ioutil.ReadFile(versionPath)
+			b, err := os.ReadFile(versionPath)
 			if err != nil {
 				log.Error(err, versionPath)
 				continue
@@ -175,7 +174,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 		version := ""
 		for _, v := range gpus {
 			versionPath := fmt.Sprintf("/sys/class/drm/card%d/device/driver/module/srcversion", v["card"])
-			b, err := ioutil.ReadFile(versionPath)
+			b, err := os.ReadFile(versionPath)
 			if err != nil {
 				log.Error(err, versionPath)
 				continue
@@ -192,7 +191,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 
 		for _, v := range gpus {
 			devidPath := fmt.Sprintf("/sys/class/drm/card%d/device/device", v["card"])
-			b, err := ioutil.ReadFile(devidPath)
+			b, err := os.ReadFile(devidPath)
 			if err != nil {
 				log.Error(err, devidPath)
 				continue
@@ -212,7 +211,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 
 		for _, v := range gpus {
 			prodnamePath := fmt.Sprintf("/sys/class/drm/card%d/device/product_name", v["card"])
-			b, err := ioutil.ReadFile(prodnamePath)
+			b, err := os.ReadFile(prodnamePath)
 			if err != nil {
 				log.Error(err, prodnamePath)
 			}

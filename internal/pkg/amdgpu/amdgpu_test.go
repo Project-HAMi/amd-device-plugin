@@ -19,7 +19,6 @@ package amdgpu
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,7 +30,7 @@ import (
 func hasAMDGPU() bool {
 	vendorFiles, _ := filepath.Glob("/sys/class/drm/card[0-9]*/device/vendor")
 	for _, vendorFile := range vendorFiles {
-		vendor, err := ioutil.ReadFile(vendorFile)
+		vendor, err := os.ReadFile(vendorFile)
 		if err == nil && strings.TrimSpace(string(vendor)) == "0x1002" {
 			return true
 		}
@@ -83,7 +82,7 @@ func TestAMDGPUcountConsistent(t *testing.T) {
 	count := 0
 	for _, vidPath := range matches {
 		t.Log(vidPath)
-		b, err := ioutil.ReadFile(vidPath)
+		b, err := os.ReadFile(vidPath)
 		vid := string(b)
 
 		// AMD vendor ID is 0x1002
