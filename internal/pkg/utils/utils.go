@@ -19,10 +19,8 @@ package utils
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -180,72 +178,8 @@ func PatchPodAnnotations(pod *corev1.Pod, annotations map[string]string) error {
 	return err
 }
 
-func PatchPodLabels(namespace, name string, labels map[string]string) error {
-	type patchMetadata struct {
-		Labels map[string]string `json:"labels,omitempty"`
-	}
-	type patchPod struct {
-		Metadata patchMetadata `json:"metadata"`
-	}
-
-	p := patchPod{
-		Metadata: patchMetadata{
-			Labels: labels,
-		},
-	}
-
-	bytes, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	klog.V(5).InfoS("Patching pod labels", "namespace", namespace, "name", name, "labels", labels)
-	_, err = GetClient().CoreV1().Pods(namespace).
-		Patch(context.Background(), name, k8stypes.MergePatchType, bytes, metav1.PatchOptions{})
-	if err != nil {
-		klog.ErrorS(err, "Failed to patch pod labels", "namespace", namespace, "name", name)
-	}
-	return err
-}
-
-func InitKlogFlags() *flag.FlagSet {
-	// Init log flags
-	flagset := flag.NewFlagSet("klog", flag.ExitOnError)
-	klog.InitFlags(flagset)
-
-	return flagset
-}
-
-func MarkAnnotationsToDelete(devType string, nn string) error {
-	tmppat := make(map[string]string)
-	tmppat[devType] = "Deleted_" + time.Now().Format(time.DateTime)
-	n, err := GetNode(nn)
-	if err != nil {
-		klog.Errorln("get node failed", err.Error())
-		return err
-	}
-	return PatchNodeAnnotations(n, tmppat)
-}
-
-func GetGPUSchedulerPolicyByPod(defaultPolicy string, task *corev1.Pod) string {
-	userGPUPolicy := defaultPolicy
-	if task != nil && task.Annotations != nil {
-		if value, ok := task.Annotations[GPUSchedulerPolicyAnnotationKey]; ok {
-			userGPUPolicy = value
-		}
-	}
-	return userGPUPolicy
-}
-
 func IsPodInTerminatedState(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded
-}
-
-func IsPodTerminating(pod *corev1.Pod) bool {
-	return pod.DeletionTimestamp != nil
-}
-
-func AllContainersCreated(pod *corev1.Pod) bool {
-	return len(pod.Status.ContainerStatuses) >= len(pod.Spec.Containers)
 }
 
 func PodAllocationTrySuccess(nodeName string, devName string, lockName string, pod *corev1.Pod) {

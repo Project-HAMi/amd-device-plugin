@@ -3,8 +3,6 @@ package cuallocation
 import (
 	"fmt"
 	"math/bits"
-	"strconv"
-	"strings"
 )
 
 const bitsPerWord = 64
@@ -112,32 +110,3 @@ func ReleaseAllocation(allocation Allocation, totalCUs int, releaseDelta Allocat
 	return current, nil
 }
 
-func ConvertAllocationToHex(allocation Allocation) string {
-	hex := ""
-	for _, word := range allocation {
-		hex += fmt.Sprintf("%016X", word)
-	}
-	return hex
-}
-
-func ConvertHexToAllocation(hex string) (Allocation, error) {
-	s := strings.TrimSpace(hex)
-	s = strings.TrimPrefix(strings.ToLower(s), "0x")
-	if s == "" {
-		return nil, fmt.Errorf("empty hex allocation")
-	}
-	// left-pad to 16-hex alignment
-	if rem := len(s) % 16; rem != 0 {
-		s = strings.Repeat("0", 16-rem) + s
-	}
-
-	allocation := make(Allocation, len(s)/16)
-	for i := 0; i < len(s); i += 16 {
-		word, err := strconv.ParseUint(s[i:i+16], 16, 64)
-		if err != nil {
-			return nil, err
-		}
-		allocation[i/16] = word
-	}
-	return allocation, nil
-}
