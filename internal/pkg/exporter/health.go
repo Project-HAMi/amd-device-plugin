@@ -50,7 +50,7 @@ func getGPUHealth() (hMap map[string]string, err error) {
 
 	// the connection is short lived as the exporter can come and go
 	// independently
-	conn, err := grpc.Dial(healthSvcAddress,
+	conn, err := grpc.NewClient(healthSvcAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
