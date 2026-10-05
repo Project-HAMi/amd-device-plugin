@@ -19,6 +19,7 @@ package plugin
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -38,7 +39,6 @@ import (
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
-	"golang.org/x/net/context"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -419,8 +419,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	}
 
 	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*splitCount)
-	var isHomogeneous bool
-	isHomogeneous = amdgpu.IsHomogeneous()
+	isHomogeneous := amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
 	resourceTypeDevs := make(map[string][]*pluginapi.Device)
 
@@ -836,12 +835,12 @@ func (p *AMDGPUPlugin) buildCUAllocations(pods []corev1.Pod) (map[string]cualloc
 		podKey := pod.Namespace + "/" + pod.Name
 		allocations, err := p.parseCuAllocation(pod.Annotations)
 		if err != nil {
-			return nil, fmt.Errorf("Pod %s: %w", podKey, err)
+			return nil, fmt.Errorf("pod %s: %w", podKey, err)
 		}
 		for uuid, allocation := range allocations {
 			totalCUs, err := p.getDeviceTotalCUs(uuid)
 			if err != nil {
-				return nil, fmt.Errorf("Pod %s device %s: %w", podKey, uuid, err)
+				return nil, fmt.Errorf("pod %s device %s: %w", podKey, uuid, err)
 			}
 			current, ok := result[uuid]
 			if !ok {
