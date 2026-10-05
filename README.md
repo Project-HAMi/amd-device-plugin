@@ -12,6 +12,7 @@ This repository contains the AMD device plugin used by [HAMi](https://github.com
 - Publishes the AMD SMI ASIC market name, for example `AMD Instinct MI300X VF`, as `DeviceInfo.Type`.
 - Publishes the standard PCI BDF in `custominfo.pciBDF`.
 - Reads physical VRAM and active CU capacity through `libdrm_amdgpu`.
+- Publishes the user compute queue (HQD) slots KFD reports (`num_cp_queues`) in `custominfo.computeQueues`.
 - Persists per-Pod CU ranges in `hami.io/amd-cu-allocated` and reconstructs allocation state after a device-plugin restart.
 - Supports the kubelet preferred-allocation policies `besteffort` (default), `binpack` (closest devices) and `spread` (farthest devices) through `--allocator_policy`.
 - Applies `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
@@ -79,6 +80,10 @@ kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-a
 CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.
 
 The hook built from `amd-hami-core` requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The hook is injected only for core or memory slices, so whole-GPU requests work on any workload image.
+
+## Compute-queue contention
+
+Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. See #54.
 
 See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
 

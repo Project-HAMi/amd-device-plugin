@@ -201,3 +201,13 @@ func TestMarkNonFunctional(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeQueues(t *testing.T) {
+	dir := "../../../testdata/topo-mi300-cpx/topology/nodes"
+	if q, ok := computeQueues(dir, 32); !ok || q != 24 {
+		t.Errorf("computeQueues(node 32) = %d, %v; want 24, true", q, ok)
+	}
+	if _, ok := computeQueues(dir, 9999); ok {
+		t.Error("missing node should not report compute queues")
+	}
+}
