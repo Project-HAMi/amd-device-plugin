@@ -1088,6 +1088,8 @@ type AMDGPULister struct {
 	ResUpdateChan chan dpm.PluginNameList
 	Heartbeat     chan bool
 	Signal        chan os.Signal
+	// AllocatorPolicy is besteffort (default), binpack or spread.
+	AllocatorPolicy string
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1118,10 +1120,15 @@ func (l *AMDGPULister) Discover(pluginListCh chan dpm.PluginNameList) {
 // e.g. for resource name "color.example.com/red" that would be "red". It must return valid
 // implementation of a PluginInterface.
 func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
+	policy, err := allocator.NewPolicy(l.AllocatorPolicy)
+	if err != nil {
+		glog.Errorf("%v; using besteffort", err)
+		policy = allocator.NewBestEffortPolicy()
+	}
 	options := []AMDGPUPluginOption{
 		WithHeartbeat(l.Heartbeat),
 		WithResource(resourceLastName),
-		WithAllocator(allocator.NewBestEffortPolicy()),
+		WithAllocator(policy),
 	}
 	return NewAMDGPUPlugin(options...)
 }

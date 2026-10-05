@@ -23,6 +23,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/allocator"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/hwloc"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/plugin"
@@ -105,13 +106,19 @@ func main() {
 		flag.PrintDefaults()
 	}
 	var pulse int
-	var resourceNamingStrategy string
+	var resourceNamingStrategy, allocatorPolicy string
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
+	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	// this is also needed to enable glog usage in dpm
 	flag.Parse()
 	strategy, err := ParseStrategy(resourceNamingStrategy)
 	if err != nil {
+		glog.Errorf("%v", err)
+		os.Exit(1)
+	}
+
+	if _, err := allocator.NewPolicy(allocatorPolicy); err != nil {
 		glog.Errorf("%v", err)
 		os.Exit(1)
 	}
@@ -121,8 +128,9 @@ func main() {
 	}
 
 	l := plugin.AMDGPULister{
-		ResUpdateChan: make(chan dpm.PluginNameList),
-		Heartbeat:     make(chan bool),
+		ResUpdateChan:   make(chan dpm.PluginNameList),
+		Heartbeat:       make(chan bool),
+		AllocatorPolicy: allocatorPolicy,
 	}
 	manager := dpm.NewManager(&l)
 

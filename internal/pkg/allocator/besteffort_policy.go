@@ -48,6 +48,8 @@ type BestEffortPolicy struct {
 	devicesMap       map[string]*Device
 	devicePartitions map[string]*DevicePartitions
 	p2pWeights       map[int]map[int]int
+	// spread picks the farthest apart devices instead of the closest ones
+	spread bool
 }
 
 func NewBestEffortPolicy() *BestEffortPolicy {
@@ -57,6 +59,14 @@ func NewBestEffortPolicy() *BestEffortPolicy {
 		devicePartitions: make(map[string]*DevicePartitions),
 		p2pWeights:       make(map[int]map[int]int),
 	}
+}
+
+// NewSpreadPolicy returns a policy that scores subsets like besteffort but
+// prefers the highest total weight, so devices are spread across NUMA nodes and links.
+func NewSpreadPolicy() *BestEffortPolicy {
+	p := NewBestEffortPolicy()
+	p.spread = true
+	return p
 }
 
 func (b *BestEffortPolicy) getDevicesFromIds(ids []string) []*Device {
@@ -138,9 +148,12 @@ func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int
 	}
 
 	bestScore := math.MaxInt32
+	if b.spread {
+		bestScore = math.MinInt32
+	}
 	var candidate *DeviceSet
 	for _, subset := range allSubsets {
-		if subset.TotalWeight < bestScore {
+		if (!b.spread && subset.TotalWeight < bestScore) || (b.spread && subset.TotalWeight > bestScore) {
 			candidate = subset
 			bestScore = subset.TotalWeight
 		}
