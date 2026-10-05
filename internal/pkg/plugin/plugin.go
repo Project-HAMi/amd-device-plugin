@@ -614,7 +614,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
 	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
-	// True when any container requests sliced (cores > 0) devices; the CU
+	// True when any container requests a core or memory slice; the CU
 	// persistence and node lock guard shared occupancy only.
 	slicedCU := false
 	for idx := range r.ContainerRequests {
@@ -727,7 +727,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				// Use container-local device index as GPU_list and ID_List as CU_list.
 				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
-				slicedCU = slicedCU || d.Usedcores > 0
+				slicedCU = slicedCU || !p.isWholeGPU(utils.ContainerDevices{d})
 				if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
 					oldAllocation, err := idListToAllocation(oldList, totalCUs)
 					if err != nil {
@@ -758,7 +758,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			car.Envs["HIP_VISIBLE_DEVICES"] = strings.Join(hipVisibleDevices, ",")
 			// The hook only enforces slices and needs glibc >= 2.34, so whole-GPU
 			// requests must not depend on it.
-			if !isWholeGPU(devreq) {
+			if !p.isWholeGPU(devreq) {
 				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 			}
@@ -902,10 +902,16 @@ func (p *AMDGPUPlugin) validateNodeLockOwner(ctx context.Context, nodeName strin
 	return nil
 }
 
-// isWholeGPU reports whether no device in the request asks for a core or memory slice.
-func isWholeGPU(devreq utils.ContainerDevices) bool {
+// isWholeGPU reports whether every device in the request takes its full GPU.
+// The HAMi scheduler writes the full core and memory size for a whole-GPU
+// request, while a fallback allocation leaves both at 0.
+func (p *AMDGPUPlugin) isWholeGPU(devreq utils.ContainerDevices) bool {
 	for _, d := range devreq {
-		if d.Usedcores > 0 || d.Usedmem > 0 {
+		info := p.lookupDevice(d.UUID)
+		if info == nil {
+			return false
+		}
+		if (d.Usedcores > 0 && d.Usedcores < info.Devcore) || (d.Usedmem > 0 && d.Usedmem < info.Devmem) {
 			return false
 		}
 	}
@@ -923,29 +929,33 @@ func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
 	return q, err == nil && q > 0
 }
 
-func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
+// lookupDevice finds the registered device for an AMD SMI UUID or a kubelet
+// split id ("<bdf>#<slot>"), which only matches the registered pciBDF.
+func (p *AMDGPUPlugin) lookupDevice(uuid string) *utils.DeviceInfo {
+	bdf := strings.SplitN(uuid, "#", 2)[0]
 	for _, d := range p.deviceCache {
-		if d == nil || d.ID != uuid {
+		if d == nil {
 			continue
 		}
-		if d.Devcore <= 0 {
-			return 0, fmt.Errorf("invalid cu count for device %s: %d", uuid, d.Devcore)
+		if d.ID == uuid {
+			return d
 		}
-		return int(d.Devcore), nil
-	}
-	// kubelet split ids ("<bdf>#<slot>") do not match DeviceInfo.ID; resolve
-	// the bare BDF against the registered pciBDF.
-	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
-		for _, d := range p.deviceCache {
-			if d == nil || d.Devcore <= 0 {
-				continue
-			}
-			if pciBDF, ok := d.CustomInfo["pciBDF"].(string); ok && pciBDF == bdf {
-				return int(d.Devcore), nil
-			}
+		if pciBDF, ok := d.CustomInfo["pciBDF"].(string); ok && bdf != uuid && pciBDF == bdf {
+			return d
 		}
 	}
-	return 0, fmt.Errorf("device %s not found in device cache", uuid)
+	return nil
+}
+
+func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
+	d := p.lookupDevice(uuid)
+	if d == nil {
+		return 0, fmt.Errorf("device %s not found in device cache", uuid)
+	}
+	if d.Devcore <= 0 {
+		return 0, fmt.Errorf("invalid cu count for device %s: %d", uuid, d.Devcore)
+	}
+	return int(d.Devcore), nil
 }
 
 func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1.Pod, expected string) (bool, error) {
