@@ -14,7 +14,7 @@ This repository contains the AMD device plugin used by [HAMi](https://github.com
 - Reads physical VRAM and active CU capacity through `libdrm_amdgpu`.
 - Persists per-Pod CU ranges in `hami.io/amd-cu-allocated` and reconstructs allocation state after a device-plugin restart.
 - Applies `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
-- Applies the requested memory limit through `HIP_DEVICE_MEMORY_LIMIT` and the `libamvgpu.so` `LD_AUDIT` hook.
+- Applies the requested memory limit through `HIP_DEVICE_MEMORY_LIMIT` and the `libamvgpu.so` `LD_AUDIT` hook for core or memory slices. Whole-GPU requests do not use the hook.
 
 The plugin registers devices in the `hami.io/node-amd-register` node annotation. A device entry has this shape:
 
@@ -55,9 +55,9 @@ The Docker build compiles the cgo code against the ROCm 7.2.4 AMD SMI SDK and pa
 
 ## Deploy with Helm
 
-The device-plugin image currently includes the repository's `libamvgpu.so` under `/opt/hami/lib/amd`, separate from the host-mounted destination. Following HAMi's hook-delivery model, the device-plugin container mounts the node's `<hostHookPath>/vgpu` directory and runs `amd-vgpu-init.sh` from a `postStart` lifecycle hook. The script compares the bundled and installed files and atomically updates `<hostHookPath>/vgpu/libamvgpu.so` when needed. With the default `hostHookPath=/usr/local`, Allocate then mounts `/usr/local/vgpu/libamvgpu.so` from the host into workload containers.
+The device-plugin image includes the `libamvgpu.so` built from the `amd-hami-core` submodule under `/opt/hami/lib/amd`, separate from the host-mounted destination. Following HAMi's hook-delivery model, the device-plugin container mounts the node's `<hostHookPath>/vgpu` directory and runs `amd-vgpu-init.sh` from a `postStart` lifecycle hook. The script compares the bundled and installed files and atomically updates `<hostHookPath>/vgpu/libamvgpu.so` when needed. With the default `hostHookPath=/usr/local`, Allocate then mounts `/usr/local/vgpu/libamvgpu.so` from the host into workload containers.
 
-This bundled binary is a temporary delivery mechanism. It will be replaced by an artifact obtained from the official `amd-hami-core` repository once that project provides a release and consumption pipeline. Set `dp.hookInstaller.enabled=false` only when the hook is managed on every node by another mechanism.
+Bundling the hook in the image is a temporary delivery mechanism until `amd-hami-core` provides a release and consumption pipeline. Set `dp.hookInstaller.enabled=false` only when the hook is managed on every node by another mechanism.
 
 ```bash
 helm upgrade --install amd-gpu ./helm/amd-gpu \
@@ -77,7 +77,7 @@ kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-a
 
 CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.
 
-The hook currently checked into this repository requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The current allocation path injects the hook for every HAMi AMD allocation, including whole-GPU requests, so incompatible workload images are not yet supported safely.
+The hook built from `amd-hami-core` requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The hook is injected only for core or memory slices, so whole-GPU requests work on any workload image.
 
 See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
 
