@@ -81,15 +81,19 @@ CU isolation and device visibility use ROCr interfaces and are independent of th
 
 The hook built from `amd-hami-core` requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The hook is injected only for core or memory slices, so whole-GPU requests work on any workload image.
 
+See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
+
+## CU isolation
+
+The CU slice set through `HSA_CU_MASK` is a cooperative limit, not a hard guarantee. KFD creates compute queues with all CUs and the mask is applied afterwards by an ioctl the process itself controls, so a workload can drop or widen it and take the whole GPU, slowing its neighbours. Do not rely on CU slices to isolate untrusted tenants. Enforcement needs a CU ceiling in KFD; see [#55](https://github.com/Project-HAMi/amd-device-plugin/issues/55).
+
 ## Compute-queue contention
 
-Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. See #54.
-
-See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
+Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. See [#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54).
 
 ## Validation status
 
-The AMD SMI UUID, product type, BDF, VRAM and CU registration path has been validated on a real ROCm 7.0.2 `AMD Instinct MI300X VF` node. Multi-GPU `ROCR_VISIBLE_DEVICES` ordering still requires validation on nodes with more than one allocatable GPU.
+The AMD SMI UUID, product type, BDF, VRAM and CU registration path has been validated on a real ROCm 7.0.2 `AMD Instinct MI300X VF` node. Device discovery, per-GPU health and compute-queue reporting have also been validated on an `AMD Radeon RX 9060 XT` (gfx1200, RDNA4) node. Multi-GPU `ROCR_VISIBLE_DEVICES` ordering still requires validation on nodes with more than one allocatable GPU.
 
 ## Development
 
