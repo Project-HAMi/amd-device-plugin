@@ -7,8 +7,8 @@ package amdsmi
 #include <stdio.h>
 #include <stdlib.h>
 
-static amdsmi_status_t amdsmi_uuid_for_bdf(const char *bdf_text, char *uuid,
-                                           unsigned int *uuid_length) {
+static amdsmi_status_t amdsmi_processor_for_bdf(const char *bdf_text,
+                                                amdsmi_processor_handle *processor) {
 	unsigned long long domain;
 	unsigned int bus, device, function;
 	char trailing;
@@ -22,8 +22,13 @@ static amdsmi_status_t amdsmi_uuid_for_bdf(const char *bdf_text, char *uuid,
 	bdf.bdf.bus_number = bus;
 	bdf.bdf.device_number = device;
 	bdf.bdf.function_number = function;
+	return amdsmi_get_processor_handle_from_bdf(bdf, processor);
+}
+
+static amdsmi_status_t amdsmi_uuid_for_bdf(const char *bdf_text, char *uuid,
+                                           unsigned int *uuid_length) {
 	amdsmi_processor_handle processor = NULL;
-	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	amdsmi_status_t status = amdsmi_processor_for_bdf(bdf_text, &processor);
 	if (status != AMDSMI_STATUS_SUCCESS) {
 		return status;
 	}
@@ -32,21 +37,8 @@ static amdsmi_status_t amdsmi_uuid_for_bdf(const char *bdf_text, char *uuid,
 
 static amdsmi_status_t amdsmi_product_name_for_bdf(const char *bdf_text,
                                                     char *market_name) {
-	unsigned long long domain;
-	unsigned int bus, device, function;
-	char trailing;
-	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
-	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
-		return AMDSMI_STATUS_INVAL;
-	}
-
-	amdsmi_bdf_t bdf = {0};
-	bdf.bdf.domain_number = domain;
-	bdf.bdf.bus_number = bus;
-	bdf.bdf.device_number = device;
-	bdf.bdf.function_number = function;
 	amdsmi_processor_handle processor = NULL;
-	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	amdsmi_status_t status = amdsmi_processor_for_bdf(bdf_text, &processor);
 	if (status != AMDSMI_STATUS_SUCCESS) {
 		return status;
 	}
@@ -61,21 +53,8 @@ static amdsmi_status_t amdsmi_product_name_for_bdf(const char *bdf_text,
 
 static amdsmi_status_t amdsmi_set_partition_for_bdf(const char *bdf_text,
                                                     unsigned int profile_index) {
-	unsigned long long domain;
-	unsigned int bus, device, function;
-	char trailing;
-	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
-	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
-		return AMDSMI_STATUS_INVAL;
-	}
-
-	amdsmi_bdf_t bdf = {0};
-	bdf.bdf.domain_number = domain;
-	bdf.bdf.bus_number = bus;
-	bdf.bdf.device_number = device;
-	bdf.bdf.function_number = function;
 	amdsmi_processor_handle processor = NULL;
-	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	amdsmi_status_t status = amdsmi_processor_for_bdf(bdf_text, &processor);
 	if (status != AMDSMI_STATUS_SUCCESS) {
 		return status;
 	}
@@ -84,21 +63,8 @@ static amdsmi_status_t amdsmi_set_partition_for_bdf(const char *bdf_text,
 
 static amdsmi_status_t amdsmi_partition_profiles_for_bdf(
 		const char *bdf_text, amdsmi_accelerator_partition_profile_config_t *config) {
-	unsigned long long domain;
-	unsigned int bus, device, function;
-	char trailing;
-	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
-	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
-		return AMDSMI_STATUS_INVAL;
-	}
-
-	amdsmi_bdf_t bdf = {0};
-	bdf.bdf.domain_number = domain;
-	bdf.bdf.bus_number = bus;
-	bdf.bdf.device_number = device;
-	bdf.bdf.function_number = function;
 	amdsmi_processor_handle processor = NULL;
-	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	amdsmi_status_t status = amdsmi_processor_for_bdf(bdf_text, &processor);
 	if (status != AMDSMI_STATUS_SUCCESS) {
 		return status;
 	}
@@ -111,21 +77,8 @@ static uint32_t amdsmi_nps_cap_mask(amdsmi_nps_caps_t caps) {
 
 static amdsmi_status_t amdsmi_memory_partition_for_bdf(const char *bdf_text,
                                                        char *memory_partition) {
-	unsigned long long domain;
-	unsigned int bus, device, function;
-	char trailing;
-	if (sscanf(bdf_text, "%llx:%x:%x.%x%c", &domain, &bus, &device, &function,
-	           &trailing) != 4 || bus > 0xff || device > 0x1f || function > 7) {
-		return AMDSMI_STATUS_INVAL;
-	}
-
-	amdsmi_bdf_t bdf = {0};
-	bdf.bdf.domain_number = domain;
-	bdf.bdf.bus_number = bus;
-	bdf.bdf.device_number = device;
-	bdf.bdf.function_number = function;
 	amdsmi_processor_handle processor = NULL;
-	amdsmi_status_t status = amdsmi_get_processor_handle_from_bdf(bdf, &processor);
+	amdsmi_status_t status = amdsmi_processor_for_bdf(bdf_text, &processor);
 	if (status != AMDSMI_STATUS_SUCCESS) {
 		return status;
 	}
@@ -168,14 +121,13 @@ func (c *amdSMICache[T]) Get(bdfs []string) (map[string]T, error) {
 			missing = append(missing, bdf)
 		}
 	}
+	var err error
 	if len(missing) > 0 {
-		fresh, err := c.fetcher(missing)
+		var fresh map[string]T
+		// Keep what succeeded; failures are retried on the next call.
+		fresh, err = c.fetcher(missing)
 		for k, v := range fresh {
 			c.data[k] = v
-		}
-		if err != nil {
-			// Keep what succeeded; retry the failures on the next call.
-			return c.data, err
 		}
 	}
 	out := make(map[string]T, len(bdfs))
@@ -184,7 +136,7 @@ func (c *amdSMICache[T]) Get(bdfs []string) (map[string]T, error) {
 			out[bdf] = v
 		}
 	}
-	return out, nil
+	return out, err
 }
 
 var (

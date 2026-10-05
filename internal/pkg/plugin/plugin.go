@@ -50,10 +50,6 @@ import (
 // from AMDGPULister.SplitCount; gfx12 GPUs contend above about 2 (see README).
 var splitCount = 10
 
-// ModeAnnotation selects the allocation mode per pod: absent or "rocm" is
-// soft CU masking, a compute partition type ("spx"/"cpx"/...) whole partitions.
-const ModeAnnotation = "hami.io/amd-mode"
-
 func IsPartitionMode(mode string) bool {
 	switch mode {
 	case "spx", "cpx", "dpx", "qpx":
@@ -117,10 +113,6 @@ type AMDGPUPlugin struct {
 	// keys). Upstream HAMi invents flat "AMDGPU-<i>" device ids over node
 	// capacity; device i resolves to GPU sortedBDFs[i/splitCount].
 	sortedBDFs []string
-	// partitionTemplates is the boot-time catalog of compute x NPS
-	// combinations per card, with the NPS->physical memory lookup applied.
-	// Held in memory only; never written to disk (immutable-OS friendly).
-	partitionTemplates []amdgpu.DevicePartitionTemplates
 	// bdfToROCrUUID maps a topology key to its ROCr UUID, for resolving
 	// whole-GPU allocations and "<bdf>#<slot>" kubelet split ids during
 	// Allocate.
@@ -219,16 +211,20 @@ func (p *AMDGPUPlugin) Start() error {
 	} else {
 		glog.Warningf("operating-mode: cannot read node annotations, keeping %q: %v", p.operatingMode, err)
 	}
+	if p.operatingMode != "cu" && p.operatingMode != "partition" {
+		glog.Warningf("unknown operating mode %q, using cu", p.operatingMode)
+		p.operatingMode = "cu"
+	}
 	glog.Infof("operating mode: %s, compute partition: %s", p.operatingMode, p.computePartition)
 
-	// In partition mode with a target compute partition set, flip the GPUs
-	// through the AMD SMI API before any registration reads the current
-	// hardware mode. Busy GPUs fail and keep their current mode; the rest
-	// still flip.
+	// Flip GPUs not yet in the target compute partition before registration
+	// reads the hardware mode. Busy GPUs fail and keep their current mode.
 	if p.operatingMode == "partition" && p.computePartition != "" {
 		var bdfs []string
 		for _, deviceData := range amdgpu.GetAMDGPUs() {
-			if bdf, ok := deviceData["devID"].(string); ok && bdf != "" {
+			bdf, _ := deviceData["devID"].(string)
+			current, _ := deviceData["computePartitionType"].(string)
+			if bdf != "" && !strings.EqualFold(current, p.computePartition) {
 				bdfs = append(bdfs, bdf)
 			}
 		}
@@ -252,18 +248,6 @@ func (p *AMDGPUPlugin) Start() error {
 	// Initialize deviceCache before Allocate rebuilds CU occupancy from Pod annotations.
 	if err := p.RegisterInAnnotation(); err != nil {
 		return fmt.Errorf("initialize device cache: %w", err)
-	}
-
-	// Boot-time partition template catalog: per card, the valid compute x NPS
-	// combinations and the NPS->physical-memory lookup. In-memory only;
-	// regenerated on every boot.
-	p.partitionTemplates, err = amdgpu.GeneratePartitionTemplates()
-	if err != nil {
-		glog.Warningf("partition template generation failed: %v", err)
-	}
-	for _, t := range p.partitionTemplates {
-		glog.Infof("partition templates for %s (%s): current %s/%s physicalMemory=%d, %d combos",
-			t.BDF, t.Product, t.CurrentComputePartition, t.CurrentMemoryPartition, t.CurrentPhysicalMemory, len(t.Templates))
 	}
 
 	return nil
@@ -304,19 +288,28 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 	return err
 }
 
+// xcpParents is the set of BDFs with XCP partitions in the device map.
+func xcpParents(devices map[string]map[string]interface{}) map[string]bool {
+	parents := make(map[string]bool)
+	for key, deviceData := range devices {
+		if bdf, _ := deviceData["devID"].(string); strings.HasPrefix(key, "amdgpu_xcp_") && bdf != "" {
+			parents[bdf] = true
+		}
+	}
+	return parents
+}
+
 // isSchedulableTopologyKey: in cu mode every whole-GPU key registers (CU
 // slicing over the full GPU); XCP partition keys only register in partition
-// mode. In partition mode a whole-GPU key registers only when the GPU has at
-// most one partition (spx): a QPX/DPX whole GPU is replaced by its XCP
-// partitions, and on kernels where KFD does not expose XCP nodes the whole
-// GPU registers as a hard single-partition device with its capacity unshared.
-func (p *AMDGPUPlugin) isSchedulableTopologyKey(key string, deviceData map[string]interface{}, partitionsByBDF map[string]int) bool {
+// mode, where they replace their parent GPU. A partitioned GPU whose kernel
+// exposes no XCP nodes registers whole.
+func (p *AMDGPUPlugin) isSchedulableTopologyKey(key string, deviceData map[string]interface{}, parents map[string]bool) bool {
 	if strings.HasPrefix(key, "amdgpu_xcp_") {
 		return p.operatingMode == "partition"
 	}
 	if p.operatingMode == "partition" {
 		bdf, _ := deviceData["devID"].(string)
-		return partitionsByBDF[bdf] <= 1
+		return !parents[bdf]
 	}
 	return true
 }
@@ -325,7 +318,7 @@ func (p *AMDGPUPlugin) isSchedulableTopologyKey(key string, deviceData map[strin
 // compute type creates, from the AMD SMI profile table; 1 when unknown.
 // This is the correct capacity divisor (amdgpu_xcp_ child counts are wrong:
 // gfx950 exposes 7 XCD chiplets per GPU regardless of partition mode).
-func numPartitionsForMode(profiles []amdgpu.PartitionProfile, computeType string) int {
+func numPartitionsForMode(profiles []amdsmi.PartitionProfile, computeType string) int {
 	for _, profile := range profiles {
 		if strings.EqualFold(profile.Type, computeType) {
 			return profile.NumPartitions
@@ -334,11 +327,43 @@ func numPartitionsForMode(profiles []amdgpu.PartitionProfile, computeType string
 	return 1
 }
 
-// Registers the whole-partition form of a device. In partition mode every
-// schedulable device (whole GPU with a compute type, or XCP partition) gets
-// a hard "id#mode" entry; in cu mode only XCP partitions do.
-func (p *AMDGPUPlugin) registerHardEntry(key string, deviceData map[string]interface{}, info *utils.DeviceInfo) bool {
-	if p.operatingMode != "partition" && !strings.HasPrefix(key, "amdgpu_xcp_") {
+// partitionCounts maps each whole-GPU BDF to the partition count of its
+// current compute type, the capacity divisor for its XCP entries.
+func partitionCounts(devices map[string]map[string]interface{}, profiles map[string][]amdsmi.PartitionProfile) map[string]int {
+	counts := make(map[string]int, len(devices))
+	for key, deviceData := range devices {
+		if strings.HasPrefix(key, "amdgpu_xcp_") {
+			continue
+		}
+		bdf, _ := deviceData["devID"].(string)
+		computeType, _ := deviceData["computePartitionType"].(string)
+		if gpuProfiles, ok := profiles[strings.ToLower(bdf)]; ok && bdf != "" {
+			counts[bdf] = numPartitionsForMode(gpuProfiles, computeType)
+		}
+	}
+	return counts
+}
+
+// kubeletIDs lists the kubelet device ids of one topology entry: a single
+// hard "<key>#<type>" in partition mode, splitCount soft slots otherwise.
+// It must stay in step with registerHardEntry.
+func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{}) []string {
+	if p.operatingMode == "partition" {
+		if t, _ := deviceData["computePartitionType"].(string); t != "" {
+			return []string{key + "#" + t}
+		}
+	}
+	ids := make([]string, splitCount)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%s#%d", key, i)
+	}
+	return ids
+}
+
+// registerHardEntry turns a device into its whole-partition form in
+// partition mode; GPUs without a compute partition type stay soft.
+func (p *AMDGPUPlugin) registerHardEntry(deviceData map[string]interface{}, info *utils.DeviceInfo) bool {
+	if p.operatingMode != "partition" {
 		return false
 	}
 	computePartitionType, ok := deviceData["computePartitionType"].(string)
@@ -365,10 +390,6 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	}
 	if memoryPartitionLookup == nil {
 		memoryPartitionLookup = amdsmi.GetAMDSCurrentMemoryPartitions
-	}
-	partitionProfileLookup := p.amdsmiPartitionProfileLookup
-	if partitionProfileLookup == nil {
-		partitionProfileLookup = amdsmi.GetAMDGPUPartitionProfiles
 	}
 	p.AMDGPUs = amdgpu.GetAMDGPUs(root)
 
@@ -429,32 +450,21 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	if err != nil {
 		glog.Warningf("AMD SMI memory-partition lookup incomplete; keeping sysfs values: %v", err)
 	}
+	partitionProfileLookup := p.amdsmiPartitionProfileLookup
+	if partitionProfileLookup == nil {
+		partitionProfileLookup = amdsmi.GetAMDGPUPartitionProfiles
+	}
 	partitionProfiles, err := partitionProfileLookup(bdfs)
 	if err != nil {
 		glog.Warningf("AMD SMI partition-profile lookup incomplete: %v", err)
 	}
-
-	// Per-GPU partition count of the current compute type; the capacity
-	// divisor for XCP entries and the schedulability gate for whole GPUs.
-	partitionsByBDF := make(map[string]int, len(p.AMDGPUs))
-	for key, deviceData := range p.AMDGPUs {
-		if strings.HasPrefix(key, "amdgpu_xcp_") {
-			continue
-		}
-		bdf, _ := deviceData["devID"].(string)
-		if bdf == "" {
-			continue
-		}
-		computeType, _ := deviceData["computePartitionType"].(string)
-		if profiles, ok := partitionProfiles[strings.ToLower(bdf)]; ok {
-			partitionsByBDF[bdf] = numPartitionsForMode(profiles, computeType)
-		}
-	}
+	partitionsByBDF := partitionCounts(p.AMDGPUs, partitionProfiles)
+	parents := xcpParents(p.AMDGPUs)
 
 	out := make([]*utils.DeviceInfo, 0, len(keys)*2)
 	for _, key := range keys {
 		deviceData := p.AMDGPUs[key]
-		if !p.isSchedulableTopologyKey(key, deviceData, partitionsByBDF) {
+		if !p.isSchedulableTopologyKey(key, deviceData, parents) {
 			glog.Infof("skip topology entry %s (no allocatable capacity)", key)
 			continue
 		}
@@ -490,7 +500,6 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		}
 		p.rocrUUIDToTopology[rocrUUID] = key
 		p.bdfToROCrUUID[key] = rocrUUID
-		p.sortedBDFs = append(p.sortedBDFs, key)
 
 		// Soft entry ID: AMD SMI UUID for whole GPUs, ROCr UUID for partitions.
 		infoID := rocrUUID
@@ -544,10 +553,12 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			DeviceVendor: "amd",
 			CustomInfo:   customInfo,
 		}
-		out = append(out, soft)
-		if p.registerHardEntry(key, deviceData, soft) {
-			glog.Infof("registered hard partition device %s (mode %s) alongside soft device %s", soft.ID, soft.Mode, infoID)
+		if p.registerHardEntry(deviceData, soft) {
+			glog.Infof("registered hard partition device %s (mode %s)", soft.ID, soft.Mode)
 		}
+		// Upstream AMDGPU-<i> ids index this list, so only registered entries count.
+		p.sortedBDFs = append(p.sortedBDFs, key)
+		out = append(out, soft)
 	}
 
 	return out
@@ -598,47 +609,17 @@ func (p *AMDGPUPlugin) WatchAndRegister(disableWatchAndRegister <-chan bool, ack
 	}
 }
 
-func kubeletDeviceID(key string, splitIdx int) string {
-	return fmt.Sprintf("%s#%d", key, splitIdx)
-}
-
-func hardKubeletDeviceID(key string, deviceData map[string]interface{}) string {
-	if computePartitionType, _ := deviceData["computePartitionType"].(string); computePartitionType != "" {
-		return fmt.Sprintf("%s#%s", key, computePartitionType)
-	}
-	return ""
-}
-
 func (p *AMDGPUPlugin) getDevices() []*allocator.Device {
 	devices := amdgpu.GetAMDGPUs()
+	parents := xcpParents(devices)
 	var deviceList []*allocator.Device
-	// partitionsByBDF gates whole GPUs in partition mode; the profile lookup
-	// is not injectable here, so a GPU without profiles stays schedulable
-	// (spx default) instead of disappearing.
-	partitionsByBDF := make(map[string]int)
-
 	for id, deviceData := range devices {
-		if !p.isSchedulableTopologyKey(id, deviceData, partitionsByBDF) {
+		if !p.isSchedulableTopologyKey(id, deviceData, parents) {
 			continue
 		}
-		if p.operatingMode != "partition" {
-			for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
-				device := &allocator.Device{
-					Id:                   kubeletDeviceID(id, splitIdx),
-					Card:                 deviceData["card"].(int),
-					RenderD:              deviceData["renderD"].(int),
-					DevId:                deviceData["devID"].(string),
-					ComputePartitionType: deviceData["computePartitionType"].(string),
-					MemoryPartitionType:  deviceData["memoryPartitionType"].(string),
-					NodeId:               deviceData["nodeId"].(int),
-					NumaNode:             deviceData["numaNode"].(int),
-				}
-				deviceList = append(deviceList, device)
-			}
-		}
-		if hardID := hardKubeletDeviceID(id, deviceData); hardID != "" {
+		for _, kid := range p.kubeletIDs(id, deviceData) {
 			deviceList = append(deviceList, &allocator.Device{
-				Id:                   hardID,
+				Id:                   kid,
 				Card:                 deviceData["card"].(int),
 				RenderD:              deviceData["renderD"].(int),
 				DevId:                deviceData["devID"].(string),
@@ -718,8 +699,7 @@ func (p *AMDGPUPlugin) PreStartContainer(ctx context.Context, r *pluginapi.PreSt
 	return &pluginapi.PreStartContainerResponse{}, nil
 }
 
-// kubeletDevicesFor publishes splitCount soft slice slots plus one
-// whole-partition device for XCP entries; the pod annotation picks per pod.
+// kubeletDevicesFor publishes the kubelet devices of one topology entry.
 func (p *AMDGPUPlugin) kubeletDevicesFor(id string, deviceData map[string]interface{}) []*pluginapi.Device {
 	numas := []int64{int64(deviceData["numaNode"].(int))}
 	glog.Infof("Watching GPU with bus ID: %s NUMA Node: %+v", id, numas)
@@ -731,21 +711,11 @@ func (p *AMDGPUPlugin) kubeletDevicesFor(id string, deviceData map[string]interf
 		}
 	}
 
-	devs := make([]*pluginapi.Device, 0, splitCount+1)
-	if p.operatingMode != "partition" {
-		for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
-			devs = append(devs, &pluginapi.Device{
-				ID:     kubeletDeviceID(id, splitIdx),
-				Health: pluginapi.Healthy,
-				Topology: &pluginapi.TopologyInfo{
-					Nodes: numaNodes,
-				},
-			})
-		}
-	}
-	if hardID := hardKubeletDeviceID(id, deviceData); hardID != "" {
+	ids := p.kubeletIDs(id, deviceData)
+	devs := make([]*pluginapi.Device, 0, len(ids))
+	for _, kid := range ids {
 		devs = append(devs, &pluginapi.Device{
-			ID:     hardID,
+			ID:     kid,
 			Health: pluginapi.Healthy,
 			Topology: &pluginapi.TopologyInfo{
 				Nodes: numaNodes,
@@ -771,6 +741,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	}
 
 	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*(splitCount+1))
+	parents := xcpParents(p.AMDGPUs)
 	isHomogeneous := amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
 	resourceTypeDevs := make(map[string][]*pluginapi.Device)
@@ -778,11 +749,8 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	if isHomogeneous {
 		// limit scope for hwloc
 		func() {
-			// partitionsByBDF gates whole GPUs in partition mode. The device
-			// map here has no partition-profile lookup; leave empty so whole
-			// GPUs stay schedulable (spx default) instead of disappearing.
 			for id, device := range p.AMDGPUs {
-				if !p.isSchedulableTopologyKey(id, device, map[string]int{}) {
+				if !p.isSchedulableTopologyKey(id, device, parents) {
 					continue
 				}
 				devs = append(devs, p.kubeletDevicesFor(id, device)...)
@@ -793,13 +761,11 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 	} else {
 		func() {
 			for id, device := range p.AMDGPUs {
-				if !p.isSchedulableTopologyKey(id, device, map[string]int{}) {
+				if !p.isSchedulableTopologyKey(id, device, parents) {
 					continue
 				}
 				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
-				for _, dev := range p.kubeletDevicesFor(id, device) {
-					resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], dev)
-				}
+				resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], p.kubeletDevicesFor(id, device)...)
 			}
 		}()
 		// Send the appropriate list of devices based on the partitionType
@@ -875,18 +841,10 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 		glog.Infof("GetPreferredAllocation: available=%v must=%v size=%d", req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, req.AllocationSize)
 		allocated_ids, err := p.devAllocator.Allocate(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize))
 		if err != nil {
-			// kubelet passes its checkpoint-persisted ids (bare BDFs from the
-			// pre-fork plugin), which the split-keyed allocator cannot map.
-			// GPA is advisory; Allocate resolves the pod annotation, so echo
-			// kubelet's own ids instead of failing admission.
+			// GPA is advisory and an error fails admission, so hand back
+			// kubelet's own ids when the allocator cannot map them.
 			glog.Warningf("preferred allocation failed (%v); echoing kubelet device ids", err)
-			allocated_ids = req.MustIncludeDeviceIDs
-			for _, id := range req.AvailableDeviceIDs {
-				if len(allocated_ids) >= int(req.AllocationSize) {
-					break
-				}
-				allocated_ids = append(allocated_ids, id)
-			}
+			allocated_ids = echoPreferred(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize))
 		}
 		resp := &pluginapi.ContainerPreferredAllocationResponse{
 			DeviceIDs: allocated_ids,
@@ -896,8 +854,23 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 	return response, nil
 }
 
-// deviceDataFromAllocationUUID resolves the AMD SMI UUID published in
-// DeviceInfo.ID to the local topology required to prepare a container.
+// echoPreferred picks the must-include ids first, then available ones, without
+// repeats; available already contains every must-include id.
+func echoPreferred(available, must []string, size int) []string {
+	out := make([]string, 0, size)
+	seen := make(map[string]bool, size)
+	for _, id := range append(append([]string{}, must...), available...) {
+		if len(out) == size {
+			break
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // parseAMDGPUIndex extracts the flat counter from upstream HAMi's
 // "<node>-AMDGPU-<i>" device ids, or -1 for any other id spelling.
 func parseAMDGPUIndex(id string) int {
@@ -912,6 +885,8 @@ func parseAMDGPUIndex(id string) int {
 	return n
 }
 
+// deviceDataFromAllocationUUID resolves the AMD SMI UUID published in
+// DeviceInfo.ID to the local topology required to prepare a container.
 func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]interface{}, error) {
 	uuid = stripPartitionModeSuffix(uuid)
 	if topoKey, ok := p.amdSMIUUIDToTopology[uuid]; ok {

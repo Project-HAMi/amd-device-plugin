@@ -78,33 +78,21 @@ kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-a
 
 ## Operating modes
 
-The plugin follows HAMi's Ascend vNPU model: one plugin registration, per-pod mode
-selection. Every device is registered in both forms and the scheduler picks the
-form per pod based on the pod annotation `hami.io/amd-mode`:
+The mode is chosen per node (`OPERATING_MODE`, or the
+`hami.io/amd-operating-mode` node annotation), like NVIDIA's `mig.config`:
 
-- absent or `rocm` (default): soft mode. The device is published as a CU-maskable
-  device (Count 10) and the scheduler allocates CU slices via the amd-hami-core
-  hook library (`HSA_CU_MASK`, `HIP_DEVICE_MEMORY_LIMIT`, `LD_AUDIT`).
-- `spx`, `cpx`, `dpx` or `qpx`: hard partition mode. The same XCP compute
-  partition is published as a whole device (Count 1, ID `<rocr-uuid>#<mode>`)
-  and the scheduler allocates it exclusively without a CU mask. The node must be
-  switched to the matching compute partition profile first, e.g.:
+- `cu` (default): every whole GPU is published as a CU-maskable device (Count
+  `splitCount`) and the scheduler allocates CU slices via the amd-hami-core hook
+  library (`HSA_CU_MASK`, `HIP_DEVICE_MEMORY_LIMIT`, `LD_AUDIT`).
+- `partition`: every compute partition is published as a whole device (Count 1,
+  ID suffixed `#<type>`) and allocated exclusively without a CU mask. XCP
+  partitions replace their parent GPU. With `COMPUTE_PARTITION` set, the plugin
+  switches idle GPUs to that type through AMD SMI at startup. GPUs without a
+  compute partition type (RDNA, SR-IOV VFs, embedded APUs) stay CU-maskable.
 
-  ```bash
-  echo spx > /sys/class/drm/card0/device/current_compute_partition
-  echo nps1 > /sys/class/drm/card0/device/current_memory_partition
-  reboot   # partition changes require a reset
-  ```
-
-  Physical Instinct parts expose XCP compute partitions and serve both modes,
-  discrete GPUs and AI MAX APUs (MI300A/MI350A) alike. Virtio Instinct devices
-  (SR-IOV VFs) and partition-less embedded APUs register no hard entries and
-  only serve rocm mode; `hami.io/amd-mode: spx` cannot be scheduled there.
-
-The register annotation (`hami.io/node-amd-register`) carries one entry per
-form: soft entries have `Mode` empty, hard entries carry `Mode` equal to the
-compute partition type. The scheduler branches on `Mode` exactly like HAMi
-branches on the NVIDIA `MigMode` and the Ascend `huawei.com/vnpu-mode` values.
+In the register annotation (`hami.io/node-amd-register`) soft entries have
+`Mode` empty and hard entries carry the compute partition type, the way HAMi
+branches on the NVIDIA `MigMode`.
 Allocated devices must be written back as the published `DeviceInfo.ID`
 (`amd-smi` UUID for whole GPUs, `GPU-<unique_id>` or `<rocr-uuid>#<mode>` for
 partitions); the plugin resolves all of them.

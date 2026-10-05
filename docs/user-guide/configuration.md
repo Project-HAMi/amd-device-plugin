@@ -21,9 +21,10 @@ The plugin registers AMD GPUs in one of two modes:
 - **partition mode**: devices register as hard compute partitions with a
   `#<compute-type>` suffix (`GPU-xxx#spx`, `GPU-xxx#qpx`), `Mode` set to the
   partition type and `Count: 1`. The kubelet-facing device list publishes
-  only the hard entries (no soft splits). Whole GPUs with more than one
-  partition (dpx/qpx/cpx) are replaced by their `amdgpu_xcp_*` partitions;
-  single-partition (spx) whole GPUs register as one hard device.
+  only the hard entries (no soft splits). Whole GPUs with `amdgpu_xcp_*`
+  partitions in KFD topology are replaced by them; any other partitioned GPU
+  registers as one hard device. GPUs without a compute partition type stay
+  soft.
 
 Mode resolution, lowest to highest precedence:
 

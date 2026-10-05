@@ -1,8 +1,8 @@
 dp:
   image:
-    repository: ghcr.io/fishman/amd-device-plugin
+    repository: ghcr.io/project-hami/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "0.0.17"
+    tag: "0.0.1"
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
@@ -53,8 +53,7 @@ dp:
     rollingUpdate:
       maxUnavailable: 1
 
-imagePullSecrets:
-  - name: ghcr-fishman
+imagePullSecrets: []
 
 tolerations:
   - key: CriticalAddonsOnly

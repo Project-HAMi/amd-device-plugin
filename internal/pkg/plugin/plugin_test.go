@@ -292,8 +292,14 @@ func TestIsSchedulableTopologyKey(t *testing.T) {
 	qpxParent := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
 	noPartition := map[string]interface{}{"devID": "0000:75:00.0", "computePartitionType": "", "memoryPartitionType": ""}
 	xcp := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
-	// partitionsByBDF: spx=1, qpx=4, none=0 (unknown -> spx default).
-	partitions := map[string]int{"0000:05:00.0": 1, "0000:15:00.0": 4}
+	qpxNoXCP := map[string]interface{}{"devID": "0000:25:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
+	partitions := xcpParents(map[string]map[string]interface{}{
+		"0000:05:00.0": wholeGPU, "0000:15:00.0": qpxParent, "amdgpu_xcp_30": xcp,
+		"0000:75:00.0": noPartition, "0000:25:00.0": qpxNoXCP,
+	})
+	if !(&AMDGPUPlugin{operatingMode: "partition"}).isSchedulableTopologyKey("0000:25:00.0", qpxNoXCP, partitions) {
+		t.Error("partition mode: QPX GPU whose kernel exposes no XCP nodes should register whole")
+	}
 
 	cu := &AMDGPUPlugin{operatingMode: "cu"}
 	if !cu.isSchedulableTopologyKey("0000:05:00.0", wholeGPU, partitions) {
@@ -324,34 +330,38 @@ func TestIsSchedulableTopologyKey(t *testing.T) {
 	}
 }
 
-func TestHardEntryRegistration(t *testing.T) {
-	xcp := map[string]interface{}{"computePartitionType": "cpx", "memoryPartitionType": "nps1"}
-	noPartition := map[string]interface{}{"computePartitionType": "", "memoryPartitionType": ""}
-	wholeGPU := map[string]interface{}{"computePartitionType": "spx", "memoryPartitionType": "nps1"}
-
-	soft := &utils.DeviceInfo{ID: "GPU-466450b96fbde849", Count: int32(splitCount), Mode: ""}
-	if !(&AMDGPUPlugin{operatingMode: "cu"}).registerHardEntry("amdgpu_xcp_30", xcp, soft) {
-		t.Fatal("XCP partition should register a hard entry")
+// The scheduler (registerHardEntry) and kubelet (kubeletIDs) views must agree:
+// a hard entry is exactly one kubelet device, a soft one splitCount slots.
+func TestKubeletAndSchedulerViewsAgree(t *testing.T) {
+	devices := map[string]map[string]interface{}{
+		"amdgpu_xcp_30": {"computePartitionType": "cpx"},
+		"0000:05:00.0":  {"computePartitionType": "spx"},
+		"0000:75:00.0":  {"computePartitionType": ""},
 	}
-	if soft.ID != "GPU-466450b96fbde849#cpx" || soft.Mode != "cpx" || soft.Count != 1 {
-		t.Fatalf("hard entry = %+v, want suffixed ID, Mode=cpx, Count=1", soft)
-	}
-
-	soft = &utils.DeviceInfo{ID: "uuid-1", Count: int32(splitCount)}
-	if (&AMDGPUPlugin{operatingMode: "cu"}).registerHardEntry("0000:05:00.0", wholeGPU, soft) {
-		t.Fatal("cu mode: GPU parents must not get a hard entry")
-	}
-	soft = &utils.DeviceInfo{ID: "uuid-2", Count: int32(splitCount)}
-	if (&AMDGPUPlugin{operatingMode: "partition"}).registerHardEntry("0000:05:00.0", wholeGPU, soft) {
-		if soft.ID != "uuid-2#spx" || soft.Mode != "spx" || soft.Count != 1 {
-			t.Fatalf("partition-mode hard entry = %+v, want ID uuid-2#spx, Mode=spx, Count=1", soft)
+	for _, mode := range []string{"cu", "partition"} {
+		p := &AMDGPUPlugin{operatingMode: mode}
+		for key, data := range devices {
+			info := &utils.DeviceInfo{ID: "uuid", Count: int32(splitCount)}
+			hard := p.registerHardEntry(data, info)
+			ids := p.kubeletIDs(key, data)
+			if int32(len(ids)) != info.Count {
+				t.Errorf("%s %s: scheduler Count=%d, kubelet ids=%v", mode, key, info.Count, ids)
+			}
+			wantHard := mode == "partition" && data["computePartitionType"] != ""
+			if hard != wantHard {
+				t.Errorf("%s %s: hard=%v, want %v", mode, key, hard, wantHard)
+			}
+			if hard && (ids[0] != key+"#"+info.Mode || info.ID != "uuid#"+info.Mode) {
+				t.Errorf("%s %s: hard ids kubelet=%v scheduler=%s", mode, key, ids, info.ID)
+			}
 		}
-	} else {
-		t.Fatal("partition mode: SPX whole GPU should get a hard entry")
 	}
-	soft = &utils.DeviceInfo{ID: "uuid-3", Count: int32(splitCount)}
-	if (&AMDGPUPlugin{operatingMode: "partition"}).registerHardEntry("0000:75:00.0", noPartition, soft) {
-		t.Fatal("GPU without a compute partition type should not get a hard entry")
+}
+
+func TestEchoPreferred(t *testing.T) {
+	got := echoPreferred([]string{"a#0", "a#1", "b#0"}, []string{"a#1"}, 2)
+	if strings.Join(got, ",") != "a#1,a#0" {
+		t.Fatalf("echoPreferred = %v, want [a#1 a#0]", got)
 	}
 }
 
@@ -366,16 +376,6 @@ func TestStripPartitionModeSuffix(t *testing.T) {
 		if got := stripPartitionModeSuffix(id); got != want {
 			t.Errorf("stripPartitionModeSuffix(%q) = %q, want %q", id, got, want)
 		}
-	}
-}
-
-func TestHardKubeletDeviceID(t *testing.T) {
-	xcp := map[string]interface{}{"computePartitionType": "cpx", "memoryPartitionType": "nps1"}
-	if got := hardKubeletDeviceID("amdgpu_xcp_30", xcp); got != "amdgpu_xcp_30#cpx" {
-		t.Errorf("hardKubeletDeviceID(xcp) = %q", got)
-	}
-	if got := hardKubeletDeviceID("0000:75:00.0", map[string]interface{}{}); got != "" {
-		t.Errorf("hardKubeletDeviceID(whole) = %q, want empty", got)
 	}
 }
 
