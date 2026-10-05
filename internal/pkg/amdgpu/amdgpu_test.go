@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -273,5 +274,27 @@ func TestROCrUUIDsFromTopology(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ROCr UUIDs = %#v, want %#v", got, want)
+	}
+}
+
+func TestReadPartition(t *testing.T) {
+	dir := t.TempDir()
+
+	// RDNA has no partition files, which must not be reported as an error
+	if got, err := readPartition(filepath.Join(dir, "current_compute_partition")); got != "" || err != nil {
+		t.Errorf("missing file: got (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	f := filepath.Join(dir, "current_memory_partition")
+	if err := os.WriteFile(f, []byte("NPS1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readPartition(f); got != "nps1" || err != nil {
+		t.Errorf("existing file: got (%q, %v), want (\"nps1\", nil)", got, err)
+	}
+
+	// a real read error (directory) is still reported
+	if _, err := readPartition(dir); err == nil {
+		t.Error("directory: want an error")
 	}
 }

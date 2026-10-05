@@ -68,6 +68,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -214,6 +215,15 @@ func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
 	return renderDevIds
 }
 
+// readPartition returns the lowercased content of a partition sysfs file, or "" if it does not exist
+func readPartition(file string) (string, error) {
+	data, err := ioutil.ReadFile(file)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return strings.ToLower(strings.TrimSpace(string(data))), err
+}
+
 // GetAMDGPUs return a map of AMD GPU on a node identified by the part of the pci address
 func GetAMDGPUs() map[string]map[string]interface{} {
 	if _, err := os.Stat("/sys/module/amdgpu/drivers/"); err != nil {
@@ -237,17 +247,12 @@ func GetAMDGPUs() map[string]map[string]interface{} {
 		computePartitionType, memoryPartitionType := "", ""
 		numaNode := -1
 
-		// Read the compute partition
-		if data, err := ioutil.ReadFile(computePartitionFile); err == nil {
-			computePartitionType = strings.ToLower(strings.TrimSpace(string(data)))
-		} else {
+		// partition files exist only on CDNA; a missing file is not an error
+		var err error
+		if computePartitionType, err = readPartition(computePartitionFile); err != nil {
 			glog.Warningf("Failed to read 'current_compute_partition' file at %s: %s", computePartitionFile, err)
 		}
-
-		// Read the memory partition
-		if data, err := ioutil.ReadFile(memoryPartitionFile); err == nil {
-			memoryPartitionType = strings.ToLower(strings.TrimSpace(string(data)))
-		} else {
+		if memoryPartitionType, err = readPartition(memoryPartitionFile); err != nil {
 			glog.Warningf("Failed to read 'current_memory_partition' file at %s: %s", memoryPartitionFile, err)
 		}
 
