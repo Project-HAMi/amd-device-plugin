@@ -2,7 +2,7 @@
 
 This guide walks through the process of installing the AMD GPU device plugin on a Kubernetes cluster.
 
-> For HAMi fractional GPU deployments, use the Helm instructions in the top-level [README](../../README.md). The raw DaemonSet variants below are inherited upstream examples and do not install the HAMi RBAC or host memory hook.
+> For HAMi fractional GPU deployments, use the Helm instructions in the top-level [README](https://github.com/Project-HAMi/amd-device-plugin/blob/main/README.md). The raw DaemonSet variants below are inherited upstream examples and do not install the HAMi RBAC or host memory hook.
 
 ## Prerequisites
 

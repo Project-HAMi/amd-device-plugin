@@ -32,7 +32,7 @@ Make sure to name your branch descriptively to reflect the changes you are makin
 ## Development Workflow
 
 1. **Make Changes**: Implement your changes in the codebase.
-2. **Testing**: Ensure that your changes are covered by tests. The code uses cgo with AMD SMI and libdrm, so run the tests in the builder image as described in the [README](../../README.md#development). Add new tests as necessary.
+2. **Testing**: Ensure that your changes are covered by tests. The code uses cgo with AMD SMI and libdrm, so run the tests in the builder image as described in the [README](https://github.com/Project-HAMi/amd-device-plugin/blob/main/README.md#development). Add new tests as necessary.
 3. **Commit Changes**: Commit your changes with a clear and concise commit message. Commits must be signed off (DCO), so use `-s`:
 
    ```bash
