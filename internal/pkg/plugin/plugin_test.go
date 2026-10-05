@@ -17,6 +17,7 @@
 package plugin
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -228,5 +230,54 @@ func TestListerSplitCount(t *testing.T) {
 	(&AMDGPULister{SplitCount: 2}).NewPlugin("gpu")
 	if splitCount != 2 {
 		t.Errorf("splitCount = %d, want 2", splitCount)
+	}
+}
+
+// A whole-GPU request owns the card, so Allocate needs no node lock and
+// persists no CU occupancy; a slice still requires the scheduler's lock.
+func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name, request string
+		wantErr       bool
+	}{
+		{"scheduler whole gpu", "uuid-a,AMDGPU,16304,32:;", false},
+		{"core slice", "uuid-a,AMDGPU,4096,16:;", true},
+	} {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+				utils.BindTimeAnnotations:     "1",
+				utils.AssignedNodeAnnotations: "n",
+				utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+				utils.DeviceToAllocate:        tc.request,
+			}},
+			Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodPending},
+		}
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}
+		cs := fake.NewSimpleClientset(node, pod)
+		old := utils.KubeClient
+		utils.KubeClient = cs
+		t.Setenv(utils.NodeNameEnvName, "n")
+
+		p := &AMDGPUPlugin{
+			AMDGPUs:              map[string]map[string]interface{}{"0000:06:00.0": {"card": 1, "renderD": 129}},
+			amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:06:00.0"},
+			amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-1"},
+			deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 32, Devmem: 16304}},
+		}
+		_, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+			ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:06:00.0#0"}}},
+		})
+		utils.KubeClient = old
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("%s: Allocate error = %v, want error %v", tc.name, err, tc.wantErr)
+		}
+		got, getErr := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if _, persisted := got.Annotations[utils.CuAllocation]; persisted {
+			t.Errorf("%s: CU occupancy persisted without the node lock", tc.name)
+		}
 	}
 }

@@ -614,7 +614,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
 	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
-	// True when any container requests sliced (cores > 0) devices; the CU
+	// True when any container requests a core or memory slice; the CU
 	// persistence and node lock guard shared occupancy only.
 	slicedCU := false
 	for idx := range r.ContainerRequests {
@@ -727,7 +727,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				// Use container-local device index as GPU_list and ID_List as CU_list.
 				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
-				slicedCU = slicedCU || d.Usedcores > 0
+				slicedCU = slicedCU || !p.isWholeGPU(utils.ContainerDevices{d})
 				if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
 					oldAllocation, err := idListToAllocation(oldList, totalCUs)
 					if err != nil {
