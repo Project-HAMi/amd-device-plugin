@@ -159,3 +159,20 @@ func assertAllocationWord(t *testing.T, allocations map[string]cuallocation.Allo
 		t.Fatalf("allocation word for %s = %#x, want %#x", uuid, allocation[0], want)
 	}
 }
+
+func TestIsWholeGPU(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		devreq utils.ContainerDevices
+		want   bool
+	}{
+		{"whole", utils.ContainerDevices{{UUID: "a"}, {UUID: "b"}}, true},
+		{"core slice", utils.ContainerDevices{{UUID: "a", Usedcores: 20}}, false},
+		{"memory slice", utils.ContainerDevices{{UUID: "a", Usedmem: 4096}}, false},
+		{"one sliced of two", utils.ContainerDevices{{UUID: "a"}, {UUID: "b", Usedcores: 20}}, false},
+	} {
+		if got := isWholeGPU(tc.devreq); got != tc.want {
+			t.Errorf("%s: isWholeGPU = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
