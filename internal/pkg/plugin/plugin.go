@@ -770,8 +770,12 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				hipVisibleDevices[i] = strconv.Itoa(i)
 			}
 			car.Envs["HIP_VISIBLE_DEVICES"] = strings.Join(hipVisibleDevices, ",")
-			car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
-			car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+			// The hook only enforces slices and needs glibc >= 2.34, so whole-GPU
+			// requests must not depend on it.
+			if !isWholeGPU(devreq) {
+				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
+				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+			}
 		}
 
 		car.Mounts = append(car.Mounts,
@@ -910,6 +914,16 @@ func (p *AMDGPUPlugin) validateNodeLockOwner(ctx context.Context, nodeName strin
 		return fmt.Errorf("node %s lock is owned by %s/%s, not %s/%s", nodeName, namespace, name, pod.Namespace, pod.Name)
 	}
 	return nil
+}
+
+// isWholeGPU reports whether no device in the request asks for a core or memory slice.
+func isWholeGPU(devreq utils.ContainerDevices) bool {
+	for _, d := range devreq {
+		if d.Usedcores > 0 || d.Usedmem > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
