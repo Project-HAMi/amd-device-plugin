@@ -163,17 +163,24 @@ func assertAllocationWord(t *testing.T, allocations map[string]cuallocation.Allo
 }
 
 func TestIsWholeGPU(t *testing.T) {
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{
+		{ID: "a", Devcore: 32, Devmem: 16304, CustomInfo: map[string]any{"pciBDF": "0000:06:00.0"}},
+		{ID: "b", Devcore: 32, Devmem: 16304},
+	}}
 	for _, tc := range []struct {
 		name   string
 		devreq utils.ContainerDevices
 		want   bool
 	}{
-		{"whole", utils.ContainerDevices{{UUID: "a"}, {UUID: "b"}}, true},
-		{"core slice", utils.ContainerDevices{{UUID: "a", Usedcores: 20}}, false},
-		{"memory slice", utils.ContainerDevices{{UUID: "a", Usedmem: 4096}}, false},
+		{"fallback zeros", utils.ContainerDevices{{UUID: "a"}, {UUID: "b"}}, true},
+		{"scheduler writes full size", utils.ContainerDevices{{UUID: "a", Usedcores: 32, Usedmem: 16304}}, true},
+		{"kubelet split id", utils.ContainerDevices{{UUID: "0000:06:00.0#3"}}, true},
+		{"core slice", utils.ContainerDevices{{UUID: "a", Usedcores: 16, Usedmem: 16304}}, false},
+		{"memory slice", utils.ContainerDevices{{UUID: "a", Usedcores: 32, Usedmem: 4096}}, false},
 		{"one sliced of two", utils.ContainerDevices{{UUID: "a"}, {UUID: "b", Usedcores: 20}}, false},
+		{"unknown device", utils.ContainerDevices{{UUID: "z"}}, false},
 	} {
-		if got := isWholeGPU(tc.devreq); got != tc.want {
+		if got := p.isWholeGPU(tc.devreq); got != tc.want {
 			t.Errorf("%s: isWholeGPU = %v, want %v", tc.name, got, tc.want)
 		}
 	}
