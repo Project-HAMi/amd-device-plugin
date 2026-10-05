@@ -262,17 +262,6 @@ func marshalNodeDevices(devices []*utils.DeviceInfo) string {
 	return string(b)
 }
 
-func getDevicesUUIDList(devices []*utils.DeviceInfo) []string {
-	out := make([]string, 0, len(devices))
-	for _, d := range devices {
-		if d == nil {
-			continue
-		}
-		out = append(out, d.ID)
-	}
-	return out
-}
-
 func (p *AMDGPUPlugin) WatchAndRegister(disableWatchAndRegister <-chan bool, ackDisableWatchAndRegister chan<- bool) {
 	glog.Info("Starting WatchAndRegister")
 	errorSleepInterval := 5 * time.Second

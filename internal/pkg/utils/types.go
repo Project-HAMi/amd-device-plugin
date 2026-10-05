@@ -227,18 +227,6 @@ func EncodeContainerDevices(cd ContainerDevices) string {
 	//return strings.Join(cd, ",")
 }
 
-func EncodeContainerDeviceType(cd ContainerDevices, t string) string {
-	tmp := ""
-	for _, val := range cd {
-		if strings.Compare(val.Type, t) == 0 {
-			tmp += val.UUID + "," + val.Type + "," + strconv.Itoa(int(val.Usedmem)) + "," + strconv.Itoa(int(val.Usedcores))
-		}
-		tmp += OneContainerMultiDeviceSplitSymbol
-	}
-	glog.Infof("Encoded container Certain Device type: %s->%s", t, tmp)
-	return tmp
-}
-
 func EncodePodSingleDevice(pd PodSingleDevice) string {
 	res := ""
 	for _, ctrdevs := range pd {
@@ -249,12 +237,3 @@ func EncodePodSingleDevice(pd PodSingleDevice) string {
 	return res
 }
 
-func EncodePodDevices(checklist map[string]string, pd PodDevices) map[string]string {
-	res := map[string]string{}
-	for devType, cd := range pd {
-		glog.Infoln("devtype=", devType)
-		res[checklist[devType]] = EncodePodSingleDevice(cd)
-	}
-	glog.Infof("Encoded pod Devices %s\n", res)
-	return res
-}

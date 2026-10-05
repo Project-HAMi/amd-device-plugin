@@ -25,7 +25,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -201,49 +200,6 @@ func ReleaseNodeLock(nodeName string, lockname string, pod *corev1.Pod, skipNode
 
 	klog.InfoS("Node lock released", "node", nodeName, "podName", pod.Name)
 	return nil
-}
-
-func LockNode(nodeName string, lockname string, pods *corev1.Pod) error {
-	ctx := context.Background()
-	node, err := GetClient().CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if _, ok := node.Annotations[NodeLockKey]; !ok {
-		return SetNodeLock(nodeName, lockname, pods)
-	}
-	lockTime, ns, previousPodName, err := ParseNodeLock(node.Annotations[NodeLockKey])
-	if err != nil {
-		return err
-	}
-
-	var skipOwnerCheck = false
-	if time.Since(lockTime) > NodeLockTimeout {
-		klog.InfoS("Node lock expired", "node", nodeName, "lockTime", lockTime, "timeout", NodeLockTimeout)
-		skipOwnerCheck = true
-	} else
-	// Check dangling nodeLock
-	if ns != "" && previousPodName != "" && (ns != pods.Namespace || previousPodName != pods.Name) {
-		if _, err := GetClient().CoreV1().Pods(ns).Get(ctx, previousPodName, metav1.GetOptions{}); err != nil {
-			if !apierrors.IsNotFound(err) {
-				klog.ErrorS(err, "Failed to get pod of NodeLock", "podName", previousPodName, "namespace", ns)
-				return err
-			}
-			klog.InfoS("Previous pod of NodeLock not found, releasing lock", "podName", previousPodName, "namespace", ns, "nodeLock", node.Annotations[NodeLockKey])
-			skipOwnerCheck = true
-		}
-	}
-
-	if skipOwnerCheck {
-		err = ReleaseNodeLock(nodeName, lockname, pods, true)
-		if err != nil {
-			klog.ErrorS(err, "Failed to release node lock", "node", nodeName)
-			return err
-		}
-		return SetNodeLock(nodeName, lockname, pods)
-	}
-
-	return fmt.Errorf("node %s has been locked within %v", nodeName, NodeLockTimeout)
 }
 
 func ParseNodeLock(value string) (lockTime time.Time, ns, name string, err error) {
