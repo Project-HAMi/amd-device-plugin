@@ -94,7 +94,7 @@ func main() {
 	versions := [...]string{
 		"AMD GPU device plugin for Kubernetes",
 		fmt.Sprintf("%s version %s", os.Args[0], gitDescribe),
-		fmt.Sprintf("%s", hwloc.GetVersions()),
+		hwloc.GetVersions(),
 	}
 
 	flag.Usage = func() {

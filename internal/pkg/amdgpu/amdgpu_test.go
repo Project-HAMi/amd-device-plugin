@@ -86,7 +86,7 @@ func TestAMDGPUcountConsistent(t *testing.T) {
 		vid := string(b)
 
 		// AMD vendor ID is 0x1002
-		if err == nil && "0x1002" == strings.TrimSpace(vid) {
+		if err == nil && strings.TrimSpace(vid) == "0x1002" {
 			count++
 		} else {
 			t.Log(vid)
