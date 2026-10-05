@@ -253,7 +253,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 			for _, file := range files {
 				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
 
-				if int(render_minor) != gpu["renderD"] {
+				if !matchesRenderD(render_minor, gpu) {
 					continue
 				}
 				parts := strings.Split(file, "/")
@@ -295,7 +295,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 			for _, file := range files {
 				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
 
-				if int(render_minor) != gpu["renderD"] {
+				if !matchesRenderD(render_minor, gpu) {
 					continue
 				}
 
@@ -331,7 +331,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 			for _, file := range files {
 				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
 
-				if int(render_minor) != gpu["renderD"] {
+				if !matchesRenderD(render_minor, gpu) {
 					continue
 				}
 
@@ -376,6 +376,12 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 		pfx := createLabelPrefix("memory-partitioning-supported", false)
 		return map[string]string{pfx: val}
 	},
+}
+
+// matchesRenderD reports whether a parsed DRM render minor belongs to the given GPU.
+func matchesRenderD(minor int64, gpu map[string]interface{}) bool {
+	renderD, ok := gpu["renderD"].(int)
+	return ok && minor == int64(renderD)
 }
 
 var labelProperties = make(map[string]*bool, len(labelGenerators))
