@@ -123,3 +123,17 @@ func TestRemoveOldNodeLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchesRenderD(t *testing.T) {
+	gpu := map[string]interface{}{"renderD": 128}
+	if !matchesRenderD(128, gpu) {
+		t.Error("128 should match renderD 128")
+	}
+	if matchesRenderD(129, gpu) {
+		t.Error("129 should not match renderD 128")
+	}
+	// a missing renderD must not match a failed parse that yields 0
+	if matchesRenderD(0, map[string]interface{}{}) {
+		t.Error("missing renderD should not match")
+	}
+}
