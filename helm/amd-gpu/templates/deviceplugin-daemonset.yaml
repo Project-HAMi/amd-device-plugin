@@ -37,7 +37,7 @@ spec:
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
           command: ["./k8s-device-plugin"]
-          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}"]
+          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}"]
           {{- if .Values.dp.hookInstaller.enabled }}
           # Temporary HAMi-style delivery: copy the image-bundled hook into
           # the hostPath after the device-plugin container is created.

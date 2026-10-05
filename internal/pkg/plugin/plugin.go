@@ -45,7 +45,9 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
-const defaultSplitCount = 10
+// splitCount is how many workloads may share one GPU. Set once at startup
+// from AMDGPULister.SplitCount; gfx12 GPUs contend above about 2 (see README).
+var splitCount = 10
 
 // Plugin is identical to DevicePluginServer interface of device plugin API.
 type AMDGPUPlugin struct {
@@ -243,7 +245,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		out = append(out, &utils.DeviceInfo{
 			ID:           uuid,
 			Index:        uint(card),
-			Count:        defaultSplitCount,
+			Count:        int32(splitCount),
 			Devmem:       capacity.VRAMMiB,
 			Devcore:      capacity.CUCount,
 			Type:         deviceType,
@@ -308,7 +310,7 @@ func getDevices() []*allocator.Device {
 	var deviceList []*allocator.Device
 
 	for id, deviceData := range devices {
-		for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+		for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
 			device := &allocator.Device{
 				Id:                   fmt.Sprintf("%s#%d", id, splitIdx),
 				Card:                 deviceData["card"].(int),
@@ -400,7 +402,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 
 	glog.Infof("Found %d AMDGPUs", len(p.AMDGPUs))
 
-	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*defaultSplitCount)
+	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*splitCount)
 	var isHomogeneous bool
 	isHomogeneous = amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
@@ -420,7 +422,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 					}
 				}
 
-				for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+				for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
 					dev := &pluginapi.Device{
 						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
 						Health: pluginapi.Healthy,
@@ -447,7 +449,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 				}
 
 				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
-				for splitIdx := 0; splitIdx < defaultSplitCount; splitIdx++ {
+				for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
 					dev := &pluginapi.Device{
 						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
 						Health: pluginapi.Healthy,
@@ -1073,6 +1075,8 @@ type AMDGPULister struct {
 	Signal        chan os.Signal
 	// AllocatorPolicy is besteffort (default), binpack or spread.
 	AllocatorPolicy string
+	// SplitCount overrides how many workloads may share one GPU when > 0.
+	SplitCount int
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1103,6 +1107,9 @@ func (l *AMDGPULister) Discover(pluginListCh chan dpm.PluginNameList) {
 // e.g. for resource name "color.example.com/red" that would be "red". It must return valid
 // implementation of a PluginInterface.
 func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
+	if l.SplitCount > 0 {
+		splitCount = l.SplitCount
+	}
 	policy, err := allocator.NewPolicy(l.AllocatorPolicy)
 	if err != nil {
 		glog.Errorf("%v; using besteffort", err)

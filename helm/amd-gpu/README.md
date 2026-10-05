@@ -18,6 +18,7 @@ Kubernetes: `>= 1.18.0`
 | dp.hookInstaller.enabled | bool | `true` | Temporarily install the image-bundled `libamvgpu.so` to the node with a HAMi-style postStart hook. |
 | dp.hostHookPath | string | `"/usr/local"` | Host path prefix; the hook is installed under `<hostHookPath>/vgpu`. |
 | dp.healthPulse | int | `10` | Seconds between per-GPU health checks; 0 disables them. |
+| dp.splitCount | int | `10` | How many workloads may share one GPU. On gfx12 more than about 2 sharers contend for compute queues. |
 | dp.securityContext.privileged | bool | `true` | Allow the plugin to query AMD GPU device nodes on the host. |
 | dp.serviceAccount.create | bool | `true` | Create the service account and RBAC needed to register devices and persist allocations. |
 | dp.serviceAccount.name | string | `""` | Override the device-plugin service account name. |
