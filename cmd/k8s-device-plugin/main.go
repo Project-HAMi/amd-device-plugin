@@ -52,13 +52,15 @@ func ParseStrategy(s string) (ResourceNamingStrategy, error) {
 }
 
 func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, error) {
-	var resources []string
+	return resourceNames(resourceNamingStrategy, amdgpu.GetAMDGPUs()), nil
+}
 
-	// Check if the node is homogeneous
-	isHomogeneous := amdgpu.IsHomogeneous()
-	partitionCountMap := amdgpu.UniquePartitionConfigCount(amdgpu.GetAMDGPUs())
-	if len(amdgpu.GetAMDGPUs()) == 0 {
-		return resources, nil
+func resourceNames(resourceNamingStrategy ResourceNamingStrategy, gpus map[string]map[string]interface{}) []string {
+	var resources []string
+	partitionCountMap := amdgpu.UniquePartitionConfigCount(gpus)
+	isHomogeneous := len(partitionCountMap) <= 1
+	if len(gpus) == 0 {
+		return resources
 	}
 	if isHomogeneous {
 		// Homogeneous node will report only "gpu" resource if strategy is single. If strategy is mixed, it will report resources under the partition type name
@@ -91,7 +93,7 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 			}
 		}
 	}
-	return resources, nil
+	return resources
 }
 
 func main() {
