@@ -74,7 +74,8 @@ func (b *BestEffortPolicy) getDevicesFromIds(ids []string) []*Device {
 // Init initializes pair wise weights of all devices and stores in-memory
 func (b *BestEffortPolicy) Init(devs []*Device, topoDir string) error {
 	err := fetchAllPairWeights(devs, b.p2pWeights, topoDir)
-	if len(b.p2pWeights) == 0 {
+	// a single device has no peers, so empty weights are expected
+	if len(devs) > 1 && len(b.p2pWeights) == 0 {
 		return fmt.Errorf("Besteffort Policy init failed to initialize p2pWeights")
 	}
 	if err == nil {

@@ -214,3 +214,15 @@ func TestBestPolicyAllocator(t *testing.T) {
 		t.Logf("-------END tests for Topology %d-------", idx+1)
 	}
 }
+
+func TestBestPolicyInitSingleDevice(t *testing.T) {
+	a := NewBestEffortPolicy()
+	devs := []*Device{{Id: "gpu0", NodeId: 2}}
+	if err := a.Init(devs, t.TempDir()); err != nil {
+		t.Fatalf("Init on a single-device node failed: %v", err)
+	}
+	ids, err := a.Allocate([]string{"gpu0"}, nil, 1)
+	if err != nil || len(ids) != 1 || ids[0] != "gpu0" {
+		t.Fatalf("Allocate = %v, %v; want [gpu0], nil", ids, err)
+	}
+}
