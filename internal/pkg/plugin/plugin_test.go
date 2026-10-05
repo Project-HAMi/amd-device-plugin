@@ -25,6 +25,7 @@ import (
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 func TestCountGPUDevFromTopology(t *testing.T) {
@@ -180,3 +181,23 @@ func TestIsWholeGPU(t *testing.T) {
 
 // the kubelet device plugin API requires the server to embed UnimplementedDevicePluginServer
 var _ dpm.PluginInterface = (*AMDGPUPlugin)(nil)
+
+func TestMarkNonFunctional(t *testing.T) {
+	p := &AMDGPUPlugin{AMDGPUs: map[string]map[string]interface{}{
+		"0000:06:00.0": {"card": 1},
+		"0000:07:00.0": {"card": 2},
+	}}
+	devs := []*pluginapi.Device{
+		{ID: "0000:06:00.0#0", Health: pluginapi.Healthy},
+		{ID: "0000:06:00.0#1", Health: pluginapi.Healthy},
+		{ID: "0000:07:00.0#0", Health: pluginapi.Healthy},
+		{ID: "0000:08:00.0#0", Health: pluginapi.Healthy},
+	}
+	p.markNonFunctional(devs, func(card string) bool { return card == "card1" })
+	want := []string{pluginapi.Healthy, pluginapi.Healthy, pluginapi.Unhealthy, pluginapi.Unhealthy}
+	for i, d := range devs {
+		if d.Health != want[i] {
+			t.Errorf("%s: health %s, want %s", d.ID, d.Health, want[i])
+		}
+	}
+}

@@ -90,17 +90,19 @@ func PopulatePerGPUDHealth(devs []*pluginapi.Device, defaultHealth string) {
 		hasHealthSvc = true
 	}
 
-	for i := 0; i < len(devs); i++ {
-		if !hasHealthSvc {
-			devs[i].Health = defaultHealth
-		} else {
-			// only use if we have the device id entry
-			if gpuHealth, ok := hMap[devs[i].ID]; ok {
-				devs[i].Health = gpuHealth
-			} else {
-				// revert to simpleHealthCheck if not found
-				devs[i].Health = defaultHealth
-			}
+	if !hasHealthSvc {
+		hMap = nil
+	}
+	applyHealth(devs, hMap, defaultHealth)
+}
+
+// applyHealth sets each device to the exporter health of its GPU. The exporter
+// keys GPUs by PCI BDF while device ids are "<bdf>#<slot>" splits.
+func applyHealth(devs []*pluginapi.Device, hMap map[string]string, defaultHealth string) {
+	for _, d := range devs {
+		d.Health = defaultHealth
+		if h, ok := hMap[strings.SplitN(d.ID, "#", 2)[0]]; ok {
+			d.Health = h
 		}
 	}
 }

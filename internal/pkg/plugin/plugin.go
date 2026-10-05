@@ -369,53 +369,6 @@ func countGPUDevFromTopology(topoRootParam ...string) int {
 	return count
 }
 
-func simpleHealthCheck() bool {
-	entries, err := filepath.Glob("/sys/class/kfd/kfd/topology/nodes/*/properties")
-	if err != nil {
-		glog.Errorf("Error finding properties files: %v", err)
-		return false
-	}
-
-	for _, propFile := range entries {
-		f, err := os.Open(propFile)
-		if err != nil {
-			glog.Errorf("Error opening %s: %v", propFile, err)
-			continue
-		}
-		defer f.Close()
-
-		var cpuCores, gfxVersion int
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "cpu_cores_count") {
-				parts := strings.Fields(line)
-				if len(parts) == 2 {
-					cpuCores, _ = strconv.Atoi(parts[1])
-				}
-			} else if strings.HasPrefix(line, "gfx_target_version") {
-				parts := strings.Fields(line)
-				if len(parts) == 2 {
-					gfxVersion, _ = strconv.Atoi(parts[1])
-				}
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			glog.Warningf("Error scanning %s: %v", propFile, err)
-			continue
-		}
-
-		if cpuCores == 0 && gfxVersion > 0 {
-			// Found a GPU
-			return true
-		}
-	}
-
-	glog.Warning("No GPU nodes found via properties")
-	return false
-}
-
 // GetDevicePluginOptions returns options to be communicated with Device
 // Manager
 func (p *AMDGPUPlugin) GetDevicePluginOptions(ctx context.Context, e *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
@@ -513,19 +466,16 @@ loop:
 	for {
 		select {
 		case <-p.Heartbeat:
-			var health = pluginapi.Unhealthy
-
-			if simpleHealthCheck() {
-				health = pluginapi.Healthy
-			}
-
-			// update with per device GPU health status
+			// exporter state (ECC, throttle) where available, then a GPU whose
+			// DRM device cannot be opened is unhealthy regardless
 			if isHomogeneous {
-				exporter.PopulatePerGPUDHealth(devs, health)
+				exporter.PopulatePerGPUDHealth(devs, pluginapi.Healthy)
+				p.markNonFunctional(devs, amdgpu.DevFunctional)
 				s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 			} else {
 				if devList, exists := resourceTypeDevs[p.Resource]; exists {
-					exporter.PopulatePerGPUDHealth(devList, health)
+					exporter.PopulatePerGPUDHealth(devList, pluginapi.Healthy)
+					p.markNonFunctional(devList, amdgpu.DevFunctional)
 					s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
 				}
 			}
@@ -538,6 +488,24 @@ loop:
 	// returning a value with this function will unregister the plugin from k8s
 
 	return nil
+}
+
+// markNonFunctional marks every split of a GPU unhealthy when functional
+// reports that its DRM card cannot be opened, or the GPU is no longer known.
+func (p *AMDGPUPlugin) markNonFunctional(devs []*pluginapi.Device, functional func(card string) bool) {
+	ok := map[string]bool{}
+	for _, d := range devs {
+		id := strings.SplitN(d.ID, "#", 2)[0]
+		f, seen := ok[id]
+		if !seen {
+			card, known := p.AMDGPUs[id]["card"].(int)
+			f = known && functional(fmt.Sprintf("card%d", card))
+			ok[id] = f
+		}
+		if !f {
+			d.Health = pluginapi.Unhealthy
+		}
+	}
 }
 
 // GetPreferredAllocation returns a preferred set of devices to allocate
