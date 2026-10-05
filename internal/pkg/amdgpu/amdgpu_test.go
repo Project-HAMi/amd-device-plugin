@@ -297,3 +297,9 @@ func TestReadPartition(t *testing.T) {
 		t.Error("directory: want an error")
 	}
 }
+
+func TestFamilyIDtoStringRDNA4(t *testing.T) {
+	if got, err := FamilyIDtoString(152); err != nil || got != "GC_12_0_0" {
+		t.Errorf("FamilyIDtoString(152) = %q, %v; want GC_12_0_0", got, err)
+	}
+}
