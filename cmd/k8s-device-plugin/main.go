@@ -79,7 +79,7 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 	} else {
 		// Heterogeneous node reports resources based on partition types if strategy is mixed. Heterogeneous is not allowed if Strategy is single
 		if resourceNamingStrategy == StrategySingle {
-			return resources, fmt.Errorf("Partitions of different styles across GPUs in a node is not supported with single strategy. Please start device plugin with mixed strategy")
+			return resources, fmt.Errorf("partitions of different styles across GPUs in a node are not supported with the single strategy, start the device plugin with the mixed strategy")
 		} else if resourceNamingStrategy == StrategyMixed {
 			for partitionType, count := range partitionCountMap {
 				if count > 0 {

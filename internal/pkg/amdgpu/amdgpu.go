@@ -114,7 +114,7 @@ func FamilyIDtoString(familyId uint32) (string, error) {
 		return "GC_11_5_0", nil
 	default:
 		ret := ""
-		err := fmt.Errorf("Unknown Family ID: %d", familyId)
+		err := fmt.Errorf("unknown family ID: %d", familyId)
 		return ret, err
 	}
 
@@ -131,7 +131,7 @@ func GetCardFamilyName(cardName string) (string, error) {
 	rc := C.amdgpu_query_gpu_info(devHandle, &info)
 
 	if rc < 0 {
-		return "", fmt.Errorf("Fail to get FamilyID %s: %d", cardName, rc)
+		return "", fmt.Errorf("fail to get family ID %s: %d", cardName, rc)
 	}
 
 	return FamilyIDtoString(uint32(info.family_id))
@@ -426,7 +426,7 @@ func openAMDGPU(cardName string) (C.amdgpu_device_handle, error) {
 	dev, err := os.Open(devPath)
 
 	if err != nil {
-		return nil, fmt.Errorf("Fail to open %s: %s", devPath, err)
+		return nil, fmt.Errorf("fail to open %s: %s", devPath, err)
 	}
 	defer dev.Close()
 
@@ -439,7 +439,7 @@ func openAMDGPU(cardName string) (C.amdgpu_device_handle, error) {
 	rc := C.amdgpu_device_initialize(devFd, &major, &minor, &devHandle)
 
 	if rc < 0 {
-		return nil, fmt.Errorf("Fail to initialize %s: %d", devPath, err)
+		return nil, fmt.Errorf("fail to initialize %s: %d", devPath, err)
 	}
 	glog.Infof("Initialized AMD GPU version: major %d, minor %d", major, minor)
 
@@ -669,7 +669,7 @@ func GetCardProductName(cardName string) (string, error) {
 	defer C.amdgpu_device_deinitialize(devHandle)
 	productNameStr := C.amdgpu_get_marketing_name(devHandle)
 	if productNameStr == nil {
-		return "", fmt.Errorf("Failed to get product name for %s", cardName)
+		return "", fmt.Errorf("failed to get product name for %s", cardName)
 	}
 	productName := C.GoString(productNameStr)
 	return productName, nil
