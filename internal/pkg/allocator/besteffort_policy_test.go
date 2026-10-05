@@ -237,3 +237,45 @@ func TestBestPolicyErrorsAreLowercase(t *testing.T) {
 		t.Errorf("error string %q should not be capitalized", err)
 	}
 }
+
+func TestSpreadPolicyPicksFartherDevices(t *testing.T) {
+	topo := testInfo{
+		devCount:             8,
+		partitionCountPerDev: 1,
+		numanodeCount:        2,
+		startNodeId:          2,
+		endNodeId:            9,
+		topoFolderPath:       "../../../testdata/topo-mi210-xgmi-pcie/nodes",
+	}
+	devices := topo.getTestDevices()
+	ids := make([]string, 0, len(devices))
+	for _, d := range devices {
+		ids = append(ids, d.Id)
+	}
+
+	pair := func(p *BestEffortPolicy) int {
+		if err := p.Init(devices, topo.topoFolderPath); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.Allocate(ids, nil, 2)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("Allocate = %v, %v", got, err)
+		}
+		return p.p2pWeights[p.devicesMap[got[0]].NodeId][p.devicesMap[got[1]].NodeId]
+	}
+	packed, spread := pair(NewBestEffortPolicy()), pair(NewSpreadPolicy())
+	if spread <= packed {
+		t.Errorf("spread pair weight %d should be above besteffort pair weight %d", spread, packed)
+	}
+}
+
+func TestNewPolicy(t *testing.T) {
+	for _, name := range []string{"", "besteffort", "binpack", "spread"} {
+		if p, err := NewPolicy(name); err != nil || p == nil {
+			t.Errorf("NewPolicy(%q) = %v, %v", name, p, err)
+		}
+	}
+	if _, err := NewPolicy("random"); err == nil {
+		t.Error("NewPolicy(random) should fail")
+	}
+}

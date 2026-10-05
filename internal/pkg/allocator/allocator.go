@@ -16,9 +16,21 @@
 
 package allocator
 
-import ()
+import "fmt"
 
 type Policy interface {
 	Init(devs []*Device, topoDir string) error
 	Allocate(available, required []string, size int) ([]string, error)
+}
+
+// NewPolicy returns the allocation policy with the given name. binpack packs
+// devices onto the closest ones, which is what besteffort already scores.
+func NewPolicy(name string) (Policy, error) {
+	switch name {
+	case "", "besteffort", "binpack":
+		return NewBestEffortPolicy(), nil
+	case "spread":
+		return NewSpreadPolicy(), nil
+	}
+	return nil, fmt.Errorf("unknown allocator policy %q, want besteffort, binpack or spread", name)
 }
