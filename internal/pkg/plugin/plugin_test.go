@@ -369,6 +369,7 @@ func TestStripPartitionModeSuffix(t *testing.T) {
 	for id, want := range map[string]string{
 		"GPU-466450b96fbde849#cpx":             "GPU-466450b96fbde849",
 		"GPU-466450b96fbde849#spx":             "GPU-466450b96fbde849",
+		"GPU-466450b96fbde849#tpx":             "GPU-466450b96fbde849",
 		"GPU-466450b96fbde849":                 "GPU-466450b96fbde849",
 		"GPU-466450b96fbde849#0":               "GPU-466450b96fbde849#0",
 		"8eff74b5-0000-1000-801b-b56457addd1b": "8eff74b5-0000-1000-801b-b56457addd1b",
@@ -662,5 +663,27 @@ func TestDeviceDataFromROCrUUID(t *testing.T) {
 		if rocrUUID != "GPU-466450b96fbde849" {
 			t.Fatalf("rocrUUID = %q, want passthrough of the partition ID", rocrUUID)
 		}
+	}
+}
+func TestPartitionCapableBDFs(t *testing.T) {
+	got := partitionCapableBDFs(map[string]map[string]interface{}{
+		"0000:05:00.0":  {"devID": "0000:05:00.0", "computePartitionType": "spx"},
+		"0000:06:00.0":  {"devID": "0000:06:00.0", "computePartitionType": ""},
+		"amdgpu_xcp_30": {"devID": "0000:05:00.0", "computePartitionType": "spx"},
+	})
+	if len(got) != 1 || got[0] != "0000:05:00.0" {
+		t.Fatalf("partitionCapableBDFs = %v, want only the partitioned whole GPU", got)
+	}
+}
+
+func TestDevicesForResource(t *testing.T) {
+	spx := []*pluginapi.Device{{ID: "a#0"}}
+	qpx := []*pluginapi.Device{{ID: "b#qpx"}}
+	byType := map[string][]*pluginapi.Device{"spx_nps1": spx, "qpx_nps1": qpx}
+	if got := devicesForResource(byType, "qpx_nps1"); len(got) != 1 || got[0].ID != "b#qpx" {
+		t.Fatalf("partition resource = %v", got)
+	}
+	if got := devicesForResource(byType, "gpu"); len(got) != 2 {
+		t.Fatalf("single strategy on a mixed node = %v, want every device", got)
 	}
 }

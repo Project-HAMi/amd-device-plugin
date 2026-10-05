@@ -52,7 +52,7 @@ var splitCount = 10
 
 func IsPartitionMode(mode string) bool {
 	switch mode {
-	case "spx", "cpx", "dpx", "qpx":
+	case "spx", "dpx", "tpx", "qpx", "cpx":
 		return true
 	}
 	return false
@@ -314,6 +314,20 @@ func (p *AMDGPUPlugin) isSchedulableTopologyKey(key string, deviceData map[strin
 	return true
 }
 
+// partitionCapableBDFs lists the whole-GPU BDFs that report a compute
+// partition type in sysfs.
+func partitionCapableBDFs(devices map[string]map[string]interface{}) []string {
+	var bdfs []string
+	for key, deviceData := range devices {
+		bdf, _ := deviceData["devID"].(string)
+		computeType, _ := deviceData["computePartitionType"].(string)
+		if !strings.HasPrefix(key, "amdgpu_xcp_") && bdf != "" && computeType != "" {
+			bdfs = append(bdfs, bdf)
+		}
+	}
+	return bdfs
+}
+
 // numPartitionsForMode returns how many compute partitions the current
 // compute type creates, from the AMD SMI profile table; 1 when unknown.
 // This is the correct capacity divisor (amdgpu_xcp_ child counts are wrong:
@@ -446,20 +460,34 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	if err != nil {
 		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
 	}
-	memoryPartitions, err := memoryPartitionLookup(bdfs)
-	if err != nil {
-		glog.Warningf("AMD SMI memory-partition lookup incomplete; keeping sysfs values: %v", err)
-	}
-	partitionProfileLookup := p.amdsmiPartitionProfileLookup
-	if partitionProfileLookup == nil {
-		partitionProfileLookup = amdsmi.GetAMDGPUPartitionProfiles
-	}
-	partitionProfiles, err := partitionProfileLookup(bdfs)
-	if err != nil {
-		glog.Warningf("AMD SMI partition-profile lookup incomplete: %v", err)
+	// GPUs without partition support (RDNA, VFs) fail these lookups on
+	// every registration pass, so only partition-capable GPUs are queried.
+	var memoryPartitions map[string]string
+	var partitionProfiles map[string][]amdsmi.PartitionProfile
+	if partitionBDFs := partitionCapableBDFs(p.AMDGPUs); len(partitionBDFs) > 0 {
+		memoryPartitions, err = memoryPartitionLookup(partitionBDFs)
+		if err != nil {
+			glog.Warningf("AMD SMI memory-partition lookup incomplete; keeping sysfs values: %v", err)
+		}
+		partitionProfileLookup := p.amdsmiPartitionProfileLookup
+		if partitionProfileLookup == nil {
+			partitionProfileLookup = amdsmi.GetAMDGPUPartitionProfiles
+		}
+		partitionProfiles, err = partitionProfileLookup(partitionBDFs)
+		if err != nil {
+			glog.Warningf("AMD SMI partition-profile lookup incomplete: %v", err)
+		}
 	}
 	partitionsByBDF := partitionCounts(p.AMDGPUs, partitionProfiles)
 	parents := xcpParents(p.AMDGPUs)
+	// Whole-GPU keys are the standard PCI BDF spelling (domain:bus:dev.fn);
+	// KFD's devID uses a fourth colon. XCPs report their parent's key.
+	pciBDFByDevID := make(map[string]string, len(p.AMDGPUs))
+	for key, deviceData := range p.AMDGPUs {
+		if devID, _ := deviceData["devID"].(string); !strings.HasPrefix(key, "amdgpu_xcp_") && devID != "" {
+			pciBDFByDevID[devID] = strings.ToLower(key)
+		}
+	}
 
 	out := make([]*utils.DeviceInfo, 0, len(keys)*2)
 	for _, key := range keys {
@@ -521,7 +549,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			}
 		}
 
-		customInfo := map[string]any{"pciBDF": strings.ToLower(bdf)}
+		customInfo := map[string]any{"pciBDF": pciBDFByDevID[bdf]}
 		if strings.HasPrefix(key, "amdgpu_xcp_") {
 			memoryPartitionType, _ := deviceData["memoryPartitionType"].(string)
 			computePartitionType, _ := deviceData["computePartitionType"].(string)
@@ -768,20 +796,9 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 				resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], p.kubeletDevicesFor(id, device)...)
 			}
 		}()
-		// Send the appropriate list of devices based on the partitionType
-		if devList, exists := resourceTypeDevs[p.Resource]; exists {
-			glog.Infof("ListAndWatch: sending %d split devices for resource %s", len(devList), p.Resource)
-			s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
-		} else {
-			// Mixed node under the single strategy: the resource name is
-			// "gpu", not a partition type, so publish every device.
-			devList := make([]*pluginapi.Device, 0)
-			for _, devs := range resourceTypeDevs {
-				devList = append(devList, devs...)
-			}
-			glog.Infof("ListAndWatch: sending %d split devices for resource %s (mixed node)", len(devList), p.Resource)
-			s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
-		}
+		devs = devicesForResource(resourceTypeDevs, p.Resource)
+		glog.Infof("ListAndWatch: sending %d split devices for resource %s", len(devs), p.Resource)
+		s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 	}
 
 loop:
@@ -790,17 +807,9 @@ loop:
 		case <-p.Heartbeat:
 			// exporter state (ECC, throttle) where available, then a GPU whose
 			// DRM device cannot be opened is unhealthy regardless
-			if isHomogeneous {
-				exporter.PopulatePerGPUDHealth(devs, pluginapi.Healthy)
-				p.markNonFunctional(devs, amdgpu.DevFunctional)
-				s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
-			} else {
-				if devList, exists := resourceTypeDevs[p.Resource]; exists {
-					exporter.PopulatePerGPUDHealth(devList, pluginapi.Healthy)
-					p.markNonFunctional(devList, amdgpu.DevFunctional)
-					s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
-				}
-			}
+			exporter.PopulatePerGPUDHealth(devs, pluginapi.Healthy)
+			p.markNonFunctional(devs, amdgpu.DevFunctional)
+			s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 
 		case <-p.signal:
 			glog.Infof("Received signal, exiting")
@@ -810,6 +819,20 @@ loop:
 	// returning a value with this function will unregister the plugin from k8s
 
 	return nil
+}
+
+// devicesForResource returns the devices of one partition-type resource. A
+// mixed node under the single strategy registers "gpu", which is no partition
+// type, so it gets every device.
+func devicesForResource(byType map[string][]*pluginapi.Device, resource string) []*pluginapi.Device {
+	if devs, ok := byType[resource]; ok {
+		return devs
+	}
+	var all []*pluginapi.Device
+	for _, devs := range byType {
+		all = append(all, devs...)
+	}
+	return all
 }
 
 // markNonFunctional marks every split of a GPU unhealthy when functional
