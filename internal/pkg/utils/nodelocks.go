@@ -78,24 +78,6 @@ func (m *nodeLockManager) getLock(nodeName string) *sync.Mutex {
 	return m.locks[nodeName]
 }
 
-// deleteLock removes the lock entry for a specific node from the manager.
-// It is safe to call regardless of whether a lock exists. Removing the entry
-// does not affect any goroutine that may still hold or wait on the returned
-// mutex pointer; the mutex object itself is not deallocated by deletion from
-// the map.
-func (m *nodeLockManager) deleteLock(nodeName string) {
-	m.mu.Lock()
-	delete(m.locks, nodeName)
-	m.mu.Unlock()
-}
-
-// CleanupNodeLock deletes in-memory lock bookkeeping for a node. This should
-// be called when a node is removed from the cluster (e.g., by a node
-// autoscaler) to avoid unbounded growth of the internal lock map.
-func CleanupNodeLock(nodeName string) {
-	nodeLocks.deleteLock(nodeName)
-}
-
 func init() {
 	setupNodeLockTimeout()
 }
@@ -112,45 +94,6 @@ func setupNodeLockTimeout() {
 			klog.InfoS("Node lock expiration time set from environment variable", "duration", d)
 		}
 	}
-}
-
-func SetNodeLock(nodeName string, lockname string, pods *corev1.Pod) error {
-	// Acquire per-node lock instead of global lock
-	nodeLock := nodeLocks.getLock(nodeName)
-	nodeLock.Lock()
-	defer nodeLock.Unlock()
-
-	ctx := context.Background()
-	node, err := GetClient().CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if _, ok := node.Annotations[NodeLockKey]; ok {
-		return fmt.Errorf("node %s is locked", nodeName)
-	}
-	err = retry.OnError(DefaultStrategy, func(err error) bool {
-		// Retry on any error
-		return true
-	}, func() error {
-		node, err = GetClient().CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			klog.ErrorS(err, "Failed to get node when retry to patch", "node", nodeName)
-			return err
-		}
-		patchData := fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"},"resourceVersion":"%s"}}`, NodeLockKey, GenerateNodeLockKeyByPod(pods), node.ResourceVersion)
-		_, err = GetClient().CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, []byte(patchData), metav1.PatchOptions{})
-		if err != nil {
-			klog.ErrorS(err, "Failed to patch node when retry to patch", "node", nodeName)
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to set node lock (node=%s, retry strategy=%+v): %w", nodeName, DefaultStrategy, err)
-	}
-
-	klog.InfoS("Node lock set", "node", nodeName, "podName", pods.Name)
-	return nil
 }
 
 func ReleaseNodeLock(nodeName string, lockname string, pod *corev1.Pod, skipNodeLockOwnerCheck bool) error {
@@ -213,13 +156,6 @@ func ParseNodeLock(value string) (lockTime time.Time, ns, name string, err error
 	}
 	lockTime, err = time.Parse(time.RFC3339, s[0])
 	return lockTime, s[1], s[2], err
-}
-
-func GenerateNodeLockKeyByPod(pod *corev1.Pod) string {
-	if pod == nil {
-		return time.Now().Format(time.RFC3339)
-	}
-	return fmt.Sprintf("%s%s%s", time.Now().Format(time.RFC3339), NodeLockSep, GeneratePodNamespaceName(pod, NodeLockSep))
 }
 
 func GeneratePodNamespaceName(pod *corev1.Pod, sep string) string {
