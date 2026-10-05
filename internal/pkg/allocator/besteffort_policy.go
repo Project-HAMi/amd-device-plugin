@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/golang/glog"
 )
@@ -82,11 +83,20 @@ func (b *BestEffortPolicy) getDevicesFromIds(ids []string) []*Device {
 	return res
 }
 
+// gpuCount returns how many distinct GPUs (KFD nodes) the devices belong to.
+func gpuCount(devs []*Device) int {
+	nodes := map[int]struct{}{}
+	for _, d := range devs {
+		nodes[d.NodeId] = struct{}{}
+	}
+	return len(nodes)
+}
+
 // Init initializes pair wise weights of all devices and stores in-memory
 func (b *BestEffortPolicy) Init(devs []*Device, topoDir string) error {
 	err := fetchAllPairWeights(devs, b.p2pWeights, topoDir)
-	// a single device has no peers, so empty weights are expected
-	if len(devs) > 1 && len(b.p2pWeights) == 0 {
+	// one GPU, however many splits it has, has no peers, so empty weights are expected
+	if len(b.p2pWeights) == 0 && gpuCount(devs) > 1 {
 		return fmt.Errorf("besteffort policy init failed to initialize p2pWeights")
 	}
 	if err == nil {
@@ -132,12 +142,22 @@ func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int
 		return requiredIds, nil
 	}
 
-	if len(b.p2pWeights) == 0 {
-		return outset, errors.New(invalidInit)
-	}
-
 	if !setContainsAll(availableIds, requiredIds) {
 		return outset, errors.New(noCandidateFound)
+	}
+
+	// one GPU has no pair weights and all of its splits are equivalent
+	if len(b.p2pWeights) == 0 {
+		outset = append(outset, requiredIds...)
+		for _, id := range availableIds {
+			if len(outset) == size {
+				break
+			}
+			if !slices.Contains(requiredIds, id) {
+				outset = append(outset, id)
+			}
+		}
+		return outset, nil
 	}
 
 	available := b.getDevicesFromIds(availableIds)

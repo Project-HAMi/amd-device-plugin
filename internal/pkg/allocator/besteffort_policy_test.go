@@ -216,14 +216,22 @@ func TestBestPolicyAllocator(t *testing.T) {
 }
 
 func TestBestPolicyInitSingleDevice(t *testing.T) {
+	// the plugin hands the allocator one entry per split, so a single GPU
+	// shows up as several devices on the same KFD node
 	a := NewBestEffortPolicy()
-	devs := []*Device{{Id: "gpu0", NodeId: 2}}
-	if err := a.Init(devs, t.TempDir()); err != nil {
-		t.Fatalf("Init on a single-device node failed: %v", err)
+	var devs []*Device
+	var ids []string
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("0000:06:00.0#%d", i)
+		devs = append(devs, &Device{Id: id, NodeId: 1})
+		ids = append(ids, id)
 	}
-	ids, err := a.Allocate([]string{"gpu0"}, nil, 1)
-	if err != nil || len(ids) != 1 || ids[0] != "gpu0" {
-		t.Fatalf("Allocate = %v, %v; want [gpu0], nil", ids, err)
+	if err := a.Init(devs, t.TempDir()); err != nil {
+		t.Fatalf("Init on a single-GPU node failed: %v", err)
+	}
+	got, err := a.Allocate(ids, []string{ids[5]}, 2)
+	if err != nil || len(got) != 2 || got[0] != ids[5] || got[1] != ids[0] {
+		t.Fatalf("Allocate = %v, %v; want [%s %s]", got, err, ids[5], ids[0])
 	}
 }
 
