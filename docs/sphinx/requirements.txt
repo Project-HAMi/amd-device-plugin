@@ -25,7 +25,7 @@ breathe==4.35.0
     # via rocm-docs-core
 certifi==2024.7.4
     # via requests
-cffi==1.17.0
+cffi==2.0.0
     # via
     #   cryptography
     #   pynacl
@@ -37,7 +37,7 @@ click==8.1.7
     #   sphinx-external-toc
 comm==0.2.2
     # via ipykernel
-cryptography==43.0.1
+cryptography==50.0.0
     # via pyjwt
 debugpy==1.8.12
     # via ipykernel
@@ -165,7 +165,7 @@ pygments==2.20.0
     #   sphinx
 pyjwt[crypto]==2.15.0
     # via pygithub
-pynacl==1.5.0
+pynacl==1.6.2
     # via pygithub
 python-dateutil==2.9.0.post0
     # via jupyter-client
@@ -258,7 +258,7 @@ traitlets==5.14.3
     #   matplotlib-inline
     #   nbclient
     #   nbformat
-typing-extensions==4.12.2
+typing-extensions==4.13.2
     # via
     #   ipython
     #   myst-nb
