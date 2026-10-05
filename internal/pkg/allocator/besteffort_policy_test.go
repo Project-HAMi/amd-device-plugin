@@ -226,3 +226,14 @@ func TestBestPolicyInitSingleDevice(t *testing.T) {
 		t.Fatalf("Allocate = %v, %v; want [gpu0], nil", ids, err)
 	}
 }
+
+func TestBestPolicyErrorsAreLowercase(t *testing.T) {
+	a := NewBestEffortPolicy()
+	_, err := a.Allocate([]string{"a", "b"}, nil, 1)
+	if err == nil {
+		t.Fatal("Allocate before Init must fail")
+	}
+	if c := err.Error()[0]; c >= 'A' && c <= 'Z' {
+		t.Errorf("error string %q should not be capitalized", err)
+	}
+}

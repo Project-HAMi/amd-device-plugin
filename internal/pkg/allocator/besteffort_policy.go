@@ -17,6 +17,7 @@
 package allocator
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
@@ -38,8 +39,8 @@ const (
 	invalidAvailable    = "available devices count less than allocation size"
 	invalidRequired     = "must_include devices size is more than allocation size"
 	invalidReqAvailable = "must_include length should be less than or equal to avilable device size"
-	invalidInit         = "Init method must be called before Allocate"
-	noCandidateFound    = "No candidate subset found with matching criteria"
+	invalidInit         = "init method must be called before Allocate"
+	noCandidateFound    = "no candidate subset found with matching criteria"
 )
 
 type BestEffortPolicy struct {
@@ -76,7 +77,7 @@ func (b *BestEffortPolicy) Init(devs []*Device, topoDir string) error {
 	err := fetchAllPairWeights(devs, b.p2pWeights, topoDir)
 	// a single device has no peers, so empty weights are expected
 	if len(devs) > 1 && len(b.p2pWeights) == 0 {
-		return fmt.Errorf("Besteffort Policy init failed to initialize p2pWeights")
+		return fmt.Errorf("besteffort policy init failed to initialize p2pWeights")
 	}
 	if err == nil {
 		b.devices = devs
@@ -94,23 +95,23 @@ func (b *BestEffortPolicy) Init(devs []*Device, topoDir string) error {
 func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int) ([]string, error) {
 	outset := []string{}
 	if size <= 0 {
-		return outset, fmt.Errorf(invalidSize)
+		return outset, errors.New(invalidSize)
 	}
 
 	if len(availableIds) < size {
-		return outset, fmt.Errorf(invalidAvailable)
+		return outset, errors.New(invalidAvailable)
 	}
 
 	if len(requiredIds) > size {
-		return outset, fmt.Errorf(invalidRequired)
+		return outset, errors.New(invalidRequired)
 	}
 
 	if len(requiredIds) > len(availableIds) {
-		return outset, fmt.Errorf(invalidReqAvailable)
+		return outset, errors.New(invalidReqAvailable)
 	}
 
 	if len(b.devices) == 0 {
-		return outset, fmt.Errorf(invalidInit)
+		return outset, errors.New(invalidInit)
 	}
 
 	if len(availableIds) == size {
@@ -122,11 +123,11 @@ func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int
 	}
 
 	if len(b.p2pWeights) == 0 {
-		return outset, fmt.Errorf(invalidInit)
+		return outset, errors.New(invalidInit)
 	}
 
 	if !setContainsAll(availableIds, requiredIds) {
-		return outset, fmt.Errorf(noCandidateFound)
+		return outset, errors.New(noCandidateFound)
 	}
 
 	available := b.getDevicesFromIds(availableIds)

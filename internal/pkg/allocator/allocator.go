@@ -18,12 +18,6 @@ package allocator
 
 import ()
 
-type Allocator struct {
-	available []*Device
-	allocated []*Device
-	policy    Policy
-}
-
 type Policy interface {
 	Init(devs []*Device, topoDir string) error
 	Allocate(available, required []string, size int) ([]string, error)

@@ -162,7 +162,7 @@ func scanAndPopulatePeerWeights(fromPath string, devices []*Device, lookupNodes 
 	p2pPaths, err2 := filepath.Glob(filepath.Join(fromPath, "p2p_links", "[0-9]*"))
 	if err1 != nil && err2 != nil {
 		glog.Errorf("unable to fetch io_links and p2p_links folders. Error1:%v Error2:%v", err1, err2)
-		return fmt.Errorf("Unable to Glob io_links and p2p_links paths")
+		return errors.New("unable to glob io_links and p2p_links paths")
 	}
 	if len(p2pPaths) > 0 {
 		paths = append(paths, p2pPaths...)
@@ -220,7 +220,7 @@ func scanAndPopulatePeerWeights(fromPath string, devices []*Device, lookupNodes 
 
 func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, folderPath string) error {
 	if len(devices) == 0 {
-		errMsg := fmt.Sprintf("Devices list is empty. Unable to calculate pair wise weights")
+		errMsg := "devices list is empty, unable to calculate pair wise weights"
 		glog.Info(errMsg)
 		return errors.New(errMsg)
 	}
