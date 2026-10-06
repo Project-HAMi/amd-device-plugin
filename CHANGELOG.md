@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.2
 
 ### Added
 
@@ -30,7 +30,10 @@
 - Split devices work with the `besteffort` and `spread` allocators (#120); node locks are always released (#118); per-GPU discovery state resets between scans and MI300 partitions take their parent GPU's health (#123).
 - The musl check picks the loader the image actually uses, and CU bitmaps stay intact on allocation errors (#121).
 - The node labeller, chart RBAC and image CI are hardened (#119).
-- An unreachable metrics exporter is logged once per outage instead of every health check (#127).
+- An unreachable metrics exporter is logged once per outage instead of every health check (#127, #140).
+- Allocate no longer panics on an annotation that names more containers than the pod has; the musl check reads the image's own libc through absolute symlinks and walks the image once; a retried plugin Start no longer leaks a refresh loop (#130).
+- The node labeller exits when `DS_NODE_NAME` is unset instead of labelling nothing, and RDNA3/RDNA3.5 GPUs get a family label with older libdrm headers (#129).
+- The JAX examples run, the TensorFlow example no longer restarts forever, and the vLLM example starts without the optional token Secret (#139, #141).
 
 ### Changed
 
@@ -40,7 +43,10 @@
 - Docs build dependencies are bumped to patched versions (#40, #79 and Dependabot updates); grpc is past GO-2026-6443 (#113).
 - The chart icon is the HAMi logo instead of the bundled AMD `logo.png` (#112).
 - README, user guide and repository files are rewritten for the HAMi plugin (#116, #117, #122); remaining lint findings are fixed (#124).
-- The UBI images verify the Go toolchain checksum.
+- The UBI images verify the Go toolchain checksum (#128).
+- The chart labels the DaemonSet, takes the log level from `dp.logVerbosity` (default 2 instead of a fixed `-v=5`) and uses the chart `appVersion` as the default image tag (#131).
+- CI runs `go vet` and the race detector and renders the optional chart branches; Dependabot proposes `amd-hami-core` bumps (#134).
+- `amd-hami-core` is bumped for its CI hardening and an initialization guard that cannot re-enter the dynamic linker (#133).
 - The raw `k8s-ds-amdgpu-dp*.yaml` manifests are removed: they lacked the RBAC HAMi needs; use the Helm chart.
 
 ## v0.0.1

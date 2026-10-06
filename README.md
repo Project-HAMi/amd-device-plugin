@@ -30,8 +30,6 @@ Whole-GPU requests get no memory hook and no CU restriction, and work with any c
 helm upgrade --install amd-gpu ./helm/amd-gpu --namespace kube-system --create-namespace
 ```
 
-The chart defaults to the `0.0.1` image, which predates flags the chart now passes. Until a newer release is published, add `--set dp.image.tag=main` for the image CI builds from `main`.
-
 Check that the node registered its GPUs:
 
 ```bash
