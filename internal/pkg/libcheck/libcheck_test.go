@@ -264,3 +264,36 @@ func TestNormalizeRef(t *testing.T) {
 		}
 	}
 }
+
+// An absolute libc.so.6 symlink resolves inside the image, not on the host.
+func TestInspectRootFollowsAbsoluteLibcLinkInsideImage(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "lib", "x86_64-linux-gnu")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"ld-linux-x86-64.so.2": "",
+		"libc-2.31.so":         "GLIBC_2.2.5\x00GLIBC_2.31\x00",
+	} {
+		if err := os.WriteFile(filepath.Join(lib, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("/lib/x86_64-linux-gnu/libc-2.31.so", filepath.Join(lib, "libc.so.6")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := inspectRoot(root); err != nil || got != OldGlibc {
+		t.Errorf("inspectRoot = %v, %v; want %v", got, err, OldGlibc)
+	}
+	// a link climbing out of the image is refused
+	if err := os.Remove(filepath.Join(lib, "libc.so.6")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../../etc/libc.so.6", filepath.Join(lib, "libc.so.6")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectRoot(root); err == nil {
+		t.Error("link outside the image accepted")
+	}
+}

@@ -145,6 +145,14 @@ func TestNextDeviceRequestSkipsGPULessContainer(t *testing.T) {
 	}
 }
 
+// An annotation naming a container the pod does not have is an error, not a panic.
+func TestNextDeviceRequestRejectsMissingContainer(t *testing.T) {
+	pod := testPod(";uuid-a,AMDGPU,4096,25:;", "only")
+	if _, _, err := GetNextDeviceRequest("amd", *pod); err == nil {
+		t.Error("request for container 1 of a one-container pod accepted")
+	}
+}
+
 func TestPodDevicesRoundTrip(t *testing.T) {
 	for _, s := range []string{";", ";;", "uuid-a,AMDGPU,4096,25:;", ";uuid-a,AMDGPU,4096,25:uuid-b,AMDGPU,1,2:;;"} {
 		pd, err := DecodePodDevices(InRequestDevices, map[string]string{DeviceToAllocate: s})

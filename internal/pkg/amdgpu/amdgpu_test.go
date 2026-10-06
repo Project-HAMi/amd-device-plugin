@@ -408,3 +408,22 @@ func TestFamilyIDtoStringUsesKernelIDs(t *testing.T) {
 		}
 	}
 }
+
+// IsHomogeneous judges the GPUs it is given instead of rescanning the node.
+func TestIsHomogeneousUsesGivenGPUs(t *testing.T) {
+	gpu := func(c, m string) map[string]interface{} {
+		return map[string]interface{}{"computePartitionType": c, "memoryPartitionType": m}
+	}
+	for name, tc := range map[string]struct {
+		gpus map[string]map[string]interface{}
+		want bool
+	}{
+		"rdna":  {map[string]map[string]interface{}{"a": gpu("", ""), "b": gpu("", "")}, true},
+		"same":  {map[string]map[string]interface{}{"a": gpu("spx", "nps1"), "b": gpu("spx", "nps1")}, true},
+		"mixed": {map[string]map[string]interface{}{"a": gpu("spx", "nps1"), "b": gpu("cpx", "nps1")}, false},
+	} {
+		if got := IsHomogeneous(tc.gpus); got != tc.want {
+			t.Errorf("%s: IsHomogeneous = %v, want %v", name, got, tc.want)
+		}
+	}
+}

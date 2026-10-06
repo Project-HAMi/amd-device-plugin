@@ -74,15 +74,13 @@ type AMDGPUPlugin struct {
 	// discovery replaces the maps wholesale every 30s while Allocate,
 	// ListAndWatch and the dmem goroutines read them; published maps are
 	// never mutated, so readers may keep a reference after unlocking.
-	mu                         sync.RWMutex
-	AMDGPUs                    map[string]map[string]interface{}
-	Heartbeat                  chan bool
-	signal                     chan os.Signal
-	disableWatchAndRegister    chan bool
-	ackDisableWatchAndRegister chan bool
-	deviceCache                []*utils.DeviceInfo
-	Resource                   string
-	devAllocator               allocator.Policy
+	mu           sync.RWMutex
+	AMDGPUs      map[string]map[string]interface{}
+	Heartbeat    chan bool
+	signal       chan os.Signal
+	deviceCache  []*utils.DeviceInfo
+	Resource     string
+	devAllocator allocator.Policy
 	// cdiSpecDir, when set, makes Allocate hand out CDI devices described
 	// by a spec written there instead of raw device nodes.
 	cdiSpecDir         string
@@ -192,12 +190,6 @@ func (p *AMDGPUPlugin) Start() error {
 		utils.InitGlobalClient()
 	}
 	p.signal = make(chan os.Signal, 1)
-	if p.disableWatchAndRegister == nil {
-		p.disableWatchAndRegister = make(chan bool, 1)
-	}
-	if p.ackDisableWatchAndRegister == nil {
-		p.ackDisableWatchAndRegister = make(chan bool, 1)
-	}
 	signal.Notify(p.signal, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	err := p.devAllocator.Init(getDevices(), "")
 	if err != nil {
@@ -205,14 +197,13 @@ func (p *AMDGPUPlugin) Start() error {
 		p.allocatorInitError = true
 	}
 
-	go func() {
-		p.WatchAndRegister(p.disableWatchAndRegister, p.ackDisableWatchAndRegister)
-	}()
-
-	// Initialize deviceCache before Allocate rebuilds CU occupancy from Pod annotations.
+	// Initialize deviceCache before Allocate rebuilds CU occupancy from Pod
+	// annotations. The refresh loop starts only once this succeeds: the
+	// manager retries a failed Start, and each retry would leave a loop behind.
 	if err := p.RegisterInAnnotation(); err != nil {
 		return fmt.Errorf("initialize device cache: %w", err)
 	}
+	go p.WatchAndRegister()
 
 	return nil
 }
@@ -360,39 +351,16 @@ func marshalNodeDevices(devices []*utils.DeviceInfo) string {
 	return string(b)
 }
 
-func (p *AMDGPUPlugin) WatchAndRegister(disableWatchAndRegister <-chan bool, ackDisableWatchAndRegister chan<- bool) {
-	glog.Info("Starting WatchAndRegister")
-	errorSleepInterval := 5 * time.Second
-	successSleepInterval := 30 * time.Second
-	var disabled bool
-
+// WatchAndRegister keeps the node annotation the scheduler reads up to
+// date, every 30s, or 5s after a failure.
+func (p *AMDGPUPlugin) WatchAndRegister() {
+	wait := 30 * time.Second
 	for {
-		select {
-		case disable := <-disableWatchAndRegister:
-			if disable {
-				glog.Info("Received disable signal, stopping WatchAndRegister")
-				disabled = true
-			} else {
-				glog.Info("Received enable signal, resuming WatchAndRegister")
-				disabled = false
-			}
-		default:
-		}
-
-		if disabled {
-			glog.Info("WatchAndRegister is disabled, sleep success interval")
-			ackDisableWatchAndRegister <- true
-			time.Sleep(successSleepInterval)
-			continue
-		}
-
+		time.Sleep(wait)
+		wait = 30 * time.Second
 		if err := p.RegisterInAnnotation(); err != nil {
-			glog.Errorf("Failed to register annotation: %v", err)
-			glog.Infof("Retrying in %v...", errorSleepInterval)
-			time.Sleep(errorSleepInterval)
-		} else {
-			glog.Infof("Successfully registered annotation. Next check in %v...", successSleepInterval)
-			time.Sleep(successSleepInterval)
+			glog.Errorf("Failed to register annotation, retrying in 5s: %v", err)
+			wait = 5 * time.Second
 		}
 	}
 }
@@ -460,7 +428,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 		}
 	}
 	p.mu.Unlock()
-	return p.serveDevices(s, kubeletDevices(gpus, amdgpu.IsHomogeneous(), p.Resource), amdgpu.DevFunctional)
+	return p.serveDevices(s, kubeletDevices(gpus, amdgpu.IsHomogeneous(gpus), p.Resource), amdgpu.DevFunctional)
 }
 
 // kubeletDevices lists the split devices kubelet sees for resource: every

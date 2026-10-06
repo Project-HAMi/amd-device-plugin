@@ -331,8 +331,7 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 	},
 	"compute-memory-partition": func(gpus map[string]map[string]interface{}) map[string]string {
 		partitionCountMap := amdgpu.UniquePartitionConfigCount(gpus)
-		isHomogeneous := amdgpu.IsHomogeneous()
-		if isHomogeneous {
+		if amdgpu.IsHomogeneous(gpus) {
 			for partitionType, count := range partitionCountMap {
 				if count > 0 {
 					pfx := createLabelPrefix("compute-memory-partition", false)
