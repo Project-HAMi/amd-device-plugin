@@ -143,6 +143,16 @@ func WithResource(res string) AMDGPUPluginOption {
 	}
 }
 
+// dmemUsable checks once, at startup, whether this node supports the dmem
+// cap, so an unsupported node does not retry the pod cgroup for every slice.
+func dmemUsable() bool {
+	if dmem.Usable(dmem.DefaultCgroupRoot) {
+		return true
+	}
+	glog.Infof("dmem: controller or systemd kubepods.slice not found under %s; sliced VRAM is capped by libamvgpu only", dmem.DefaultCgroupRoot)
+	return false
+}
+
 // WithDmemBackend enables the dmem cgroup VRAM cap for sliced allocations.
 func WithDmemBackend(enabled bool) AMDGPUPluginOption {
 	return func(p *AMDGPUPlugin) {
@@ -1377,7 +1387,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithResource(resourceLastName),
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
-		WithDmemBackend(l.DmemBackend),
+		WithDmemBackend(l.DmemBackend && dmemUsable()),
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)

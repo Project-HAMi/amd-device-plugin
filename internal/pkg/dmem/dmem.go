@@ -77,6 +77,17 @@ func Available(cgroupRoot string) bool {
 	return false
 }
 
+// Usable reports whether pods on this node can be capped: the dmem controller
+// is active and the systemd cgroup driver's kubepods.slice exists, which is
+// the only layout PodCgroupPath knows.
+func Usable(cgroupRoot string) bool {
+	if !Available(cgroupRoot) {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(cgroupRoot, "kubepods.slice"))
+	return err == nil && fi.IsDir()
+}
+
 // Region returns the dmem region name for bdf (e.g. "drm/0000:06:00.0/vram")
 // and whether the GPU driver registered a VRAM region for it at all. GPUs
 // without driver-level VRAM accounting (or BDFs that do not exist) report
