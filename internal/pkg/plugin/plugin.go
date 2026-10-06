@@ -656,7 +656,6 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	if err != nil {
 		return &pluginapi.AllocateResponse{}, err
 	}
-	podDevices := current.Annotations[utils.DeviceAllocation]
 	podCuAllocList := map[string]string{}
 	if raw := strings.TrimSpace(current.Annotations[utils.CuAllocation]); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &podCuAllocList); err != nil {
@@ -914,7 +913,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	}
 
 	glog.Infoln("Allocate Response", response.ContainerResponses)
-	utils.PodAllocationTrySuccess(nodename, podDevices, NodeLockName, current)
+	utils.PodAllocationTrySuccess(nodename, NodeLockName, current)
 
 	return response, nil
 }

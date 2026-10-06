@@ -40,8 +40,6 @@ const (
 	DeviceBindSuccess    = "success"
 
 	DeviceLimit = 100
-	//TimeLayout = "ANSIC"
-	//DefaultTimeout = time.Second * 60.
 
 	BestEffort string = "best-effort"
 	Restricted string = "restricted"
@@ -98,17 +96,17 @@ const (
 )
 
 type DeviceInfo struct {
-	ID              string          `json:"id,omitempty"`
-	Index           uint            `json:"index,omitempty"`
-	Count           int32           `json:"count,omitempty"`
-	Devmem          int32           `json:"devmem,omitempty"`
-	Devcore         int32           `json:"devcore,omitempty"`
-	Type            string          `json:"type,omitempty"`
-	Numa            int             `json:"numa,omitempty"`
-	Mode            string          `json:"mode,omitempty"`
-	Health          bool            `json:"health,omitempty"`
-	DeviceVendor    string          `json:"devicevendor,omitempty"`
-	CustomInfo      map[string]any  `json:"custominfo,omitempty"`
+	ID           string         `json:"id,omitempty"`
+	Index        uint           `json:"index,omitempty"`
+	Count        int32          `json:"count,omitempty"`
+	Devmem       int32          `json:"devmem,omitempty"`
+	Devcore      int32          `json:"devcore,omitempty"`
+	Type         string         `json:"type,omitempty"`
+	Numa         int            `json:"numa,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	Health       bool           `json:"health,omitempty"`
+	DeviceVendor string         `json:"devicevendor,omitempty"`
+	CustomInfo   map[string]any `json:"custominfo,omitempty"`
 }
 
 type ContainerDevice struct {
@@ -132,7 +130,6 @@ type ContainerDeviceRequest struct {
 type ContainerDevices []ContainerDevice
 type ContainerDeviceRequests map[string]ContainerDeviceRequest
 
-// type ContainerAllDevices map[string]ContainerDevices.
 type PodSingleDevice []ContainerDevices
 type PodDeviceRequests []ContainerDeviceRequests
 type PodDevices map[string]PodSingleDevice
@@ -168,16 +165,21 @@ func DecodeContainerDevices(str string) (ContainerDevices, error) {
 	glog.V(5).Infof("Start to decode container device %s", str)
 	for _, val := range cd {
 		if strings.Contains(val, ",") {
-			//fmt.Println("cd is ", val)
 			tmpstr := strings.Split(val, ",")
 			if len(tmpstr) < 4 {
 				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
 			}
 			tmpdev.UUID = tmpstr[0]
 			tmpdev.Type = tmpstr[1]
-			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
+			devmem, err := strconv.ParseInt(tmpstr[2], 10, 32)
+			if err != nil {
+				return ContainerDevices{}, fmt.Errorf("parse device memory %q: %w", tmpstr[2], err)
+			}
 			tmpdev.Usedmem = int32(devmem)
-			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
+			devcores, err := strconv.ParseInt(tmpstr[3], 10, 32)
+			if err != nil {
+				return ContainerDevices{}, fmt.Errorf("parse device cores %q: %w", tmpstr[3], err)
+			}
 			tmpdev.Usedcores = int32(devcores)
 			contdev = append(contdev, tmpdev)
 		}
@@ -198,13 +200,12 @@ func DecodePodDevices(checklist map[string]string, annos map[string]string) (Pod
 			continue
 		}
 		pd[devID] = make(PodSingleDevice, 0)
-		for s := range strings.SplitSeq(str, OnePodMultiContainerSplitSymbol) {
+		// Entries stay aligned with Spec.Containers, so empty ones are kept;
+		// only the terminator written by EncodePodSingleDevice is dropped.
+		for s := range strings.SplitSeq(strings.TrimSuffix(str, OnePodMultiContainerSplitSymbol), OnePodMultiContainerSplitSymbol) {
 			cd, err := DecodeContainerDevices(s)
 			if err != nil {
-				return PodDevices{}, nil
-			}
-			if len(cd) == 0 {
-				continue
+				return PodDevices{}, err
 			}
 			pd[devID] = append(pd[devID], cd)
 		}
@@ -220,16 +221,13 @@ func EncodeContainerDevices(cd ContainerDevices) string {
 	}
 	glog.Infof("Encoded container Devices: %s", tmp)
 	return tmp
-	//return strings.Join(cd, ",")
 }
 
 func EncodePodSingleDevice(pd PodSingleDevice) string {
 	res := ""
 	for _, ctrdevs := range pd {
-		res = res + EncodeContainerDevices(ctrdevs)
-		res = res + OnePodMultiContainerSplitSymbol
+		res += EncodeContainerDevices(ctrdevs) + OnePodMultiContainerSplitSymbol
 	}
 	glog.Infof("Encoded pod single devices %s", res)
 	return res
 }
-
