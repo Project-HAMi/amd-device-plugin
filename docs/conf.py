@@ -12,7 +12,7 @@ external_projects = []
 external_projects_current_project = "k8s-device-plugin"
 
 project = "HAMi AMD Device Plugin Documentation"
-version = "0.0.2"
+version = "0.0.3"
 release = version
 html_title = f"Device Plugin Documentation {version}"
 author = "The HAMi Authors"
