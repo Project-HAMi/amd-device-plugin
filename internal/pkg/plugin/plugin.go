@@ -36,6 +36,7 @@ import (
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/exporter"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/golang/glog"
@@ -74,6 +75,12 @@ type AMDGPUPlugin struct {
 	// bdfToROCrUUID maps the topology BDF to its ROCr UUID for kubelet split
 	// ids ("<bdf>#<slot>") resolved during Allocate.
 	bdfToROCrUUID map[string]string
+	// dmemEnabled additionally caps sliced allocations through the kernel
+	// dmem cgroup controller when available, a hard driver-level VRAM cap
+	// that needs no LD_AUDIT injection (see Project-HAMi/amd-hami-core#6).
+	// A failure to set it is logged and never fails Allocate; libamvgpu's
+	// HIP_DEVICE_MEMORY_LIMIT remains the enforcement path either way.
+	dmemEnabled bool
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -107,6 +114,13 @@ func WithHeartbeat(ch chan bool) AMDGPUPluginOption {
 func WithResource(res string) AMDGPUPluginOption {
 	return func(p *AMDGPUPlugin) {
 		p.Resource = res
+	}
+}
+
+// WithDmemBackend enables the dmem cgroup VRAM cap for sliced allocations.
+func WithDmemBackend(enabled bool) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		p.dmemEnabled = enabled
 	}
 }
 
@@ -761,6 +775,17 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			if !p.isWholeGPU(devreq) {
 				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+				if p.dmemEnabled {
+					// The pod's cgroup can take several seconds to appear
+					// after binding (measured up to ~7s on a real RKE2
+					// node), well past what Allocate should ever block for.
+					// Apply the cap in the background; libamvgpu's
+					// HIP_DEVICE_MEMORY_LIMIT above is already the
+					// synchronous enforcement path.
+					podNamespace, podName, podUID, qos := current.Namespace, current.Name, string(current.UID), current.Status.QOSClass
+					d := devreq[0]
+					go p.applyDmemCap(podNamespace, podName, podUID, qos, d)
+				}
 			}
 		}
 
@@ -807,6 +832,43 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	utils.PodAllocationTrySuccess(nodename, podDevices, NodeLockName, current)
 
 	return response, nil
+}
+
+// applyDmemCap caps d's device at the kernel dmem cgroup controller, a hard
+// driver-level VRAM limit independent of libamvgpu (see internal/pkg/dmem).
+// Any failure (controller unavailable, GPU not registered, pod cgroup not
+// yet created, wrong cgroup driver) is logged and never fails Allocate;
+// libamvgpu's HIP_DEVICE_MEMORY_LIMIT is the enforcement path regardless.
+// applyDmemCap runs in its own goroutine, outside Allocate's response path:
+// the pod cgroup this writes to can take several seconds to appear after
+// binding, far more than Allocate should ever block a container on.
+func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos corev1.PodQOSClass, d utils.ContainerDevice) {
+	if !dmem.Available(dmem.DefaultCgroupRoot) {
+		return
+	}
+	deviceData, err := p.deviceDataFromAllocationUUID(d.UUID, "")
+	if err != nil {
+		glog.Warningf("dmem: resolve topology for %s: %v", d.UUID, err)
+		return
+	}
+	bdf, ok := deviceData["devID"].(string)
+	if !ok || bdf == "" {
+		glog.Warningf("dmem: missing PCI BDF for %s", d.UUID)
+		return
+	}
+	bdf = dmem.NormalizeBDF(bdf)
+	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	if !ok {
+		glog.Infof("dmem: no VRAM region registered for %s (%s); skipping cap", d.UUID, bdf)
+		return
+	}
+	podCgroup := dmem.PodCgroupPath(dmem.DefaultCgroupRoot, podUID, qos)
+	limitBytes := int64(d.Usedmem) * 1024 * 1024
+	if err := dmem.SetMaxWithRetry(podCgroup, region, limitBytes); err != nil {
+		glog.Warningf("dmem: cap %s at %d bytes on %s: %v", region, limitBytes, podCgroup, err)
+		return
+	}
+	glog.Infof("dmem: capped %s at %d bytes on pod %s/%s (%s)", region, limitBytes, podNamespace, podName, podCgroup)
 }
 
 func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string) (map[string]cuallocation.Allocation, error) {
@@ -1111,6 +1173,9 @@ type AMDGPULister struct {
 	SplitCount int
 	// CDISpecDir enables CDI device injection with specs written there.
 	CDISpecDir string
+	// DmemBackend additionally caps sliced allocations through the kernel
+	// dmem cgroup controller when available.
+	DmemBackend bool
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1154,6 +1219,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithResource(resourceLastName),
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
+		WithDmemBackend(l.DmemBackend),
 	}
 	return NewAMDGPUPlugin(options...)
 }
