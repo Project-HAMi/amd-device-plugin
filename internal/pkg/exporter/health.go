@@ -37,8 +37,10 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
+// healthSocket is the exporter's gRPC socket; tests point it elsewhere.
+var healthSocket = "/var/lib/amd-metrics-exporter/amdgpu_device_metrics_exporter_grpc.socket"
+
 const (
-	healthSocket = "/var/lib/amd-metrics-exporter/amdgpu_device_metrics_exporter_grpc.socket"
 	queryTimeout = 5 * time.Second
 	xcpPrefix    = "amdgpu_xcp_"
 )
@@ -59,7 +61,10 @@ func getGPUHealth() (hMap map[string]string, err error) {
 	conn, err := grpc.NewClient(healthSvcAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if logExporterState(err) {
+	// NewClient does not dial, so its success says nothing about the
+	// exporter; only the List result below marks it reachable again
+	if err != nil {
+		logExporterState(err)
 		return
 	}
 

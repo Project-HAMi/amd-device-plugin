@@ -65,3 +65,25 @@ func TestLogExporterStateLogsTransitionsOnce(t *testing.T) {
 		t.Errorf("warnings = %d, want 2", warnings)
 	}
 }
+
+// A stale socket fails every query; NewClient succeeding without dialing must
+// not count as the exporter coming back, or each check warns again.
+func TestStaleSocketWarnsOnce(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "exporter.socket")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldSock, oldWarn := healthSocket, warnf
+	warnings := 0
+	healthSocket, warnf = sock, func(string, ...any) { warnings++ }
+	exporterDown.Store(false)
+	t.Cleanup(func() { healthSocket, warnf = oldSock, oldWarn; exporterDown.Store(false) })
+	for range 3 {
+		if _, err := getGPUHealth(); err == nil {
+			t.Fatal("query over a stale socket succeeded")
+		}
+	}
+	if warnings != 1 {
+		t.Errorf("warnings = %d over 3 failed checks, want 1", warnings)
+	}
+}
