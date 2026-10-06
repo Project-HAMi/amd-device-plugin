@@ -31,7 +31,6 @@ import (
 type Client struct {
 	// Embedded kubernetes.Interface to avoid name conflicts.
 	kubernetes.Interface
-	config *rest.Config
 }
 
 var (
@@ -70,7 +69,6 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	return &Client{
 		Interface: clientset,
-		config:    restConfig,
 	}, nil
 }
 

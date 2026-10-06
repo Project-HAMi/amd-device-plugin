@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,14 +27,6 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
-
-var (
-	HandshakeAnnos map[string]string
-)
-
-func init() {
-	HandshakeAnnos = make(map[string]string)
-}
 
 func GetNode(nodename string) (*corev1.Node, error) {
 	if nodename == "" {
@@ -55,7 +46,7 @@ func GetNode(nodename string) (*corev1.Node, error) {
 			return nil, fmt.Errorf("unauthorized to access node %s", nodename)
 		default:
 			klog.ErrorS(err, "Failed to get node", "nodeName", nodename)
-			return nil, fmt.Errorf("failed to get node %s: %v", nodename, err)
+			return nil, fmt.Errorf("failed to get node %s: %w", nodename, err)
 		}
 	}
 
@@ -87,19 +78,11 @@ func GetPendingPod(ctx context.Context, node string) (*corev1.Pod, error) {
 		if _, ok := p.Annotations[BindTimeAnnotations]; !ok {
 			continue
 		}
-		if phase, ok := p.Annotations[DeviceBindPhase]; !ok {
+		if p.Annotations[DeviceBindPhase] != DeviceBindAllocating {
 			continue
-		} else {
-			if strings.Compare(phase, DeviceBindAllocating) != 0 {
-				continue
-			}
 		}
-		if n, ok := p.Annotations[AssignedNodeAnnotations]; !ok {
-			continue
-		} else {
-			if strings.Compare(n, node) == 0 {
-				return &p, nil
-			}
+		if p.Annotations[AssignedNodeAnnotations] == node {
+			return &p, nil
 		}
 	}
 	return nil, fmt.Errorf("no binding pod found on node %s", node)
@@ -119,7 +102,12 @@ func GetAllocatePodByNode(ctx context.Context, nodeName string) (*corev1.Pod, er
 		if ns == "" || name == "" {
 			return nil, nil
 		}
-		return GetClient().CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		pod, err := GetClient().CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			// The lock owner is gone; let the caller scan for the pending pod.
+			return nil, nil
+		}
+		return pod, err
 	}
 	return nil, nil
 }
@@ -182,16 +170,26 @@ func IsPodInTerminatedState(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded
 }
 
-func PodAllocationTrySuccess(nodeName string, devName string, lockName string, pod *corev1.Pod) {
+// PodAllocationTrySuccess releases the node lock once no container of the pod
+// has devices left in its to-allocate annotation.
+func PodAllocationTrySuccess(nodeName string, lockName string, pod *corev1.Pod) {
 	refreshed, err := GetClient().CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("Error getting pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		return
 	}
-	annos := refreshed.Annotations[DeviceToAllocate]
-	klog.Infof("Trying allocation success: %s", annos)
-	if strings.Contains(annos, devName) {
+	klog.Infof("Trying allocation success: %s", refreshed.Annotations[DeviceToAllocate])
+	pdevices, err := DecodePodDevices(InRequestDevices, refreshed.Annotations)
+	if err != nil {
+		klog.Errorf("Error decoding pod %s/%s devices: %v", pod.Namespace, pod.Name, err)
 		return
+	}
+	for _, pd := range pdevices {
+		for _, ctrdevs := range pd {
+			if len(ctrdevs) > 0 {
+				return
+			}
+		}
 	}
 	klog.Infof("All devices allocate success, releasing lock")
 	PodAllocationSuccess(nodeName, pod, lockName)
@@ -206,9 +204,8 @@ func updatePodAnnotationsAndReleaseLock(nodeName string, pod *corev1.Pod, lockNa
 	newAnnos := map[string]string{DeviceBindPhase: deviceBindPhase}
 	if err := PatchPodAnnotations(pod, newAnnos); err != nil {
 		klog.Errorf("Failed to patch pod annotations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return
 	}
-	if err := ReleaseNodeLock(nodeName, lockName, pod, false); err != nil {
+	if err := ReleaseNodeLock(nodeName, pod, false); err != nil {
 		klog.Errorf("Failed to release node lock for node %s and lock %s: %v", nodeName, lockName, err)
 	}
 }
