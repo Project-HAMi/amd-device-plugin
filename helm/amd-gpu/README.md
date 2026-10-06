@@ -6,14 +6,20 @@ HAMi AMD device plugin for fractional GPU allocation on Kubernetes
 
 ## Requirements
 
-Kubernetes: `>= 1.19.0`
+Kubernetes: `>= 1.19.0`, and the HAMi scheduler, which reads the node annotation this plugin publishes.
+
+## Install
+
+```bash
+helm install amd-gpu ./helm/amd-gpu -n kube-system
+```
 
 ## Values
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dp.image.repository | string | `"ghcr.io/project-hami/amd-device-plugin"` | Device plugin image. |
-| dp.image.tag | string | `"0.0.1"` | Image tag. |
+| dp.image.tag | string | `""` | Image tag; empty uses the chart `appVersion`. |
 | dp.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
 | dp.serviceAccount.create | bool | `true` | Create the service account and RBAC needed to register devices and persist allocations. |
 | dp.serviceAccount.name | string | `""` | Override the service account name. With `create: false`, RBAC is bound to this existing account, or skipped when it is empty. |
@@ -22,6 +28,7 @@ Kubernetes: `>= 1.19.0`
 | dp.securityContext.capabilities.drop | list | `["ALL"]` | Capabilities dropped from the plugin container. |
 | dp.hostHookPath | string | `"/usr/local"` | Host path prefix; the hook is installed under `<hostHookPath>/vgpu`. |
 | dp.hookInstaller.enabled | bool | `true` | Install the image-bundled `libamvgpu.so` on the node with a postStart hook. |
+| dp.logVerbosity | int | `2` | glog verbosity; 4 adds topology parsing, 5 adds annotation decoding. |
 | dp.healthPulse | int | `10` | Seconds between per-GPU health checks; 0 disables them. |
 | dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
 | dp.allocatorPolicy | string | `"besteffort"` | Multi-GPU preferred allocation: `besteffort` (same as `binpack`) or `spread`. |
