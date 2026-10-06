@@ -235,6 +235,23 @@ func TestBestPolicyInitSingleDevice(t *testing.T) {
 	}
 }
 
+// Consumer GPUs and passthrough VMs expose no GPU-to-GPU io/p2p links, only
+// links to the CPU node; the policy must still initialize and allocate.
+func TestBestEffortInitWithoutPeerLinks(t *testing.T) {
+	a := NewBestEffortPolicy()
+	devs := []*Device{{Id: "0000:08:00.0", NodeId: 1}, {Id: "0000:0a:00.0", NodeId: 2}}
+	if err := a.Init(devs, t.TempDir()); err != nil {
+		t.Fatalf("Init without peer links failed: %v", err)
+	}
+	if w := a.p2pWeights[1][2]; w == 0 {
+		t.Errorf("unlinked pair weight = 0, want the host-path weight")
+	}
+	got, err := a.Allocate([]string{devs[0].Id, devs[1].Id}, nil, 2)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Allocate = %v, %v; want both GPUs", got, err)
+	}
+}
+
 func TestBestPolicyErrorsAreLowercase(t *testing.T) {
 	a := NewBestEffortPolicy()
 	_, err := a.Allocate([]string{"a", "b"}, nil, 1)
