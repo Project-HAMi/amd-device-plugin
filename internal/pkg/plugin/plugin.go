@@ -269,10 +269,10 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			glog.Errorf("skip GPU %s: missing or invalid render node in topology", key)
 			continue
 		}
-		rocrUUID, found := rocrUUIDs[renderD]
-		if !found || rocrUUID == "" {
-			glog.Errorf("skip GPU %s: no ROCr UUID found for renderD%d", key, renderD)
-			continue
+		rocrUUID := rocrUUIDs[renderD]
+		if rocrUUID == "" {
+			// APUs report KFD unique_id 0; Allocate addresses them by index.
+			glog.Warningf("GPU %s has no ROCr UUID for renderD%d; using its container-local index", key, renderD)
 		}
 		// Keep BDF in the annotation for consumers that need to locate the
 		// device node. Allocate uses the in-memory UUID -> topology map below.
@@ -608,11 +608,12 @@ func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]
 }
 
 func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
-	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok && rocrUUID != "" {
+	// An empty ROCr UUID is a known GPU without one, see rocrVisibleList.
+	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok {
 		return rocrUUID, nil
 	}
 	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
-		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok && rocrUUID != "" {
+		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok {
 			return rocrUUID, nil
 		}
 	}
@@ -678,6 +679,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			Envs: map[string]string{},
 		}
 		rocrVisibleDevices := make([]string, 0, len(devreq))
+		renderMinors := make([]int, 0, len(devreq))
 
 		// KFD + DRI from annotation UUID topology; with CDI the spec carries them.
 		if p.cdiSpecDir == "" {
@@ -706,6 +708,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				return &pluginapi.AllocateResponse{}, rocrErr
 			}
 			rocrVisibleDevices = append(rocrVisibleDevices, rocrUUID)
+			renderMinors = append(renderMinors, renderMinor)
 			if p.cdiSpecDir != "" {
 				car.CdiDevices = append(car.CdiDevices, &pluginapi.CDIDevice{Name: cdiDeviceName(cardMinor)})
 				continue
@@ -785,7 +788,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			// ROCr renumbers devices after this list is applied. HSA_CU_MASK uses
 			// those container-local indices, so it is built in the same order.
-			car.Envs["ROCR_VISIBLE_DEVICES"] = strings.Join(rocrVisibleDevices, ",")
+			car.Envs["ROCR_VISIBLE_DEVICES"] = rocrVisibleList(rocrVisibleDevices, renderMinors)
 			// HIP/Ray/PyTorch read HIP_VISIBLE_DEVICES (CUDA-compatible semantics).
 			// Ray errors if only ROCR_VISIBLE_DEVICES is set; inject matching
 			// container-local indices so both layers agree after ROCr renumbering.
@@ -1061,6 +1064,28 @@ func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1
 		return false, err
 	}
 	return refreshed.Annotations[utils.CuAllocation] == expected, nil
+}
+
+// rocrVisibleList joins ROCr UUIDs for ROCR_VISIBLE_DEVICES. A GPU without
+// one is named by its index among the container's GPUs, which ROCr enumerates
+// in KFD node order.
+// ponytail: render minor order stands in for KFD node order; read node ids if they ever diverge.
+func rocrVisibleList(uuids []string, renderMinors []int) string {
+	out := make([]string, len(uuids))
+	for i, u := range uuids {
+		if u != "" {
+			out[i] = u
+			continue
+		}
+		idx := 0
+		for _, m := range renderMinors {
+			if m < renderMinors[i] {
+				idx++
+			}
+		}
+		out[i] = strconv.Itoa(idx)
+	}
+	return strings.Join(out, ",")
 }
 
 // allocationToIDList converts a CU bitmap to ID_List grammar used by HSA_CU_MASK, e.g. "0-3,8,10-12".

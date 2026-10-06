@@ -330,3 +330,29 @@ func TestAllocateMultiGPUMaskOrder(t *testing.T) {
 		}
 	}
 }
+
+// An APU reports KFD unique_id 0, so ROCr has no UUID for it and only the
+// index among the container's GPUs, in render node order, names it.
+func TestRocrVisibleListIndexFallback(t *testing.T) {
+	for _, tc := range []struct {
+		uuids  []string
+		minors []int
+		want   string
+	}{
+		{[]string{"GPU-a", "GPU-b"}, []int{128, 130}, "GPU-a,GPU-b"},
+		{[]string{"", "GPU-a"}, []int{130, 128}, "1,GPU-a"},
+		{[]string{"GPU-a", ""}, []int{128, 130}, "GPU-a,1"},
+		{[]string{""}, []int{130}, "0"},
+	} {
+		if got := rocrVisibleList(tc.uuids, tc.minors); got != tc.want {
+			t.Errorf("rocrVisibleList(%v, %v) = %q, want %q", tc.uuids, tc.minors, got, tc.want)
+		}
+	}
+	p := &AMDGPUPlugin{amdSMIUUIDToROCrUUID: map[string]string{"apu": ""}}
+	if got, err := p.rocrUUIDFromAllocationUUID("apu"); err != nil || got != "" {
+		t.Errorf("known GPU without ROCr UUID = %q, %v; want empty, nil", got, err)
+	}
+	if _, err := p.rocrUUIDFromAllocationUUID("missing"); err == nil {
+		t.Error("unknown GPU must still fail")
+	}
+}
