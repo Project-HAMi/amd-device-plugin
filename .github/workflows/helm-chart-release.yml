@@ -9,12 +9,13 @@ on:
       - "helm/**"
       - ".github/workflows/helm-chart-release.yml"
 
-permissions:
-  contents: write
+permissions: read-all
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # chart-releaser pushes the gh-pages index and creates releases
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

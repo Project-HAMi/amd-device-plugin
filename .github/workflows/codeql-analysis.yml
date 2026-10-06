@@ -13,22 +13,23 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  security-events: write
-  packages: read
-  actions: read
-  contents: read
+permissions: read-all
 
 jobs:
   analyze:
     name: Analyze (go)
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write # to upload CodeQL results
+      packages: read
+      actions: read
+      contents: read
     if: github.repository == 'Project-HAMi/amd-device-plugin'
     # This repository uses cgo against libdrm, hwloc and AMD SMI. Run inside the
     # ROCm image so amd_smi is present, and install the remaining -dev packages,
     # so CodeQL's autobuild can compile the cgo packages.
     container:
-      image: rocm/dev-ubuntu-24.04:7.2.4
+      image: rocm/dev-ubuntu-24.04:7.2.4@sha256:bdc8e61026cbb844ede93d44d2c50055f51ebb2041906b60182bf3bee3139054
     env:
       CGO_ENABLED: "1"
       LD_LIBRARY_PATH: /opt/rocm/lib
