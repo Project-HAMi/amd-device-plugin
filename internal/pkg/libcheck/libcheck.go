@@ -108,6 +108,7 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 	}
 	defer os.Remove(mountDir)
 
+	imageRef = normalizeRef(imageRef)
 	mountArgs := []string{"--namespace", ins.Namespace, "--address", ins.ContainerdSocket, "images", "mount", imageRef, mountDir}
 	if out, err := exec.CommandContext(ctx, ins.CtrPath, mountArgs...).CombinedOutput(); err != nil {
 		return Unknown, fmt.Errorf("ctr images mount %s: %w (%s)", imageRef, err, strings.TrimSpace(string(out)))
@@ -120,6 +121,28 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 	}()
 
 	return findLibc(mountDir)
+}
+
+// normalizeRef expands a pod spec's unqualified image reference (e.g.
+// "alpine:3.20") to the fully qualified form containerd actually stores it
+// under (e.g. "docker.io/library/alpine:3.20"), matching Docker Hub's own
+// implicit-registry rule. Found via a real Allocate failure on Claven: "ctr
+// images mount alpine:3.20" reported "not found" even though kubelet had
+// already pulled the image, because containerd indexes it under the
+// qualified name.
+func normalizeRef(ref string) string {
+	domain, remainder, hasSlash := strings.Cut(ref, "/")
+	if !hasSlash || (!strings.ContainsAny(domain, ".:") && domain != "localhost") {
+		remainder = ref
+		domain = "docker.io"
+		if !hasSlash {
+			remainder = "library/" + ref
+		}
+	}
+	if !strings.Contains(remainder[strings.LastIndex(remainder, "/")+1:], ":") && !strings.Contains(remainder, "@") {
+		remainder += ":latest"
+	}
+	return domain + "/" + remainder
 }
 
 func findLibc(root string) (Libc, error) {

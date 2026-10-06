@@ -103,3 +103,21 @@ func TestFindLibcEmptyRoot(t *testing.T) {
 		t.Errorf("findLibc(empty) = %v, want Unknown", got)
 	}
 }
+
+func TestNormalizeRef(t *testing.T) {
+	cases := map[string]string{
+		"alpine:3.20":          "docker.io/library/alpine:3.20",
+		"alpine":               "docker.io/library/alpine:latest",
+		"someuser/myimage:tag": "docker.io/someuser/myimage:tag",
+		"ghcr.io/project-hami/amd-device-plugin:0.0.1": "ghcr.io/project-hami/amd-device-plugin:0.0.1",
+		"myregistry.io/foo":                            "myregistry.io/foo:latest",
+		"localhost:5000/foo":                           "localhost:5000/foo:latest",
+		"localhost/foo:bar":                            "localhost/foo:bar",
+		"alpine@sha256:deadbeef":                       "docker.io/library/alpine@sha256:deadbeef",
+	}
+	for in, want := range cases {
+		if got := normalizeRef(in); got != want {
+			t.Errorf("normalizeRef(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
