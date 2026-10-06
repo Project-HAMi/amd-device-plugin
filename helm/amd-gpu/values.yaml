@@ -26,6 +26,11 @@ dp:
   splitCount: 10
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
+  # Experimental: also cap sliced allocations through the kernel dmem cgroup
+  # controller when available, a hard driver-level VRAM limit independent of
+  # libamvgpu. Requires cgroup v2 and the systemd cgroup driver; silently
+  # skipped when either is absent. See Project-HAMi/amd-hami-core#10.
+  dmemBackend: false
   # Inject GPUs through CDI instead of device nodes. The plugin writes an
   # amd.com/gpu spec to specDir on the host; the container runtime must have
   # CDI enabled and read that directory (containerd 2.x and CRI-O do by default).

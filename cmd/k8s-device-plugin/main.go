@@ -108,11 +108,13 @@ func main() {
 	var pulse int
 	var resourceNamingStrategy, allocatorPolicy, cdiSpecDir string
 	var splitCount int
+	var dmemBackend bool
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
 	flag.IntVar(&splitCount, "split_count", 10, "How many workloads may share one GPU (HAMi device Count). gfx12 GPUs contend above about 2.")
 	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
+	flag.BoolVar(&dmemBackend, "dmem_backend", false, "Also cap sliced allocations through the kernel dmem cgroup controller when available (requires cgroup v2, systemd cgroup driver, and a privileged pod with host cgroup visibility). Experimental; see Project-HAMi/amd-hami-core#10.")
 	// this is also needed to enable glog usage in dpm
 	flag.Parse()
 	strategy, err := ParseStrategy(resourceNamingStrategy)
@@ -140,6 +142,7 @@ func main() {
 		AllocatorPolicy: allocatorPolicy,
 		SplitCount:      splitCount,
 		CDISpecDir:      cdiSpecDir,
+		DmemBackend:     dmemBackend,
 	}
 	manager := dpm.NewManager(&l)
 
