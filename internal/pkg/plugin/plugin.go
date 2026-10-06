@@ -591,7 +591,10 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			}
 		}
 
-		customInfo := map[string]any{"pciBDF": pciBDFByDevID[bdf]}
+		nodeId, _ := deviceData["nodeId"].(int)
+		customInfo := deviceCustomInfo(key, p.kfdNodesDir(), nodeId)
+		// XCP partitions share the parent GPU's PCI BDF.
+		customInfo["pciBDF"] = pciBDFByDevID[bdf]
 		if strings.HasPrefix(key, "amdgpu_xcp_") {
 			memoryPartitionType, _ := deviceData["memoryPartitionType"].(string)
 			computePartitionType, _ := deviceData["computePartitionType"].(string)
@@ -600,10 +603,6 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			// Whole GPUs advertise the modes they can be set to; XCP entries
 			// advertise the mode they are currently partitioned into.
 			customInfo["partitionProfiles"] = profiles
-		}
-		nodeId, _ := deviceData["nodeId"].(int)
-		if q, ok := computeQueues(filepath.Join(root, "class/kfd/kfd/topology/nodes"), nodeId); ok {
-			customInfo["computeQueues"] = q
 		}
 		deviceType := "amd-gpu"
 		if productName, ok := amdSMIProductNames[strings.ToLower(bdf)]; ok && productName != "" {
@@ -1461,6 +1460,24 @@ func (p *AMDGPUPlugin) cuMaskUnit(uuid, topoNodesDir string) int {
 		return 1
 	}
 	nodeId, _ := data["nodeId"].(int)
+	return cuPerWGP(topoNodesDir, nodeId)
+}
+
+// deviceCustomInfo builds the custominfo published for a GPU. The scheduler
+// rounds core requests to cuPerWGP so it accounts the whole WGPs Allocate
+// hands out.
+func deviceCustomInfo(bdf, topoNodesDir string, nodeId int) map[string]any {
+	// bdf is the standard PCI BDF spelling (domain:bus:device.function).
+	// The KFD topology bdf uses a fourth colon-separated component.
+	info := map[string]any{"pciBDF": strings.ToLower(bdf), "cuPerWGP": cuPerWGP(topoNodesDir, nodeId)}
+	if q, ok := computeQueues(topoNodesDir, nodeId); ok {
+		info["computeQueues"] = q
+	}
+	return info
+}
+
+// cuPerWGP reads the CU mask granularity of a KFD node: 2 on gfx10 and later.
+func cuPerWGP(topoNodesDir string, nodeId int) int {
 	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
 	if err == nil && v >= 100000 {
 		return 2
