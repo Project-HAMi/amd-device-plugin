@@ -42,8 +42,8 @@ LABEL \
     name="amd-k8s-node-labeller" \
     maintainer="Project-HAMi maintainers" \
     vendor="Project-HAMi" \
-    version="0.0.1" \
-    release="0.0.1" \
+    version="0.0.2" \
+    release="0.0.2" \
     summary="The AMD Node Labeller automatically detects and labels Kubernetes nodes with AMD GPU hardware." \
     description="The AMD Node Labeller automatically detects and labels Kubernetes nodes with AMD GPU hardware. This tool automatically labels nodes with GPU properties if a node has one or more AMD GPU installed."
 RUN mkdir -p /licenses && \

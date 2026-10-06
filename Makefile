@@ -6,7 +6,7 @@ SHELL := /bin/bash
 
 # Image repository and version
 IMAGE_REPO ?= ghcr.io/project-hami/amd-device-plugin
-IMAGE_VERSION ?= 0.0.1
+IMAGE_VERSION ?= 0.0.2
 
 # Image tags based on the repository's tagging scheme.
 # Device plugin: <version>
@@ -128,7 +128,7 @@ help:
 	@echo "  help                   - Show this help message"
 	@echo ""
 	@echo "Variables:"
-	@echo "  IMAGE_VERSION          - Version suffix for tags (default: 0.0.1)"
+	@echo "  IMAGE_VERSION          - Version suffix for tags (default: 0.0.2)"
 	@echo "  OUTPUT_DIR             - Base output directory (default: ./dist)"
 	@echo "  TAR_DIR                - Directory for tarball output (default: ./dist/tarballs)"
 	@echo ""
@@ -139,7 +139,7 @@ help:
 	@echo "  UBI labeller:          $(IMAGE_REPO):$(UBI_LABELLER_TAG)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make all                                # Builds all with version 0.0.1"
-	@echo "  make build-all IMAGE_VERSION=0.0.1      # Build all with an explicit version"
+	@echo "  make all                                # Builds all with version 0.0.2"
+	@echo "  make build-all IMAGE_VERSION=0.0.2      # Build all with an explicit version"
 	@echo "  make save-device-plugin                 # Build and save device plugin only"
 	@echo "  make clean                              # Clean up images and tar files"
