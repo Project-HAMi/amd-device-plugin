@@ -11,7 +11,7 @@ project:
   name: HAMi
   homepage: https://project-hami.io
   documentation:
-    code-of-conduct: https://github.com/Project-HAMi/community/blob/main/CODE_OF_CONDUCT.md
+    code-of-conduct: https://github.com/Project-HAMi/community/blob/main/CODE-OF-CONDUCT.md
     governance: https://github.com/Project-HAMi/community/blob/main/community-membership.md
   administrators:
     - name: Li Mengxuan

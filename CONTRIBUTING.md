@@ -6,7 +6,7 @@ amd-device-plugin. This guide explains how to propose changes.
 ## Code of Conduct
 
 This project follows the HAMi community
-[Code of Conduct](https://github.com/Project-HAMi/community/blob/main/CODE_OF_CONDUCT.md).
+[Code of Conduct](https://github.com/Project-HAMi/community/blob/main/CODE-OF-CONDUCT.md).
 By participating you are expected to uphold it.
 
 ## Getting Started

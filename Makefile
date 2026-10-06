@@ -38,9 +38,9 @@ build-all: build-device-plugin build-labeller build-ubi-device-plugin build-ubi-
 save-all: save-device-plugin save-labeller save-ubi-device-plugin save-ubi-labeller
 	@echo "All images saved to $(TAR_DIR)/"
 
-# Build Alpine-based device plugin image
+# Build the ROCm (Ubuntu) based device plugin image
 build-device-plugin:
-	@echo "Building Alpine-based device plugin image..."
+	@echo "Building device plugin image..."
 	docker build -t $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG) -f Dockerfile .
 	@echo "Built: $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG)"
 
