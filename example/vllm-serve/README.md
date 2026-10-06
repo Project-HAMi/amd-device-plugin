@@ -1,15 +1,8 @@
-This example show how to deploy the vLLM serve with ROCm/k8s-device-plugin.
+This example shows how to serve a model with vLLM on an AMD GPU managed by HAMi and this device plugin.
 
-# Setup the k8s cluster
-You should setup the k8s cluster at first.
+# Install HAMi and the device plugin
 
-# Install the k8s-device-plugin
- The device plugin will enable registration of AMD GPU to a container cluster.
-
-```
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml
-kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/master/k8s-ds-amdgpu-labeller.yaml
-```
+Follow the [installation guide](../../docs/user-guide/installation.md): install the HAMi scheduler, then the device plugin with its Helm chart.
 
 # Prepare the k8s yaml files
 

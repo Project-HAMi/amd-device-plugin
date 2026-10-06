@@ -1,119 +1,118 @@
 # HAMi AMD Device Plugin
 
 [![CI](https://github.com/Project-HAMi/amd-device-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Project-HAMi/amd-device-plugin/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Project-HAMi/amd-device-plugin/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Project-HAMi/amd-device-plugin)
 [![License](https://img.shields.io/github/license/Project-HAMi/amd-device-plugin)](LICENSE)
 
-This repository contains the AMD device plugin used by [HAMi](https://github.com/Project-HAMi/HAMi) to discover AMD GPUs and enforce HAMi vGPU allocations on Kubernetes nodes. It is based on AMD's upstream [ROCm Kubernetes device plugin](https://github.com/ROCm/k8s-device-plugin).
+The Kubernetes device plugin that lets [HAMi](https://github.com/Project-HAMi/HAMi) share AMD GPUs between pods. It registers AMD GPUs with HAMi and, when a pod starts, limits it to the compute units (CUs) and VRAM HAMi gave it. It is based on AMD's upstream [ROCm Kubernetes device plugin](https://github.com/ROCm/k8s-device-plugin).
 
-## Current capabilities
+## What it does
 
-- Uses the AMD SMI C API through cgo to query device UUIDs and product names.
-- Publishes the hardware-bound AMD SMI UUID as `DeviceInfo.ID`.
-- Publishes the AMD SMI ASIC market name, for example `AMD Instinct MI300X VF`, as `DeviceInfo.Type`.
-- Publishes the standard PCI BDF in `custominfo.pciBDF`.
-- Reads physical VRAM and active CU capacity through `libdrm_amdgpu`.
-- Publishes the user compute queue (HQD) slots KFD reports (`num_cp_queues`) in `custominfo.computeQueues`.
-- Persists per-Pod CU ranges in `hami.io/amd-cu-allocated` and reconstructs allocation state after a device-plugin restart.
-- Optionally injects GPUs through CDI (`--cdi_spec_dir`, Helm `dp.cdi.enabled`): it writes an `amd.com/gpu` spec with one device per DRM card plus `/dev/kfd` and returns CDI device names from Allocate.
-- Supports the kubelet preferred-allocation policies `besteffort` (default), `binpack` (closest devices) and `spread` (farthest devices) through `--allocator_policy` (Helm `dp.allocatorPolicy`).
-- Applies `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `HSA_CU_MASK` in the same container-local device order for multi-GPU allocations.
-- Applies the requested memory limit through per-GPU `HIP_DEVICE_MEMORY_LIMIT_<i>` and the `libamvgpu.so` `LD_AUDIT` hook for core or memory slices. Whole-GPU requests do not use the hook.
+- Registers every AMD GPU in the `hami.io/node-amd-register` node annotation: AMD SMI UUID, product name, VRAM, CU count, PCI BDF and NUMA node.
+- Gives each pod only its share of a GPU:
+  - **Compute:** a CU slice through `HSA_CU_MASK`. On RDNA (gfx10 and later) slices are whole WGPs (pairs of CUs), because the GPU ignores a mask that splits a WGP.
+  - **Memory:** a VRAM limit per GPU through the `libamvgpu.so` hook from [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core), and, where the node supports it, a hard kernel cap through the dmem cgroup controller.
+- Handles multi-GPU pods. Device order, CU masks and memory limits stay aligned per GPU, including APUs and iGPUs without a ROCr UUID.
+- Keeps CU allocations across plugin restarts, and marks a GPU unhealthy when its device node can no longer be opened.
 
-The plugin registers devices in the `hami.io/node-amd-register` node annotation. A device entry has this shape:
-
-```json
-{
-  "id": "8eff74b5-0000-1000-801b-b56457addd1b",
-  "index": 0,
-  "count": 10,
-  "devmem": 196288,
-  "devcore": 304,
-  "type": "AMD Instinct MI300X VF",
-  "numa": 0,
-  "health": true,
-  "devicevendor": "amd",
-  "custominfo": {
-    "pciBDF": "0000:83:00.0"
-  }
-}
-```
+Whole-GPU requests skip the hook entirely and work with any container image.
 
 ## Requirements
 
-- Linux `amd64` AMD GPU node supported by ROCm.
-- Kubernetes and a compatible HAMi scheduler deployment.
-- AMD GPU kernel driver, `/dev/kfd`, `/dev/dri`, KFD topology under `/sys`, and `libdrm_amdgpu`.
-- AMD SMI from ROCm 7.2.4. The image carries the matching AMD SMI userspace library; the host must provide the compatible kernel driver and device interfaces.
-- Permission for the DaemonSet service account to read Pods and patch Node/Pod annotations and the HAMi node lock.
+- Linux amd64 nodes with ROCm-supported AMD GPUs, the `amdgpu` kernel driver, `/dev/kfd` and `/dev/dri`.
+- Kubernetes with the [HAMi scheduler](https://github.com/Project-HAMi/HAMi) installed. HAMi has AMD support built in.
+- For memory slices, a glibc 2.34 or newer workload image (for example Ubuntu 22.04+ or RHEL 9). See [Limits](#limits).
+- Optional: cgroup v2 with the systemd cgroup driver and a kernel with the dmem controller, for the hard VRAM cap.
 
-GPUs for which AMD SMI does not return a UUID are deliberately not registered. There is no node-name/BDF-derived compatibility ID.
-
-## Build
+## Install
 
 ```bash
-docker build -t ghcr.io/project-hami/amd-device-plugin:0.0.1 .
+helm upgrade --install amd-gpu ./helm/amd-gpu --namespace kube-system --create-namespace
 ```
 
-The Docker build compiles the cgo code against the ROCm 7.2.4 AMD SMI SDK and packages the `libamvgpu.so` hook built from the `amd-hami-core` submodule. CI verifies that the hook exists and uses the same Dockerfile for the published image, so a missing hook fails the image build.
-
-## Deploy with Helm
-
-The device-plugin image includes the `libamvgpu.so` built from the `amd-hami-core` submodule under `/opt/hami/lib/amd`, separate from the host-mounted destination. Following HAMi's hook-delivery model, the device-plugin container mounts the node's `<hostHookPath>/vgpu` directory and runs `amd-vgpu-init.sh` from a `postStart` lifecycle hook. The script compares the bundled and installed files and atomically updates `<hostHookPath>/vgpu/libamvgpu.so` when needed. With the default `hostHookPath=/usr/local`, Allocate then mounts `/usr/local/vgpu/libamvgpu.so` from the host into workload containers.
-
-Bundling the hook in the image is a temporary delivery mechanism until `amd-hami-core` provides a release and consumption pipeline. Set `dp.hookInstaller.enabled=false` only when the hook is managed on every node by another mechanism.
+Check that the node registered its GPUs:
 
 ```bash
-helm upgrade --install amd-gpu ./helm/amd-gpu \
-  --namespace kube-system \
-  --create-namespace
+kubectl get node <node> -o jsonpath='{.status.allocatable.amd\.com/gpu}'
+kubectl get node <node> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
 ```
 
-Chart `0.0.1` deploys image `ghcr.io/project-hami/amd-device-plugin:0.0.1` by default. Images are published to GitHub Container Registry after CI succeeds on `main` and version tags. The GHCR package must be public for deployment without credentials; otherwise configure `imagePullSecrets`.
+## Use
 
-Verify registration:
+Request GPUs with HAMi's AMD resources:
 
-```bash
-kubectl get node <node-name> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
+| Resource | Meaning |
+|---|---|
+| `amd.com/gpu` | Number of GPUs |
+| `amd.com/gpucores` | Percentage of each GPU's CUs (1-100). Omit it for whole GPUs. |
+| `amd.com/gpumem` | VRAM per GPU in MiB. Omit it for the whole VRAM. |
+
+A quarter of one GPU with 4 GiB of VRAM:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-slice
+spec:
+  containers:
+  - name: app
+    image: rocm/pytorch:latest
+    command: ["python3", "-c", "import torch; print(torch.cuda.get_device_name(0))"]
+    resources:
+      limits:
+        amd.com/gpu: 1
+        amd.com/gpucores: 25
+        amd.com/gpumem: 4096
 ```
 
-## Memory-isolation compatibility
+More examples are in [example/](example/).
 
-CU isolation and device visibility use ROCr interfaces and are independent of the workload image's libc. Fractional-memory enforcement is different: it depends on loading `/usr/local/vgpu/libamvgpu.so` through glibc `LD_AUDIT`.
+## Configuration
 
-The hook built from `amd-hami-core` requires glibc symbol versions through `GLIBC_2.34`. It is therefore not compatible with older glibc images such as Ubuntu 20.04 or RHEL 8, and `LD_AUDIT` is not supported by musl/Alpine workloads. Until ABI selection and fail-closed validation are implemented, use a compatible glibc workload image for fractional-memory allocations. The hook is injected only for core or memory slices, so whole-GPU requests work on any workload image.
+The most common Helm values:
 
-See [Project-HAMi/HAMi#2265](https://github.com/Project-HAMi/HAMi/issues/2265) for the compatibility discussion.
+| Value | Default | Description |
+|---|---|---|
+| `dp.splitCount` | `0` | How many pods may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
+| `dp.allocatorPolicy` | `besteffort` | How kubelet picks GPUs for multi-GPU pods: `besteffort` (same as `binpack`, closest GPUs) or `spread` (farthest GPUs). |
+| `dp.dmemBackend` | `true` | Hard VRAM cap through the dmem cgroup. It switches itself off on nodes without dmem or the systemd driver. |
+| `dp.cdi.enabled` | `false` | Inject GPUs through CDI instead of device nodes. |
+| `dp.muslFailClosed.enabled` | `false` | Refuse a slice whose image cannot load the memory hook (musl or static). Experimental. |
+| `dp.healthPulse` | `10` | Seconds between GPU health checks. `0` disables them. |
 
-## CU isolation
+See the [chart README](helm/amd-gpu/README.md) for all values and the [configuration guide](docs/user-guide/configuration.md) for the matching plugin flags.
 
-The CU slice set through `HSA_CU_MASK` is a cooperative limit, not a hard guarantee. KFD creates compute queues with all CUs and the mask is applied afterwards by an ioctl the process itself controls, so a workload can drop or widen it and take the whole GPU, slowing its neighbours. Do not rely on CU slices to isolate untrusted tenants. Enforcement needs a CU ceiling in KFD; see [#55](https://github.com/Project-HAMi/amd-device-plugin/issues/55).
+## Limits
 
-## Compute-queue contention
+- **CU slices are cooperative.** ROCm applies the mask inside the process. The hook pins `HSA_CU_MASK` to the pod spec, so `setenv` or `os.environ` cannot widen it. A process that re-executes itself without `LD_AUDIT`, however, runs outside the slice. Do not rely on CU slices to isolate untrusted tenants until KFD enforces a CU limit ([#55](https://github.com/Project-HAMi/amd-device-plugin/issues/55)).
+- **Memory limits need glibc 2.34 or newer** because the hook loads through `LD_AUDIT`. musl/Alpine and older glibc images are only capped by dmem, and only where dmem is available.
+- **gfx12 shares poorly beyond 2 pods.** These GPUs have few compute queues, so more than about 2 processes per GPU lose most of their throughput. This is why `dp.splitCount` defaults to 2 there ([#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54)).
 
-Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. gfx12 GPUs therefore default to 2 sharers per GPU and other GPUs to 10; `--split_count` (Helm `dp.splitCount`) sets one value for every GPU instead. See [#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54).
+## Tested hardware
 
-## Validation status
+| GPU | Architecture | Validated |
+|---|---|---|
+| AMD Instinct MI300X VF | CDNA3 | Registration (UUID, product, VRAM, CUs) |
+| Radeon RX 9060 XT | RDNA4, gfx1200 | Registration, health, CU and memory slices, CU-mask pinning, plugin restart |
+| Radeon RX 9070 XT + Radeon iGPU | RDNA4 gfx1201 + RDNA2 gfx1036 | Multi-GPU ordering, per-GPU memory and dmem caps, WGP slices, CDI, GPU removal |
 
-The AMD SMI UUID, product type, BDF, VRAM and CU registration path has been validated on a real ROCm 7.0.2 `AMD Instinct MI300X VF` node. Device discovery, per-GPU health and compute-queue reporting have also been validated on an `AMD Radeon RX 9060 XT` (gfx1200, RDNA4) node. Multi-GPU `ROCR_VISIBLE_DEVICES` ordering still requires validation on nodes with more than one allocatable GPU.
+RDNA3 (gfx11) and CDNA compute or memory slicing have not been validated yet.
 
 ## Development
 
-Run the same checks used by CI:
+The plugin uses cgo against AMD SMI, libdrm and hwloc, so build and test it in the builder image:
 
 ```bash
-docker build --target builder -t amd-device-plugin-builder:test .
-docker run --rm \
-  --workdir /go/src/github.com/Project-HAMi/amd-device-plugin \
-  --env LD_LIBRARY_PATH=/opt/rocm/lib \
-  amd-device-plugin-builder:test \
+docker build --target builder -t amd-device-plugin-builder .
+docker run --rm -e LD_LIBRARY_PATH=/opt/rocm/lib \
+  --workdir /go/src/github.com/Project-HAMi/amd-device-plugin amd-device-plugin-builder \
   bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.26 && go test ./...'
-
-helm lint ./helm/amd-gpu
-helm template amd-gpu ./helm/amd-gpu --namespace kube-system >/dev/null
+helm lint helm/amd-gpu
 ```
 
-Hardware-dependent tests skip automatically when no AMD GPU is present. Real-node validation is still required for changes to device discovery, AMD SMI calls, ROCr visibility, CU masks, or memory interception.
+Tests that need a GPU skip automatically when none is present. Changes to discovery, AMD SMI, ROCr visibility, CU masks or memory limits also need a run on a real GPU node. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## License
+## Security and license
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md). Licensed under [Apache 2.0](LICENSE).
