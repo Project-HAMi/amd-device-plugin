@@ -268,6 +268,7 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}
 		cs := fake.NewSimpleClientset(node, pod)
 		old := utils.KubeClient
+		t.Cleanup(func() { utils.KubeClient = old })
 		utils.KubeClient = cs
 		t.Setenv(utils.NodeNameEnvName, "n")
 
@@ -280,7 +281,6 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 		resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
 			ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:06:00.0#0"}}},
 		})
-		utils.KubeClient = old
 		if (err != nil) != tc.wantErr {
 			t.Fatalf("%s: Allocate error = %v, want error %v", tc.name, err, tc.wantErr)
 		}

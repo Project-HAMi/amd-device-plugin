@@ -105,12 +105,6 @@ func TestAMDGPUcountConsistent(t *testing.T) {
 
 }
 
-func TestHasAMDGPU(t *testing.T) {
-	if !hasAMDGPU() {
-		t.Skip("Skipping test, no AMD GPU found.")
-	}
-}
-
 func TestDevFunctional(t *testing.T) {
 	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
@@ -121,8 +115,9 @@ func TestDevFunctional(t *testing.T) {
 	for _, dev := range devices {
 		card := fmt.Sprintf("card%d", dev["card"])
 
-		ret := DevFunctional(card)
-		t.Logf("%s functional: %t", card, ret)
+		if !DevFunctional(card) {
+			t.Errorf("%s: a discovered GPU must open", card)
+		}
 	}
 }
 
