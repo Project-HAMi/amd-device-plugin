@@ -17,8 +17,10 @@
 package libcheck
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,6 +103,69 @@ func TestFindLibcEmptyRoot(t *testing.T) {
 	}
 	if got != Unknown {
 		t.Errorf("findLibc(empty) = %v, want Unknown", got)
+	}
+}
+
+func TestFindLibcPrefersStandardGlibcLoader(t *testing.T) {
+	for name, tc := range map[string]struct {
+		files []string
+		want  Libc
+	}{
+		"glibc image with Debian musl package": {
+			[]string{"usr/lib/musl/lib/ld-musl-x86_64.so.1", "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"}, Glibc},
+		"musl image with glibc vendored under opt": {
+			[]string{"lib/ld-musl-x86_64.so.1", "opt/glibc/lib/ld-linux-x86-64.so.2"}, Musl},
+	} {
+		root := t.TempDir()
+		for _, f := range tc.files {
+			touch(t, filepath.Join(root, f))
+		}
+		if got, err := findLibc(root); err != nil || got != tc.want {
+			t.Errorf("%s: findLibc = %v, %v; want %v", name, got, err, tc.want)
+		}
+	}
+}
+
+func TestFindLibcUnreadableRoot(t *testing.T) {
+	if _, err := findLibc(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("findLibc on a missing root must error, not report Unknown")
+	}
+}
+
+func TestGlibcAtLeastMinimumPrefersStandardLibc(t *testing.T) {
+	root := t.TempDir()
+	for path, data := range map[string]string{
+		"opt/vendor/lib/libc.so.6":           "GLIBC_2.17\x00",
+		"usr/lib/x86_64-linux-gnu/libc.so.6": "GLIBC_2.38\x00",
+	} {
+		touch(t, filepath.Join(root, path))
+		if err := os.WriteFile(filepath.Join(root, path), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, err := glibcAtLeastMinimum(root); err != nil || !ok {
+		t.Fatalf("glibcAtLeastMinimum = %v, %v; want the /usr libc (2.38), not the vendored /opt one", ok, err)
+	}
+}
+
+func TestInspectEndsFlagsBeforeImageRef(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	ctr := filepath.Join(dir, "ctr")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nexit 1\n"
+	if err := os.WriteFile(ctr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ins := &Inspector{CtrPath: ctr, ContainerdSocket: "/sock", Namespace: "k8s.io"}
+	if _, err := ins.Inspect(context.Background(), "alpine"); err == nil {
+		t.Fatal("expected the fake ctr's failure")
+	}
+	out, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "mount\n--\ndocker.io/library/alpine:latest\n") {
+		t.Fatalf("ctr args = %q, want \"--\" right before the image ref", out)
 	}
 }
 

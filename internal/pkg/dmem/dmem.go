@@ -46,7 +46,7 @@ import (
 // DefaultCgroupRoot is the standard cgroup v2 unified hierarchy mount point.
 const DefaultCgroupRoot = "/sys/fs/cgroup"
 
-// NormalizeBDF converts the KFD topology's four-colon BDF spelling
+// NormalizeBDF converts the KFD topology's all-colon BDF spelling
 // (domain:bus:device:function, e.g. "0000:06:00:0") to the standard PCI
 // spelling dmem.capacity uses (domain:bus:device.function, e.g.
 // "0000:06:00.0"), by replacing the last colon with a dot. Already
@@ -97,7 +97,7 @@ func Region(cgroupRoot, bdf string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	want := "drm/" + strings.ToLower(bdf) + "/vram"
 	scanner := bufio.NewScanner(f)
