@@ -3,6 +3,8 @@ kind: DaemonSet
 metadata:
   name: {{ .Chart.Name }}-device-plugin-daemonset
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "amd-gpu.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
@@ -37,7 +39,7 @@ spec:
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
           command: ["./k8s-device-plugin"]
-          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}", "-allocator_policy={{ .Values.dp.allocatorPolicy }}"{{ if .Values.dp.cdi.enabled }}, "-cdi_spec_dir={{ .Values.dp.cdi.specDir }}"{{ end }}, "-dmem_backend={{ .Values.dp.dmemBackend }}"{{ if .Values.dp.muslFailClosed.enabled }}, "-musl_fail_closed=true", "-ctr_path=/opt/amd-gpu-ctr-host/ctr", "-containerd_socket={{ .Values.dp.muslFailClosed.containerdSocket }}"{{ end }}]
+          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v={{ .Values.dp.logVerbosity }}", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}", "-allocator_policy={{ .Values.dp.allocatorPolicy }}"{{ if .Values.dp.cdi.enabled }}, "-cdi_spec_dir={{ .Values.dp.cdi.specDir }}"{{ end }}, "-dmem_backend={{ .Values.dp.dmemBackend }}"{{ if .Values.dp.muslFailClosed.enabled }}, "-musl_fail_closed=true", "-ctr_path=/opt/amd-gpu-ctr-host/ctr", "-containerd_socket={{ .Values.dp.muslFailClosed.containerdSocket }}"{{ end }}]
           {{- if .Values.dp.hookInstaller.enabled }}
           # Temporary HAMi-style delivery: copy the image-bundled hook into
           # the hostPath after the device-plugin container is created.
@@ -101,7 +103,7 @@ spec:
         - name: health
           hostPath:
             path: /var/lib/amd-metrics-exporter/
-            type : DirectoryOrCreate
+            type: DirectoryOrCreate
         {{- if .Values.dp.hookInstaller.enabled }}
         - name: host-vgpu-hook
           hostPath:

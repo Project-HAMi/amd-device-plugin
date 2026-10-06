@@ -2,7 +2,7 @@ dp:
   image:
     repository: ghcr.io/project-hami/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "0.0.1"
+    tag: ""
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
@@ -19,6 +19,8 @@ dp:
   # <hostHookPath>/vgpu/libamvgpu.so on the host.
   # Workload container path is fixed in plugin code: /usr/local/vgpu/libamvgpu.so
   hostHookPath: "/usr/local"
+  # glog verbosity (-v). 4 adds topology parsing, 5 adds annotation decoding.
+  logVerbosity: 2
   # Seconds between per-GPU health checks; 0 disables them.
   healthPulse: 10
   # How many workloads may share one GPU. 0 picks it per GPU: 2 on gfx12
