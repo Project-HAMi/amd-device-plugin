@@ -38,6 +38,7 @@ import (
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/exporter"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/libcheck"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
@@ -81,6 +82,13 @@ type AMDGPUPlugin struct {
 	// A failure to set it is logged and never fails Allocate; libamvgpu's
 	// HIP_DEVICE_MEMORY_LIMIT remains the enforcement path either way.
 	dmemEnabled bool
+	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
+	// allocation whose container image is not LD_AUDIT-compatible (musl,
+	// or no dynamic loader at all), instead of silently running it
+	// unprotected (Project-HAMi/amd-hami-core#3). Unlike dmemEnabled this
+	// check is synchronous: it must complete before Allocate returns, or
+	// the container could already be running by the time it is.
+	libcheckInspector *libcheck.Inspector
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -121,6 +129,22 @@ func WithResource(res string) AMDGPUPluginOption {
 func WithDmemBackend(enabled bool) AMDGPUPluginOption {
 	return func(p *AMDGPUPlugin) {
 		p.dmemEnabled = enabled
+	}
+}
+
+// WithMuslFailClosed enables refusing sliced allocations on an
+// LD_AUDIT-incompatible image. ctrPath and containerdSocket must resolve
+// inside the plugin's own container (see internal/pkg/libcheck).
+func WithMuslFailClosed(enabled bool, ctrPath, containerdSocket string) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		if !enabled {
+			return
+		}
+		p.libcheckInspector = &libcheck.Inspector{
+			CtrPath:          ctrPath,
+			ContainerdSocket: containerdSocket,
+			Namespace:        "k8s.io",
+		}
 	}
 }
 
@@ -773,6 +797,17 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			// The hook only enforces slices and needs glibc >= 2.34, so whole-GPU
 			// requests must not depend on it.
 			if !p.isWholeGPU(devreq) {
+				if p.libcheckInspector != nil {
+					libc, checkErr := p.libcheckInspector.Inspect(ctx, currentCtr.Image)
+					if checkErr != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("verify LD_AUDIT compatibility of image %q: %w", currentCtr.Image, checkErr)
+					}
+					if !libc.AuditCompatible() {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s, not glibc; LD_AUDIT (and so the memory/CU-slice limit) would silently not apply, refusing to start unprotected", currentCtr.Image, libc)
+					}
+				}
 				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
 				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 				if p.dmemEnabled {
@@ -1176,6 +1211,13 @@ type AMDGPULister struct {
 	// DmemBackend additionally caps sliced allocations through the kernel
 	// dmem cgroup controller when available.
 	DmemBackend bool
+	// MuslFailClosed refuses a sliced allocation whose image is not
+	// LD_AUDIT-compatible, instead of silently running it unprotected.
+	MuslFailClosed bool
+	// CtrPath and ContainerdSocket locate the ctr binary and containerd
+	// socket this pod's own mount namespace can see, used only when
+	// MuslFailClosed is set.
+	CtrPath, ContainerdSocket string
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1220,6 +1262,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
 		WithDmemBackend(l.DmemBackend),
+		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)
 }
