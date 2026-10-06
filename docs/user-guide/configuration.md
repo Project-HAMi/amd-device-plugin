@@ -8,6 +8,7 @@ The chart passes its values to the plugin as flags. The [chart README](https://g
 |---|---|---|---|
 | `dp.splitCount` | `-split_count` | `0` | How many pods may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. Any other value applies to every GPU. |
 | `dp.allocatorPolicy` | `-allocator_policy` | `besteffort` | How kubelet picks GPUs for multi-GPU pods: `besteffort` (same as `binpack`, closest GPUs) or `spread` (farthest GPUs). See [Resource allocation](resource-allocation.md). |
+| `dp.logVerbosity` | `-v` | `2` | Log verbosity; 4 adds topology parsing, 5 adds annotation decoding. |
 | `dp.healthPulse` | `-pulse` | `10` (chart), `0` (flag) | Seconds between GPU health checks. `0` disables them. |
 | `dp.dmemBackend` | `-dmem_backend` | `true` | Also cap a slice's VRAM with the kernel dmem cgroup controller. |
 | `dp.cdi.enabled`, `dp.cdi.specDir` | `-cdi_spec_dir` | off, `/var/run/cdi` | Inject GPUs through CDI. |
