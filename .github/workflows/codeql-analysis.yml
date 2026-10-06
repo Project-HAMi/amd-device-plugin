@@ -1,0 +1,61 @@
+name: "CodeQL"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 4 * * 6"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  security-events: write
+  packages: read
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (go)
+    runs-on: ubuntu-latest
+    if: github.repository == 'Project-HAMi/amd-device-plugin'
+    # This repository uses cgo against libdrm, hwloc and AMD SMI. Run inside the
+    # ROCm image so amd_smi is present, and install the remaining -dev packages,
+    # so CodeQL's autobuild can compile the cgo packages.
+    container:
+      image: rocm/dev-ubuntu-24.04:7.2.4
+    env:
+      CGO_ENABLED: "1"
+      LD_LIBRARY_PATH: /opt/rocm/lib
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install cgo build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends pkg-config libdrm-dev libhwloc-dev git ca-certificates
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          languages: go
+          build-mode: autobuild
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          category: "/language:go"
