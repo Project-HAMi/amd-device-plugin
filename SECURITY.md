@@ -24,12 +24,13 @@ If you discover a security vulnerability, please report it responsibly. Do
 ## Is It In Scope?
 
 This device plugin registers AMD GPUs to Kubernetes and applies HAMi soft vGPU
-limits: memory through `HIP_DEVICE_MEMORY_LIMIT` and the `libamvgpu.so`
-`LD_AUDIT` hook, and compute through `HSA_CU_MASK`. These limits are for
-cooperative multi-tenant sharing on a trusted cluster. They are not a hard
-security boundary against a workload with enough privilege to bypass its own
-hook, for example by unsetting the audit library, using a static binary, or
-`ptrace`.
+limits: memory through `HIP_DEVICE_MEMORY_LIMIT_<i>` and the `libamvgpu.so`
+`LD_AUDIT` hook, plus a kernel dmem cgroup cap where the node supports it,
+and compute through `HSA_CU_MASK`. These limits are for cooperative
+multi-tenant sharing on a trusted cluster. The hook and the CU mask are not a
+hard security boundary against a workload with enough privilege to bypass its
+own hook, for example by unsetting the audit library, using a static binary,
+or `ptrace`.
 
 - A report that a workload can exceed its own quota, without affecting another
   tenant, is not a new vulnerability by itself.

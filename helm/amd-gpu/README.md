@@ -6,7 +6,7 @@ HAMi AMD device plugin for fractional GPU allocation on Kubernetes
 
 ## Requirements
 
-Kubernetes: `>= 1.18.0`
+Kubernetes: `>= 1.19.0`
 
 ## Values
 
@@ -26,7 +26,7 @@ Kubernetes: `>= 1.18.0`
 | dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
 | dp.allocatorPolicy | string | `"besteffort"` | Multi-GPU preferred allocation: `besteffort` (same as `binpack`) or `spread`. |
 | dp.dmemBackend | bool | `true` | Also cap sliced VRAM with the kernel dmem cgroup; skipped on nodes without dmem or the systemd cgroup driver. |
-| dp.muslFailClosed.enabled | bool | `false` | Refuse a slice whose image cannot load the memory hook (musl or static). Experimental. |
+| dp.muslFailClosed.enabled | bool | `false` | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34), unless dmem caps it. Experimental. |
 | dp.muslFailClosed.ctrPath | string | `"/var/lib/rancher/rke2/bin/ctr"` | Host path of `ctr`. |
 | dp.muslFailClosed.containerdSocketDir | string | `"/run/k3s/containerd"` | Host directory of the containerd socket. |
 | dp.muslFailClosed.containerdSocket | string | `"/run/k3s/containerd/containerd.sock"` | containerd socket path. |

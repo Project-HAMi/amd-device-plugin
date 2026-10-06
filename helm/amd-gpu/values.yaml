@@ -33,8 +33,8 @@ dp:
   # skipped with one log line. See Project-HAMi/amd-hami-core#10.
   dmemBackend: true
   # Experimental: refuse a sliced allocation whose container image is not
-  # LD_AUDIT-compatible (musl/Alpine, or statically linked) instead of
-  # silently running it unprotected. See Project-HAMi/amd-hami-core#3.
+  # LD_AUDIT-compatible (musl/Alpine, statically linked, or glibc older than
+  # 2.34) unless dmem caps it. See Project-HAMi/amd-hami-core#3.
   # Requires the containerd socket and its snapshotter data directory
   # mounted with mountPropagation: HostToContainer, so this pod's mount
   # namespace can see the read-only image mount "ctr images mount" makes;
