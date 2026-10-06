@@ -506,13 +506,13 @@ func (p *AMDGPUPlugin) markNonFunctional(devs []*pluginapi.Device, functional fu
 func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	response := &pluginapi.PreferredAllocationResponse{}
 	for _, req := range req.ContainerRequests {
-		allocated_ids, err := p.devAllocator.Allocate(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize))
+		allocatedIDs, err := p.devAllocator.Allocate(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize))
 		if err != nil {
 			glog.Errorf("unable to get preferred allocation list: %v", err)
 			return nil, fmt.Errorf("unable to get preferred allocation list: %w", err)
 		}
 		resp := &pluginapi.ContainerPreferredAllocationResponse{
-			DeviceIDs: allocated_ids,
+			DeviceIDs: allocatedIDs,
 		}
 		response.ContainerResponses = append(response.ContainerResponses, resp)
 	}
@@ -1245,7 +1245,6 @@ func (p *AMDGPUPlugin) parseCuAllocation(annotations map[string]string) (map[str
 type AMDGPULister struct {
 	ResUpdateChan chan dpm.PluginNameList
 	Heartbeat     chan bool
-	Signal        chan os.Signal
 	// AllocatorPolicy is besteffort (default), binpack or spread.
 	AllocatorPolicy string
 	// SplitCount overrides how many workloads may share one GPU when > 0.
