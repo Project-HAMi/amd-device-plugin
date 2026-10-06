@@ -17,7 +17,9 @@
 package amdgpu
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,5 +303,92 @@ func TestReadPartition(t *testing.T) {
 func TestFamilyIDtoStringRDNA4(t *testing.T) {
 	if got, err := FamilyIDtoString(152); err != nil || got != "GC_12_0_0" {
 		t.Errorf("FamilyIDtoString(152) = %q, %v; want GC_12_0_0", got, err)
+	}
+}
+
+func TestDiscoverGPUsResetsPerGPU(t *testing.T) {
+	root := t.TempDir()
+	mk := func(dir string, files ...string) {
+		t.Helper()
+		for _, f := range files {
+			p := filepath.Join(root, dir, f)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pci := "module/amdgpu/drivers/pci:amdgpu/"
+	mk(pci+"0000:03:00.0", "numa_node", "current_compute_partition", "current_memory_partition", "drm/card0/x", "drm/renderD128/x", "drm/ttm/x")
+	mk(pci+"0000:83:00.0", "numa_node", "drm/card1/x") // no render node
+	mk(pci+"0000:c3:00.0", "numa_node", "drm/card2/x", "drm/renderD130/x")
+	mk("devices/platform/amdgpu_xcp_1", "x") // partition without drm entries
+	mk("devices/platform/amdgpu_xcp_2", "drm/renderD129/x")
+
+	devs := discoverGPUs(root,
+		map[int]string{128: "0000:03:00:0", 129: "0000:03:00:0"},
+		map[int]int{128: 1, 129: 2})
+
+	if len(devs) != 3 {
+		t.Fatalf("got %d devices, want 3: %v", len(devs), devs)
+	}
+	if _, ok := devs["0000:83:00.0"]; ok {
+		t.Error("GPU without render node must be skipped")
+	}
+	if d := devs["0000:c3:00.0"]; d["devID"] != "" || d["nodeId"] != 0 || d["card"] != 2 || d["renderD"] != 130 {
+		t.Errorf("GPU without KFD node inherited values: %v", d)
+	}
+	if d := devs["amdgpu_xcp_2"]; d["devID"] != "0000:03:00:0" || d["nodeId"] != 2 || d["card"] != 0 {
+		t.Errorf("partition: %v", d)
+	}
+}
+
+func TestNewDeviceCapacityRejectsZeroCUs(t *testing.T) {
+	if _, err := newDeviceCapacity("card0", 16<<30, 0); err == nil {
+		t.Error("0 CUs: want an error")
+	}
+	if c, err := newDeviceCapacity("card0", 16<<30, 32); err != nil || c != (DeviceCapacity{VRAMMiB: 16384, CUCount: 32}) {
+		t.Errorf("got %v, %v", c, err)
+	}
+}
+
+func TestCollectFirmwareSkipsFailedQueries(t *testing.T) {
+	feat, fw := collectFirmware(func(fwType uint32) (uint32, uint32, error) {
+		if fwType == firmwareTypes[1].fwType {
+			return 0, 0, fmt.Errorf("rc -22")
+		}
+		return fwType + 100, fwType, nil
+	})
+	if _, ok := fw["UVD"]; ok {
+		t.Errorf("failed UVD query reported: %v", fw)
+	}
+	if _, ok := feat["UVD"]; ok {
+		t.Errorf("failed UVD query reported: %v", feat)
+	}
+	if len(fw) != len(firmwareTypes)-1 || fw["ME"] != firmwareTypes[3].fwType+100 || feat["ME"] != firmwareTypes[3].fwType {
+		t.Errorf("fw %v feat %v", fw, feat)
+	}
+}
+
+func TestParseTopologyPropertiesReportsScanError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "properties")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 1<<17)+"\nsimd_count 4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseTopologyProperties(path, regexp.MustCompile(`simd_count\s(\d+)`)); !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("err = %v, want bufio.ErrTooLong", err)
+	}
+}
+
+func TestParseDebugFSFirmwareInfoFullUint32(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "amdgpu_firmware_info")
+	if err := os.WriteFile(path, []byte("SOS feature version: 4294967295, firmware version: 0x80000001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	feat, fw := parseDebugFSFirmwareInfo(path)
+	if feat["SOS"] != 0xffffffff || fw["SOS"] != 0x80000001 {
+		t.Errorf("feat %#x fw %#x", feat["SOS"], fw["SOS"])
 	}
 }
