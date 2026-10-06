@@ -229,7 +229,7 @@ func (p *AMDGPUPlugin) Start() error {
 			}
 		}
 		flipStart := time.Now()
-		if err := amdgpu.SetGPUComputePartitions(bdfs, p.computePartition); err != nil {
+		if err := amdsmi.SetGPUComputePartitions(bdfs, p.computePartition); err != nil {
 			glog.Warningf("compute-partition flip to %s incomplete: %v", p.computePartition, err)
 		}
 		glog.V(2).Infof("compute-partition flip to %s took %s", p.computePartition, time.Since(flipStart))

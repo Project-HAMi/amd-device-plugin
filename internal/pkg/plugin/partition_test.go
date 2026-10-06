@@ -13,6 +13,7 @@ import (
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/allocator"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -89,7 +90,7 @@ func TestResolveUpstreamAMDGPUIndex(t *testing.T) {
 func TestRegistrationWithoutAMDSMI(t *testing.T) {
 	fail := func([]string) (map[string]string, error) { return nil, errors.New("amdsmi down") }
 	p := NewAMDGPUPlugin(WithSysfsRoot(mi355xRoot), WithAmdSMI(fail, fail, fail),
-		WithAMDSPartitionProfiles(func([]string) (map[string][]amdgpu.PartitionProfile, error) {
+		WithAMDSPartitionProfiles(func([]string) (map[string][]amdsmi.PartitionProfile, error) {
 			return nil, errors.New("amdsmi down")
 		}))
 	if got := p.getAPIDevices(); len(got) != 0 {
@@ -134,14 +135,14 @@ func TestXCPRegistrationReplacesParent(t *testing.T) {
 			return out, nil
 		}
 	}
-	profiles := []amdgpu.PartitionProfile{{Type: "SPX", NumPartitions: 1}, {Type: "QPX", NumPartitions: 4}}
+	profiles := []amdsmi.PartitionProfile{{Type: "SPX", NumPartitions: 1}, {Type: "QPX", NumPartitions: 4}}
 	newPlugin := func(mode string) *AMDGPUPlugin {
 		p := NewAMDGPUPlugin(WithSysfsRoot(xcpFixture(t)),
 			WithAmdSMI(lookup(func(g amdsmiGolden) string { return g.UUID }),
 				lookup(func(g amdsmiGolden) string { return g.Type }),
 				lookup(func(amdsmiGolden) string { return "nps1" })),
-			WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdgpu.PartitionProfile, error) {
-				out := map[string][]amdgpu.PartitionProfile{}
+			WithAMDSPartitionProfiles(func(bdfs []string) (map[string][]amdsmi.PartitionProfile, error) {
+				out := map[string][]amdsmi.PartitionProfile{}
 				for _, bdf := range bdfs {
 					out[bdf] = profiles
 				}
@@ -284,7 +285,7 @@ func TestStartOnHardware(t *testing.T) {
 }
 
 func TestNumPartitionsForUnknownType(t *testing.T) {
-	if n := numPartitionsForMode([]amdgpu.PartitionProfile{{Type: "SPX", NumPartitions: 1}}, "tpx"); n != 1 {
+	if n := numPartitionsForMode([]amdsmi.PartitionProfile{{Type: "SPX", NumPartitions: 1}}, "tpx"); n != 1 {
 		t.Fatalf("unknown type = %d partitions, want 1", n)
 	}
 }
@@ -312,7 +313,7 @@ func TestRegistrationByROCrIndex(t *testing.T) {
 		return out, nil
 	}
 	p := NewAMDGPUPlugin(WithSysfsRoot(root), WithAmdSMI(uuid, uuid, uuid),
-		WithAMDSPartitionProfiles(func([]string) (map[string][]amdgpu.PartitionProfile, error) { return nil, nil }))
+		WithAMDSPartitionProfiles(func([]string) (map[string][]amdsmi.PartitionProfile, error) { return nil, nil }))
 	p.getAPIDevices()
 	if rocr := p.bdfToROCrUUID["0000:75:00.0"]; rocr != "0" {
 		t.Fatalf("ROCr id for the unique_id 0 GPU = %q, want agent index 0", rocr)
