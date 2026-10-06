@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.0.3
+
+### Fixed
+
+- The bundled `libamvgpu.so` publishes its shared region and pod environment to other threads with acquire/release, so a thread can no longer see them ready before they are; ThreadSanitizer is now part of the hook's CI (#143, Project-HAMi/amd-hami-core#20).
+
 ## v0.0.2
 
 ### Added

@@ -48,8 +48,8 @@ LABEL \
     name="amd-k8s-device-plugin" \
     maintainer="Project-HAMi maintainers" \
     vendor="Project-HAMi" \
-    version="0.0.2" \
-    release="0.0.2" \
+    version="0.0.3" \
+    release="0.0.3" \
     summary="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads." \
     description="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads. With the appropriate hardware and this plugin deployed in your Kubernetes cluster, you will be able to run jobs that require AMD GPU."
 RUN mkdir -p /licenses && \
