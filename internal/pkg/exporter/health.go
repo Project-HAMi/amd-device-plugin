@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
@@ -58,8 +59,7 @@ func getGPUHealth() (hMap map[string]string, err error) {
 	conn, err := grpc.NewClient(healthSvcAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		glog.Errorf("Error opening client metrics svc : %v", err)
+	if logExporterState(err) {
 		return
 	}
 
@@ -70,8 +70,7 @@ func getGPUHealth() (hMap map[string]string, err error) {
 	defer cancel()
 
 	resp, err := client.List(ctx, &emptypb.Empty{})
-	if err != nil {
-		glog.Errorf("Error getting health info svc : %v", err)
+	if logExporterState(err) {
 		return
 	}
 	for _, gpu := range resp.GPUState {
@@ -82,6 +81,31 @@ func getGPUHealth() (hMap map[string]string, err error) {
 		}
 	}
 	return
+}
+
+// exporterDown remembers that the exporter was unreachable, so a stale
+// socket left by a stopped exporter logs once instead of on every health
+// check.
+var exporterDown atomic.Bool
+
+// warnf is glog.Warningf, replaceable in tests.
+var warnf = glog.Warningf
+
+// logExporterState logs when the exporter becomes unreachable or reachable
+// again, and reports whether err is set.
+func logExporterState(err error) bool {
+	if err != nil {
+		if !exporterDown.Swap(true) {
+			warnf("metrics exporter unreachable, using DRM health only until it returns: %v", err)
+		} else {
+			glog.V(4).Infof("metrics exporter still unreachable: %v", err)
+		}
+		return true
+	}
+	if exporterDown.Swap(false) {
+		glog.Info("metrics exporter reachable again")
+	}
+	return false
 }
 
 // PopulatePerGPUDHealth populate the per gpu health status if available,

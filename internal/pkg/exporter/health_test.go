@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,5 +31,37 @@ func TestApplyHealthMapsPartitionToParentGPU(t *testing.T) {
 		partitionBDF(platform, "../../../testdata/topology-parsing-mi308"))
 	if devs[0].Health != pluginapi.Unhealthy || devs[1].Health != pluginapi.Healthy {
 		t.Errorf("health = %s, %s; want Unhealthy, Healthy", devs[0].Health, devs[1].Health)
+	}
+}
+
+// A stale socket from a stopped exporter fails every health check; only the
+// transitions may be logged at warning level.
+func TestLogExporterStateLogsTransitionsOnce(t *testing.T) {
+	exporterDown.Store(false)
+	warnings := 0
+	old := warnf
+	warnf = func(string, ...any) { warnings++ }
+	t.Cleanup(func() { exporterDown.Store(false); warnf = old })
+	down := errors.New("connection refused")
+	for i, step := range []struct {
+		err       error
+		wantDown  bool
+		wantState bool
+	}{
+		{down, true, true},
+		{down, true, true},
+		{nil, false, false},
+		{down, true, true},
+	} {
+		if got := logExporterState(step.err); got != step.wantDown {
+			t.Errorf("step %d: logExporterState = %v, want %v", i, got, step.wantDown)
+		}
+		if exporterDown.Load() != step.wantState {
+			t.Errorf("step %d: exporterDown = %v, want %v", i, exporterDown.Load(), step.wantState)
+		}
+	}
+	// down, still down, back, down again: one warning per outage
+	if warnings != 2 {
+		t.Errorf("warnings = %d, want 2", warnings)
 	}
 }
