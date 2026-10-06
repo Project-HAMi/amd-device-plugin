@@ -825,7 +825,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						}
 						if !dmemFallback {
 							utils.PodAllocationFailed(nodename, current, NodeLockName)
-							return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s, not glibc; LD_AUDIT cannot enforce the memory limit and no dmem cgroup fallback is available, refusing to start unprotected", currentCtr.Image, libc)
+							return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s; LD_AUDIT cannot enforce the memory limit and no dmem cgroup fallback is available, refusing to start unprotected", currentCtr.Image, libc)
 						}
 					}
 				}
