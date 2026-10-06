@@ -21,9 +21,10 @@ dp:
   hostHookPath: "/usr/local"
   # Seconds between per-GPU health checks; 0 disables them.
   healthPulse: 10
-  # How many workloads may share one GPU. On gfx12 (RDNA4) more than about 2
-  # sharers contend for compute queues; see the README.
-  splitCount: 10
+  # How many workloads may share one GPU. 0 picks it per GPU: 2 on gfx12
+  # (RDNA4), where more sharers contend for compute queues (see the README),
+  # otherwise 10.
+  splitCount: 0
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
   # Experimental: also cap sliced allocations through the kernel dmem cgroup

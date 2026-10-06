@@ -49,8 +49,23 @@ import (
 )
 
 // splitCount is how many workloads may share one GPU. Set once at startup
-// from AMDGPULister.SplitCount; gfx12 GPUs contend above about 2 (see README).
-var splitCount = 10
+// from AMDGPULister.SplitCount; 0 picks it per GPU, see splitCountFor.
+var splitCount = 0
+
+// splitCountFor returns how many workloads may share the GPU at a KFD node.
+// gfx12 has only 2 CP pipes for user compute queues, so more than about 2
+// processes per GPU collapse each other's throughput (see README); other
+// GPUs keep the long-standing default of 10.
+func splitCountFor(topoNodesDir string, nodeId int) int {
+	if splitCount > 0 {
+		return splitCount
+	}
+	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
+	if err == nil && v >= 120000 {
+		return 2
+	}
+	return 10
+}
 
 // Plugin is identical to DevicePluginServer interface of device plugin API.
 type AMDGPUPlugin struct {
@@ -292,7 +307,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		out = append(out, &utils.DeviceInfo{
 			ID:           uuid,
 			Index:        uint(card),
-			Count:        int32(splitCount),
+			Count:        int32(splitCountFor(kfdTopologyNodes, nodeId)),
 			Devmem:       capacity.VRAMMiB,
 			Devcore:      capacity.CUCount,
 			Type:         deviceType,
@@ -357,7 +372,7 @@ func getDevices() []*allocator.Device {
 	var deviceList []*allocator.Device
 
 	for id, deviceData := range devices {
-		for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
+		for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, deviceData["nodeId"].(int)); splitIdx++ {
 			device := &allocator.Device{
 				Id:                   fmt.Sprintf("%s#%d", id, splitIdx),
 				Card:                 deviceData["card"].(int),
@@ -455,7 +470,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 		}
 	}
 
-	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*splitCount)
+	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs))
 	isHomogeneous := amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
 	resourceTypeDevs := make(map[string][]*pluginapi.Device)
@@ -474,7 +489,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 					}
 				}
 
-				for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
+				for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, device["nodeId"].(int)); splitIdx++ {
 					dev := &pluginapi.Device{
 						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
 						Health: pluginapi.Healthy,
@@ -501,7 +516,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 				}
 
 				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
-				for splitIdx := 0; splitIdx < splitCount; splitIdx++ {
+				for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, device["nodeId"].(int)); splitIdx++ {
 					dev := &pluginapi.Device{
 						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
 						Health: pluginapi.Healthy,

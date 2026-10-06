@@ -225,15 +225,28 @@ func TestComputeQueues(t *testing.T) {
 	}
 }
 
+// gfx12 has only 2 CP pipes for user queues, so it defaults to 2 sharers per
+// GPU; an explicit --split_count applies to every GPU.
 func TestListerSplitCount(t *testing.T) {
 	defer func(n int) { splitCount = n }(splitCount)
-	(&AMDGPULister{}).NewPlugin("gpu")
-	if splitCount != 10 {
-		t.Fatalf("default splitCount = %d, want 10", splitCount)
+	dir := t.TempDir()
+	for node, gfx := range map[string]string{"1": "120001", "2": "100306", "3": "90402"} {
+		if err := os.MkdirAll(filepath.Join(dir, node), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, node, "properties"), []byte("gfx_target_version "+gfx+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	(&AMDGPULister{SplitCount: 2}).NewPlugin("gpu")
-	if splitCount != 2 {
-		t.Errorf("splitCount = %d, want 2", splitCount)
+	(&AMDGPULister{}).NewPlugin("gpu")
+	for node, want := range map[int]int{1: 2, 2: 10, 3: 10, 9: 10} {
+		if got := splitCountFor(dir, node); got != want {
+			t.Errorf("default split count on node %d = %d, want %d", node, got, want)
+		}
+	}
+	(&AMDGPULister{SplitCount: 4}).NewPlugin("gpu")
+	if got := splitCountFor(dir, 1); got != 4 {
+		t.Errorf("explicit split count on gfx12 = %d, want 4", got)
 	}
 }
 
