@@ -151,11 +151,20 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 		_ = exec.CommandContext(context.Background(), ins.CtrPath, unmountArgs...).Run()
 	}()
 
-	libc, err := findLibc(mountDir)
-	if err != nil || libc != Glibc {
-		return libc, err
+	return inspectRoot(mountDir)
+}
+
+// inspectRoot classifies a mounted image with a single walk of its tree:
+// images are large and Allocate waits for the answer.
+func inspectRoot(root string) (Libc, error) {
+	r, err := scan(root)
+	if err != nil {
+		return Unknown, fmt.Errorf("walk mounted image: %w", err)
 	}
-	okVersion, err := glibcAtLeastMinimum(mountDir)
+	if libc := r.libc(); libc != Glibc {
+		return libc, nil
+	}
+	okVersion, err := r.glibcAtLeastMinimum(root)
 	if err != nil {
 		return Unknown, fmt.Errorf("check glibc version: %w", err)
 	}
@@ -198,6 +207,10 @@ func glibcAtLeastMinimum(root string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("walk mounted image for libc.so.6: %w", err)
 	}
+	return r.glibcAtLeastMinimum(root)
+}
+
+func (r scanResult) glibcAtLeastMinimum(root string) (bool, error) {
 	libcPath := r.libcStd
 	if libcPath == "" {
 		libcPath = r.libcOther
@@ -205,7 +218,7 @@ func glibcAtLeastMinimum(root string) (bool, error) {
 	if libcPath == "" {
 		return false, fmt.Errorf("libc.so.6 not found despite a glibc dynamic loader")
 	}
-	data, err := os.ReadFile(libcPath)
+	data, err := readInImage(root, libcPath)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", libcPath, err)
 	}
@@ -231,15 +244,40 @@ func findLibc(root string) (Libc, error) {
 	if err != nil {
 		return Unknown, fmt.Errorf("walk mounted image: %w", err)
 	}
+	return r.libc(), nil
+}
+
+func (r scanResult) libc() Libc {
 	switch {
 	case r.glibcStd:
-		return Glibc, nil
+		return Glibc
 	case r.musl:
-		return Musl, nil
+		return Musl
 	case r.glibcOther:
-		return Glibc, nil
+		return Glibc
 	}
-	return Unknown, nil
+	return Unknown
+}
+
+// readInImage reads path inside the mounted image root, resolving symlinks
+// against root: an absolute link such as libc.so.6 -> /lib/libc-2.31.so
+// would otherwise read the host's own libc and report its version.
+func readInImage(root, path string) ([]byte, error) {
+	for range 40 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			break // not a symlink
+		}
+		if filepath.IsAbs(target) {
+			path = filepath.Join(root, target)
+		} else {
+			path = filepath.Join(filepath.Dir(path), target)
+		}
+		if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return nil, fmt.Errorf("%s points outside the image", target)
+		}
+	}
+	return os.ReadFile(path)
 }
 
 // stdLibDir matches the image-relative directories a distro installs its

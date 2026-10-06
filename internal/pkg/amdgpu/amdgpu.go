@@ -184,7 +184,7 @@ func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
 	renderDevIds := make(map[int]string)
 	nodeFiles, _ := filepath.Glob(topoRoot + "/topology/nodes/*/properties")
 	for _, nodeFile := range nodeFiles {
-		glog.Info("Parsing " + nodeFile)
+		glog.V(4).Info("Parsing " + nodeFile)
 		v, e := ParseTopologyProperties(nodeFile, topoDrmRenderMinorRe)
 		if e != nil {
 			glog.Error(e)
@@ -206,6 +206,8 @@ func GetDevIdsFromTopology(topoRootParam ...string) map[int]string {
 			continue
 		}
 
+		// the low three bits number an MI300 XCP partition rather than the
+		// PCI function, so every partition maps to its parent GPU's BDF
 		dev := (locationId >> 3) & 0x1f
 		bus := (locationId >> 8) & 0xff
 		devID := fmt.Sprintf("%04x:%02x:%02x:0", domain, bus, dev)
@@ -339,8 +341,8 @@ func UniquePartitionConfigCount(devices map[string]map[string]interface{}) map[s
 	return partitionCountMap
 }
 
-func IsHomogeneous() bool {
-	gpus := GetAMDGPUs()
+// IsHomogeneous reports whether all gpus share one partition configuration.
+func IsHomogeneous(gpus map[string]map[string]interface{}) bool {
 	partitionCountMap := UniquePartitionConfigCount(gpus)
 
 	// Homogeneous if the map is empty or contains exactly one partition type
@@ -593,7 +595,7 @@ func GetNodeIdsFromTopology(topoRootParam ...string) map[int]int {
 	renderNodeIds := make(map[int]int)
 	nodeFiles, _ := filepath.Glob(topoRoot + "/topology/nodes/*/properties")
 	for _, nodeFile := range nodeFiles {
-		glog.Info("Parsing " + nodeFile)
+		glog.V(4).Info("Parsing " + nodeFile)
 		v, e := ParseTopologyProperties(nodeFile, topoDrmRenderMinorRe)
 		if e != nil {
 			glog.Error(e)

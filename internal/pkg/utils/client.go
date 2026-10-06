@@ -38,10 +38,6 @@ var (
 	once       sync.Once
 )
 
-func init() {
-	KubeClient = nil
-}
-
 // GetClient returns the global Kubernetes client.
 func GetClient() kubernetes.Interface {
 	return KubeClient

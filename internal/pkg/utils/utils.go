@@ -228,9 +228,15 @@ func GetNextDeviceRequest(dtype string, p corev1.Pod) (corev1.Container, Contain
 		return corev1.Container{}, res, fmt.Errorf("device request not found")
 	}
 	for ctridx, ctrDevice := range pd {
-		if len(ctrDevice) > 0 {
-			return p.Spec.Containers[ctridx], ctrDevice, nil
+		if len(ctrDevice) == 0 {
+			continue
 		}
+		// a stale or hand-edited annotation can list more containers than
+		// the pod has; refuse it instead of panicking in Allocate
+		if ctridx >= len(p.Spec.Containers) {
+			return corev1.Container{}, res, fmt.Errorf("device request for container %d, pod has %d", ctridx, len(p.Spec.Containers))
+		}
+		return p.Spec.Containers[ctridx], ctrDevice, nil
 	}
 	return corev1.Container{}, res, fmt.Errorf("device request not found")
 }

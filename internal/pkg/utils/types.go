@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	AssignedTimeAnnotations = "hami.io/vgpu-time"
 	AssignedNodeAnnotations = "hami.io/vgpu-node"
 	BindTimeAnnotations     = "hami.io/bind-time"
 	DeviceBindPhase         = "hami.io/bind-phase"
@@ -39,60 +38,8 @@ const (
 	DeviceBindFailed     = "failed"
 	DeviceBindSuccess    = "success"
 
-	DeviceLimit = 100
-
-	BestEffort string = "best-effort"
-	Restricted string = "restricted"
-	Guaranteed string = "guaranteed"
-
 	// NodeNameEnvName define env var name for use get node name.
 	NodeNameEnvName = "NODE_NAME"
-	TaskPriority    = "CUDA_TASK_PRIORITY"
-	CoreLimitSwitch = "GPU_CORE_UTILIZATION_POLICY"
-
-	// LeaderRoleLabel is the label key used to identify the leader pod.
-	HAMiRoleLabel = "hami.io/scheduler-role"
-	// LeaderRoleLabelValueLeader is the label value used to identify the leader pod.
-	HAMiRoleLabelValueLeader = "leader"
-	// LeaderRoleLabelValueFollower is the label value used to identify the follower pod.
-	HAMiRoleLabelValueFollower = "follower"
-
-	// HAMiSchedulerLabelValue is the label key to identify the component of HAMi in Kubernetes.
-	HAMiComponentLabel = "app.kubernetes.io/component"
-	// HAMiComponentScheduler the label value for hami-scheduler.
-	HAMiComponentScheduler = "hami-scheduler"
-)
-
-var (
-	DebugMode         bool
-	NodeName          string
-	RuntimeSocketFlag string
-)
-
-type SchedulerPolicyName string
-
-const (
-	// NodeSchedulerPolicyBinpack is node use binpack scheduler policy.
-	NodeSchedulerPolicyBinpack SchedulerPolicyName = "binpack"
-	// NodeSchedulerPolicySpread is node use spread scheduler policy.
-	NodeSchedulerPolicySpread SchedulerPolicyName = "spread"
-	// GPUSchedulerPolicyBinpack is GPU use binpack scheduler.
-	GPUSchedulerPolicyBinpack SchedulerPolicyName = "binpack"
-	// GPUSchedulerPolicySpread is GPU use spread scheduler.
-	GPUSchedulerPolicySpread SchedulerPolicyName = "spread"
-	// GPUSchedulerPolicyTopology is GPU use topology scheduler.
-	GPUSchedulerPolicyTopology SchedulerPolicyName = "topology-aware"
-)
-
-const (
-	// NodeSchedulerPolicyAnnotationKey is user set Pod annotation to change this default node policy.
-	NodeSchedulerPolicyAnnotationKey = "hami.io/node-scheduler-policy"
-	// GPUSchedulerPolicyAnnotationKey is user set Pod annotation to change this default GPU policy.
-	GPUSchedulerPolicyAnnotationKey = "hami.io/gpu-scheduler-policy"
-)
-
-const (
-	Weight int = 10
 )
 
 type DeviceInfo struct {
@@ -110,8 +57,6 @@ type DeviceInfo struct {
 }
 
 type ContainerDevice struct {
-	// TODO current Idx cannot use, because EncodeContainerDevices method not encode this filed.
-	Idx        int
 	UUID       string
 	Type       string
 	Usedmem    int32
@@ -119,19 +64,9 @@ type ContainerDevice struct {
 	CustomInfo map[string]any
 }
 
-type ContainerDeviceRequest struct {
-	Nums             int32
-	Type             string
-	Memreq           int32
-	MemPercentagereq int32
-	Coresreq         int32
-}
-
 type ContainerDevices []ContainerDevice
-type ContainerDeviceRequests map[string]ContainerDeviceRequest
 
 type PodSingleDevice []ContainerDevices
-type PodDeviceRequests []ContainerDeviceRequests
 type PodDevices map[string]PodSingleDevice
 
 const (
@@ -142,18 +77,8 @@ const (
 	OnePodMultiContainerSplitSymbol = ";"
 )
 
-var (
-	GPUSchedulerPolicy string
-	InRequestDevices   map[string]string
-	SupportDevices     map[string]string
-)
-
-func init() {
-	InRequestDevices = make(map[string]string)
-	InRequestDevices["amd"] = DeviceToAllocate
-	SupportDevices = make(map[string]string)
-	SupportDevices["amd"] = DeviceAllocation
-}
+// InRequestDevices maps a device type to its to-allocate annotation.
+var InRequestDevices = map[string]string{"amd": DeviceToAllocate}
 
 func DecodeContainerDevices(str string) (ContainerDevices, error) {
 	if len(str) == 0 {

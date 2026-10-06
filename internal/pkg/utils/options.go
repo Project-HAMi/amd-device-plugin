@@ -17,8 +17,6 @@ limitations under the License.
 package utils
 
 import (
-	"time"
-
 	"k8s.io/client-go/rest"
 )
 
@@ -27,9 +25,8 @@ type Option func(*rest.Config)
 
 // Now we use the default values of kubernetes client, unless HAMi has specific requirements.
 const (
-	DefaultQPS     float32 = rest.DefaultQPS
-	DefaultBurst   int     = rest.DefaultBurst
-	DefaultTimeout int     = 0 // seconds, 0 means no timeout, follow the default behavior of kubernetes client.
+	DefaultQPS   float32 = rest.DefaultQPS
+	DefaultBurst int     = rest.DefaultBurst
 )
 
 // WithDefaults sets default values for the client configuration.
@@ -40,9 +37,6 @@ func WithDefaults() Option {
 		}
 		if c.Burst == 0 {
 			c.Burst = DefaultBurst
-		}
-		if c.Timeout == 0 {
-			c.Timeout = time.Duration(DefaultTimeout) * time.Second
 		}
 	}
 }
