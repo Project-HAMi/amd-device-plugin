@@ -758,7 +758,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					// Whole GPU: mask every CU.
 					cores = totalCUs
 				}
-				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores)
+				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, p.cuMaskUnit(d.UUID, kfdTopologyNodes))
 				if err != nil {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
@@ -1024,6 +1024,24 @@ var cpQueuesRe = regexp.MustCompile(`num_cp_queues\s(\d+)`)
 
 // computeQueues returns the user compute queue (HQD) slots KFD reports for a
 // GPU node. Processes sharing a GPU beyond these slots contend for dispatch.
+var gfxVersionRe = regexp.MustCompile(`gfx_target_version\s(\d+)`)
+
+// cuMaskUnit returns how many CUs HSA_CU_MASK must enable together on a GPU.
+// RDNA (gfx10 and later) applies the mask per WGP, two CUs, and silently
+// ignores a mask that enables only one CU of a pair; CDNA masks single CUs.
+func (p *AMDGPUPlugin) cuMaskUnit(uuid, topoNodesDir string) int {
+	data, err := p.deviceDataFromAllocationUUID(uuid, "")
+	if err != nil {
+		return 1
+	}
+	nodeId, _ := data["nodeId"].(int)
+	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
+	if err == nil && v >= 100000 {
+		return 2
+	}
+	return 1
+}
+
 func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
 	q, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), cpQueuesRe)
 	return q, err == nil && q > 0
