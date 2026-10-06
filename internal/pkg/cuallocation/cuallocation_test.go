@@ -21,27 +21,22 @@ func TestAllocateN(t *testing.T) {
 	}
 }
 
-func TestReleaseManyWithDelta(t *testing.T) {
-	const totalCUs = 320
-	allocation, err := NewAllocation(totalCUs)
-	if err != nil {
-		t.Fatalf("NewAllocation failed: %v", err)
+func TestFailedCallsLeaveAllocationUnchanged(t *testing.T) {
+	const totalCUs = 128
+	allocation := Allocation{0b1, 0}
+	if _, _, err := AllocateN(allocation, totalCUs, totalCUs, 1); err == nil {
+		t.Fatal("AllocateN of more CUs than are free must fail")
 	}
-
-	allocation, delta, err := AllocateN(allocation, totalCUs, 5, 1)
-	if err != nil {
-		t.Fatalf("AllocateN failed: %v", err)
+	if allocation[0] != 0b1 || allocation[1] != 0 {
+		t.Fatalf("failed AllocateN mutated allocation: %#x", allocation)
 	}
-	if CountAllocated(allocation) != 5 {
-		t.Fatalf("expected 5 allocated, got %d", CountAllocated(allocation))
+	// Word 0 adds cleanly, word 1 overlaps: nothing may be applied.
+	allocation = Allocation{0, 0b1}
+	if _, err := AddAllocation(allocation, totalCUs, Allocation{0b10, 0b1}); err == nil {
+		t.Fatal("AddAllocation of an allocated bit must fail")
 	}
-
-	allocation, err = ReleaseAllocation(allocation, totalCUs, delta)
-	if err != nil {
-		t.Fatalf("ReleaseMany failed: %v", err)
-	}
-	if CountAllocated(allocation) != 0 {
-		t.Fatalf("expected 0 allocated after release, got %d", CountAllocated(allocation))
+	if allocation[0] != 0 || allocation[1] != 0b1 {
+		t.Fatalf("failed AddAllocation mutated allocation: %#x", allocation)
 	}
 }
 
@@ -61,40 +56,6 @@ func TestAddAllocationWithDelta(t *testing.T) {
 	}
 	if CountAllocated(allocation) != 2 {
 		t.Fatalf("expected 2 allocated after add, got %d", CountAllocated(allocation))
-	}
-}
-
-func TestUpdateByReleaseThenAdd(t *testing.T) {
-	const totalCUs = 128
-	allocation, err := NewAllocation(totalCUs)
-	if err != nil {
-		t.Fatalf("NewAllocation failed: %v", err)
-	}
-
-	// Initial allocation: CU 0-3.
-	allocation, _, err = AllocateN(allocation, totalCUs, 4, 1)
-	if err != nil {
-		t.Fatalf("AllocateN failed: %v", err)
-	}
-
-	// Update target: keep CU 2-3, replace CU 0-1 with CU 4-5.
-	releaseDelta := make(Allocation, len(allocation))
-	releaseDelta[0] = (uint64(1) << 0) | (uint64(1) << 1)
-	addDelta := make(Allocation, len(allocation))
-	addDelta[0] = (uint64(1) << 4) | (uint64(1) << 5)
-
-	allocation, err = ReleaseAllocation(allocation, totalCUs, releaseDelta)
-	if err != nil {
-		t.Fatalf("ReleaseMany failed: %v", err)
-	}
-	allocation, err = AddAllocation(allocation, totalCUs, addDelta)
-	if err != nil {
-		t.Fatalf("AddAllocation failed: %v", err)
-	}
-
-	expected := (uint64(1) << 2) | (uint64(1) << 3) | (uint64(1) << 4) | (uint64(1) << 5)
-	if allocation[0] != expected {
-		t.Fatalf("unexpected bitmap after update: got=%064b want=%064b", allocation[0], expected)
 	}
 }
 

@@ -17,7 +17,8 @@
 // Package libcheck inspects a pulled-but-not-yet-running container image's
 // root filesystem to tell whether it is glibc-based, musl-based (Alpine and
 // similar), or statically linked. libamvgpu.so enforces the per-pod memory
-// and CU-slice limits through the LD_AUDIT interface, which musl's dynamic
+// limit (ROCm enforces the CU slice via HSA_CU_MASK, which the hook pins)
+// through the LD_AUDIT interface, which musl's dynamic
 // linker does not implement at all and a statically linked entrypoint never
 // invokes either way; both silently run unprotected instead of failing.
 // amd-device-plugin's Allocate can use this to refuse a sliced allocation
@@ -41,6 +42,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -86,11 +88,12 @@ func (l Libc) AuditCompatible() bool {
 	return l == Glibc
 }
 
-// muslMarkers and glibcMarkers are dynamic loader filenames, checked by
-// exact basename match so this does not depend on which directory a given
+// muslMarkerPrefix and glibcMarkers identify dynamic loader filenames by
+// basename, so finding one does not depend on which directory a given
 // distro installs it under (differs between Debian/Ubuntu, Alpine, Fedora,
 // and 32-bit multiarch layouts).
-var muslMarkerPrefixes = []string{"ld-musl-"}
+const muslMarkerPrefix = "ld-musl-"
+
 var glibcMarkers = []string{
 	"ld-linux-x86-64.so.2",
 	"ld-linux-aarch64.so.1",
@@ -133,10 +136,11 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 	if err != nil {
 		return Unknown, fmt.Errorf("create scratch mount dir: %w", err)
 	}
-	defer os.Remove(mountDir)
+	defer func() { _ = os.Remove(mountDir) }()
 
 	imageRef = normalizeRef(imageRef)
-	mountArgs := []string{"--namespace", ins.Namespace, "--address", ins.ContainerdSocket, "images", "mount", imageRef, mountDir}
+	// "--" ends flag parsing, so a ref starting with '-' is never a flag.
+	mountArgs := []string{"--namespace", ins.Namespace, "--address", ins.ContainerdSocket, "images", "mount", "--", imageRef, mountDir}
 	if out, err := exec.CommandContext(ctx, ins.CtrPath, mountArgs...).CombinedOutput(); err != nil {
 		return Unknown, fmt.Errorf("ctr images mount %s: %w (%s)", imageRef, err, strings.TrimSpace(string(out)))
 	}
@@ -186,21 +190,17 @@ func normalizeRef(ref string) string {
 // glibcAtLeastMinimum reports whether root's libc.so.6 defines
 // GLIBC_2.minGlibcMinor or newer. Only called once findLibc has already
 // found a glibc dynamic loader, so a missing libc.so.6 is itself an
-// error, not just "unknown".
+// error, not just "unknown". A libc.so.6 in a standard library directory
+// wins over one vendored elsewhere (e.g. under /opt): it is the one the
+// standard loader resolves.
 func glibcAtLeastMinimum(root string) (bool, error) {
-	var libcPath string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !d.IsDir() && d.Name() == "libc.so.6" {
-			libcPath = path
-			return fs.SkipAll
-		}
-		return nil
-	})
+	r, err := scan(root)
 	if err != nil {
 		return false, fmt.Errorf("walk mounted image for libc.so.6: %w", err)
+	}
+	libcPath := r.libcStd
+	if libcPath == "" {
+		libcPath = r.libcOther
 	}
 	if libcPath == "" {
 		return false, fmt.Errorf("libc.so.6 not found despite a glibc dynamic loader")
@@ -221,32 +221,68 @@ func glibcAtLeastMinimum(root string) (bool, error) {
 	return maxMinor >= minGlibcMinor, nil
 }
 
+// findLibc classifies root by the dynamic loader its binaries would use. A
+// glibc loader in a standard library directory wins over a musl loader, so a
+// glibc image that also ships Debian's musl package is still glibc; a musl
+// loader wins over a glibc loader vendored elsewhere, so an Alpine image
+// carrying a glibc copy under /opt is still musl.
 func findLibc(root string) (Libc, error) {
-	found := Unknown
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // permission-denied etc. on one entry: keep looking
-		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		for _, m := range glibcMarkers {
-			if name == m {
-				found = Glibc
-				return fs.SkipAll
-			}
-		}
-		for _, p := range muslMarkerPrefixes {
-			if strings.HasPrefix(name, p) {
-				found = Musl
-				return fs.SkipAll
-			}
-		}
-		return nil
-	})
+	r, err := scan(root)
 	if err != nil {
 		return Unknown, fmt.Errorf("walk mounted image: %w", err)
 	}
-	return found, nil
+	switch {
+	case r.glibcStd:
+		return Glibc, nil
+	case r.musl:
+		return Musl, nil
+	case r.glibcOther:
+		return Glibc, nil
+	}
+	return Unknown, nil
+}
+
+// stdLibDir matches the image-relative directories a distro installs its
+// glibc loader and libc.so.6 in (Debian/Ubuntu multiarch, Fedora/RHEL lib64,
+// lib32), as opposed to a copy vendored under /opt or an application dir.
+var stdLibDir = regexp.MustCompile(`^(usr/)?lib(32|64)?(/[^/]+-linux-gnu[^/]*)?$`)
+
+type scanResult struct {
+	glibcStd, glibcOther, musl bool
+	libcStd, libcOther         string // first libc.so.6 found in each class
+}
+
+// scan walks root once, without following symlinks (an absolute symlink in
+// a mounted image would resolve against the host), and records which
+// dynamic loaders and libc.so.6 copies the image contains.
+func scan(root string) (scanResult, error) {
+	var r scanResult
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil && path == root {
+			return err
+		}
+		// Any other error is one unreadable entry inside the image:
+		// skipping it and scanning the rest is deliberate.
+		if err == nil && !d.IsDir() {
+			r.record(root, path, d.Name())
+		}
+		return nil
+	})
+	return r, err
+}
+
+func (r *scanResult) record(root, path, name string) {
+	rel, _ := filepath.Rel(root, filepath.Dir(path))
+	std := stdLibDir.MatchString(filepath.ToSlash(rel))
+	switch {
+	case slices.Contains(glibcMarkers, name):
+		r.glibcStd = r.glibcStd || std
+		r.glibcOther = r.glibcOther || !std
+	case strings.HasPrefix(name, muslMarkerPrefix):
+		r.musl = true
+	case name == "libc.so.6" && std && r.libcStd == "":
+		r.libcStd = path
+	case name == "libc.so.6" && !std && r.libcOther == "":
+		r.libcOther = path
+	}
 }

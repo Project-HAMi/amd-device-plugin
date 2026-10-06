@@ -34,8 +34,9 @@ func CountAllocated(allocation Allocation) int {
 	return count
 }
 
-// AddAllocation allocates bits set in addDelta into allocation.
-// This matches AllocateN's second return value (delta bitmap).
+// AddAllocation allocates bits set in addDelta into allocation, in place.
+// This matches AllocateN's second return value (delta bitmap). On error
+// allocation is left unchanged.
 func AddAllocation(allocation Allocation, totalCUs int, addDelta Allocation) (Allocation, error) {
 	needWords := wordsFor(totalCUs)
 	if len(allocation) < needWords {
@@ -44,16 +45,15 @@ func AddAllocation(allocation Allocation, totalCUs int, addDelta Allocation) (Al
 	if len(addDelta) < needWords {
 		return allocation, fmt.Errorf("add delta bitmap is too short")
 	}
-
-	current := allocation
 	for i := 0; i < needWords; i++ {
-		// addDelta cannot contain bits that are already allocated.
-		if addDelta[i]&current[i] != 0 {
+		if addDelta[i]&allocation[i] != 0 {
 			return allocation, fmt.Errorf("add delta contains allocated bits")
 		}
-		current[i] |= addDelta[i]
 	}
-	return current, nil
+	for i := 0; i < needWords; i++ {
+		allocation[i] |= addDelta[i]
+	}
+	return allocation, nil
 }
 
 // AllocateN allocates n free CUs first-fit in whole units of unit CUs: 2 on
@@ -62,6 +62,8 @@ func AddAllocation(allocation Allocation, totalCUs int, addDelta Allocation) (Al
 // Returns:
 //   - updated allocation bitmap
 //   - delta bitmap containing only CUs allocated in this call
+//
+// On success allocation is updated in place; on error it is left unchanged.
 func AllocateN(allocation Allocation, totalCUs, n, unit int) (Allocation, Allocation, error) {
 	if n <= 0 {
 		return allocation, nil, fmt.Errorf("n must be > 0")
@@ -86,7 +88,6 @@ func AllocateN(allocation Allocation, totalCUs, n, unit int) (Allocation, Alloca
 			continue
 		}
 		for i := start; i < start+unit; i++ {
-			allocation[i/bitsPerWord] |= uint64(1) << uint(i%bitsPerWord)
 			allocatedDelta[i/bitsPerWord] |= uint64(1) << uint(i%bitsPerWord)
 		}
 		allocatedCount += unit
@@ -95,28 +96,8 @@ func AllocateN(allocation Allocation, totalCUs, n, unit int) (Allocation, Alloca
 	if allocatedCount != n {
 		return allocation, nil, fmt.Errorf("insufficient free CUs: need=%d free=%d", n, totalCUs-CountAllocated(allocation))
 	}
+	for i := range allocation {
+		allocation[i] |= allocatedDelta[i]
+	}
 	return allocation, allocatedDelta, nil
 }
-
-// ReleaseAllocation deallocates bits set in releaseDelta from allocation.
-// This matches AllocateN's second return value (delta bitmap).
-func ReleaseAllocation(allocation Allocation, totalCUs int, releaseDelta Allocation) (Allocation, error) {
-	needWords := wordsFor(totalCUs)
-	if len(allocation) < needWords {
-		return allocation, fmt.Errorf("allocation bitmap is too short")
-	}
-	if len(releaseDelta) < needWords {
-		return allocation, fmt.Errorf("release delta bitmap is too short")
-	}
-
-	current := allocation
-	for i := 0; i < needWords; i++ {
-		// releaseDelta cannot contain bits that are not currently allocated.
-		if releaseDelta[i]&^current[i] != 0 {
-			return allocation, fmt.Errorf("release delta contains unallocated bits")
-		}
-		current[i] &^= releaseDelta[i]
-	}
-	return current, nil
-}
-
