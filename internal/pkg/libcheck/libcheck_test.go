@@ -104,6 +104,84 @@ func TestFindLibcEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestGlibcAtLeastMinimum(t *testing.T) {
+	writeLibc := func(t *testing.T, versions ...string) string {
+		t.Helper()
+		root := t.TempDir()
+		path := filepath.Join(root, "lib", "x86_64-linux-gnu", "libc.so.6")
+		touch(t, path)
+		data := "\x00binary noise\x00"
+		for _, v := range versions {
+			data += "GLIBC_" + v + "\x00"
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	t.Run("new enough", func(t *testing.T) {
+		root := writeLibc(t, "2.2.5", "2.17", "2.34", "2.38")
+		ok, err := glibcAtLeastMinimum(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Error("glibcAtLeastMinimum = false, want true for a libc defining up to 2.38")
+		}
+	})
+
+	t.Run("too old", func(t *testing.T) {
+		root := writeLibc(t, "2.2.5", "2.17", "2.31")
+		ok, err := glibcAtLeastMinimum(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Error("glibcAtLeastMinimum = true, want false for a libc defining only up to 2.31")
+		}
+	})
+
+	t.Run("missing libc.so.6", func(t *testing.T) {
+		if _, err := glibcAtLeastMinimum(t.TempDir()); err == nil {
+			t.Error("expected an error when libc.so.6 is absent")
+		}
+	})
+}
+
+func TestFindLibcAndVersionCheckCompose(t *testing.T) {
+	root := t.TempDir()
+	touch(t, filepath.Join(root, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2"))
+	path := filepath.Join(root, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.WriteFile(path, []byte("GLIBC_2.31\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	libc, err := findLibc(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if libc != Glibc {
+		t.Fatalf("findLibc = %v, want Glibc (version check is separate)", libc)
+	}
+	ok, err := glibcAtLeastMinimum(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected glibc 2.31 to be reported as too old")
+	}
+}
+
+func TestOldGlibcIsNotAuditCompatible(t *testing.T) {
+	if OldGlibc.AuditCompatible() {
+		t.Error("OldGlibc must not be reported LD_AUDIT-compatible")
+	}
+	if OldGlibc.String() == "" {
+		t.Error("OldGlibc.String() must not be empty")
+	}
+}
+
 func TestNormalizeRef(t *testing.T) {
 	cases := map[string]string{
 		"alpine:3.20":          "docker.io/library/alpine:3.20",

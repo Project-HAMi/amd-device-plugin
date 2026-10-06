@@ -40,6 +40,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -54,6 +56,13 @@ const (
 	Unknown Libc = iota
 	Glibc
 	Musl
+	// OldGlibc is a glibc dynamic loader present, but a libc.so.6 older
+	// than minGlibcMinor: loading libamvgpu's LD_AUDIT hook fails with a
+	// dynamic-linker "GLIBC_2.34 not found" error instead of running
+	// unprotected (Project-HAMi/HAMi#2265), but it is still a failure
+	// Allocate should catch and fail closed on rather than let kubelet
+	// hit it as an opaque container crash.
+	OldGlibc
 )
 
 func (l Libc) String() string {
@@ -62,14 +71,17 @@ func (l Libc) String() string {
 		return "glibc"
 	case Musl:
 		return "musl"
+	case OldGlibc:
+		return fmt.Sprintf("glibc older than %s", minGlibcVersion)
 	default:
 		return "unknown/static"
 	}
 }
 
 // AuditCompatible reports whether libamvgpu's LD_AUDIT enforcement applies
-// at all for this libc. Only glibc dynamic-links against a loader that
-// implements LD_AUDIT.
+// at all for this libc. Only a glibc new enough to provide the symbol
+// versions libamvgpu itself requires dynamic-links against a loader that
+// actually loads the hook.
 func (l Libc) AuditCompatible() bool {
 	return l == Glibc
 }
@@ -85,6 +97,21 @@ var glibcMarkers = []string{
 	"ld-linux.so.2",
 	"ld-linux-armhf.so.3",
 }
+
+// minGlibcMinor is libamvgpu's own minimum (see amd-hami-core
+// src/include/glibc_compat.h and test/check_glibc_abi.sh): its LD_AUDIT
+// hook requires GLIBC_2.34 symbol versions to load at all.
+const minGlibcMinor = 34
+
+const minGlibcVersion = "2.34"
+
+// glibcVersionPattern matches the GLIBC_2.NN version-node strings glibc
+// embeds in libc.so.6 for every version it was built to define; the
+// highest one present is that libc's own version, the same fact "strings
+// libc.so.6 | grep GLIBC_" relies on. A plain byte-level regex over the
+// whole file avoids needing objdump/readelf installed in the (minimal,
+// ROCm-runtime-based) device plugin image.
+var glibcVersionPattern = regexp.MustCompile(`GLIBC_2\.([0-9]+)`)
 
 // Inspector mounts images read-only via the host's containerd (through
 // "ctr images mount") to determine their libc. CtrPath and
@@ -120,7 +147,18 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 		_ = exec.CommandContext(context.Background(), ins.CtrPath, unmountArgs...).Run()
 	}()
 
-	return findLibc(mountDir)
+	libc, err := findLibc(mountDir)
+	if err != nil || libc != Glibc {
+		return libc, err
+	}
+	okVersion, err := glibcAtLeastMinimum(mountDir)
+	if err != nil {
+		return Unknown, fmt.Errorf("check glibc version: %w", err)
+	}
+	if !okVersion {
+		return OldGlibc, nil
+	}
+	return Glibc, nil
 }
 
 // normalizeRef expands a pod spec's unqualified image reference (e.g.
@@ -143,6 +181,44 @@ func normalizeRef(ref string) string {
 		remainder += ":latest"
 	}
 	return domain + "/" + remainder
+}
+
+// glibcAtLeastMinimum reports whether root's libc.so.6 defines
+// GLIBC_2.minGlibcMinor or newer. Only called once findLibc has already
+// found a glibc dynamic loader, so a missing libc.so.6 is itself an
+// error, not just "unknown".
+func glibcAtLeastMinimum(root string) (bool, error) {
+	var libcPath string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && d.Name() == "libc.so.6" {
+			libcPath = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("walk mounted image for libc.so.6: %w", err)
+	}
+	if libcPath == "" {
+		return false, fmt.Errorf("libc.so.6 not found despite a glibc dynamic loader")
+	}
+	data, err := os.ReadFile(libcPath)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", libcPath, err)
+	}
+	maxMinor := -1
+	for _, m := range glibcVersionPattern.FindAllSubmatch(data, -1) {
+		if minor, err := strconv.Atoi(string(m[1])); err == nil && minor > maxMinor {
+			maxMinor = minor
+		}
+	}
+	if maxMinor < 0 {
+		return false, fmt.Errorf("no GLIBC_2.x version strings found in %s", libcPath)
+	}
+	return maxMinor >= minGlibcMinor, nil
 }
 
 func findLibc(root string) (Libc, error) {
