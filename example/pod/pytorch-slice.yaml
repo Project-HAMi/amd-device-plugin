@@ -1,0 +1,24 @@
+# A quarter of one AMD GPU's compute units and 4 GiB of its VRAM, through HAMi.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pytorch-gpu-slice-example
+spec:
+  restartPolicy: Never
+  containers:
+  - name: pytorch
+    image: rocm/pytorch:latest
+    command:
+    - python3
+    - "-c"
+    - |
+      import torch
+      free, total = torch.cuda.mem_get_info()
+      print(f"{torch.cuda.get_device_name(0)}: {total / 2**30:.1f} GiB visible")
+      x = torch.ones(1024, 1024, device="cuda")
+      print("sum", (x @ x).sum().item())
+    resources:
+      limits:
+        amd.com/gpu: 1
+        amd.com/gpucores: 25  # percent of the GPU's compute units
+        amd.com/gpumem: 4096  # MiB of VRAM
