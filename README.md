@@ -15,7 +15,7 @@ The Kubernetes device plugin that lets [HAMi](https://github.com/Project-HAMi/HA
 - Handles multi-GPU pods. Device order, CU masks and memory limits stay aligned per GPU, including APUs and iGPUs without a ROCr UUID.
 - Keeps CU allocations across plugin restarts, and marks a GPU unhealthy when its device node can no longer be opened.
 
-Whole-GPU requests skip the hook entirely and work with any container image.
+Whole-GPU requests get no memory hook and no CU restriction, and work with any container image.
 
 ## Requirements
 
@@ -78,7 +78,7 @@ The most common Helm values:
 | `dp.allocatorPolicy` | `besteffort` | How kubelet picks GPUs for multi-GPU pods: `besteffort` (same as `binpack`, closest GPUs) or `spread` (farthest GPUs). |
 | `dp.dmemBackend` | `true` | Hard VRAM cap through the dmem cgroup. It switches itself off on nodes without dmem or the systemd driver. |
 | `dp.cdi.enabled` | `false` | Inject GPUs through CDI instead of device nodes. |
-| `dp.muslFailClosed.enabled` | `false` | Refuse a slice whose image cannot load the memory hook (musl or static). Experimental. |
+| `dp.muslFailClosed.enabled` | `false` | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34), unless dmem caps it. Experimental. |
 | `dp.healthPulse` | `10` | Seconds between GPU health checks. `0` disables them. |
 
 See the [chart README](helm/amd-gpu/README.md) for all values and the [configuration guide](docs/user-guide/configuration.md) for the matching plugin flags.
@@ -86,7 +86,7 @@ See the [chart README](helm/amd-gpu/README.md) for all values and the [configura
 ## Limits
 
 - **CU slices are cooperative.** ROCm applies the mask inside the process. The hook pins `HSA_CU_MASK` to the pod spec, so `setenv` or `os.environ` cannot widen it. A process that re-executes itself without `LD_AUDIT`, however, runs outside the slice. Do not rely on CU slices to isolate untrusted tenants until KFD enforces a CU limit ([#55](https://github.com/Project-HAMi/amd-device-plugin/issues/55)).
-- **Memory limits need glibc 2.34 or newer** because the hook loads through `LD_AUDIT`. musl/Alpine and older glibc images are only capped by dmem, and only where dmem is available.
+- **Memory limits need glibc 2.34 or newer** because the hook loads through `LD_AUDIT`. musl and static images never load the hook, so only dmem caps them, and only where dmem is available. On older glibc the dynamic linker fails to load the hook (`GLIBC_2.34 not found`) and the container does not start. With `dp.muslFailClosed.enabled` the plugin checks the image first: it leaves the hook out when dmem caps the slice, and refuses the pod otherwise.
 - **gfx12 shares poorly beyond 2 pods.** These GPUs have few compute queues, so more than about 2 processes per GPU lose most of their throughput. This is why `dp.splitCount` defaults to 2 there ([#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54)).
 
 ## Tested hardware

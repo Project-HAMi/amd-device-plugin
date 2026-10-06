@@ -43,7 +43,7 @@ kubectl get node <node> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-re
 
 - **No `amd.com/gpu` on the node.** Read the plugin log with `kubectl -n kube-system logs ds/amd-gpu-device-plugin-daemonset`. Check that `/dev/kfd` and `/dev/dri` exist on the host and that no other plugin owns `amd.com/gpu`.
 - **A sliced pod fails with `UnexpectedAdmissionError`.** The GPU has no free CUs for the request, often because of slices rounded up to whole WGPs on RDNA. A HAMi scheduler that reads `cuPerWGP` keeps such pods `Pending` instead.
-- **A sliced pod ignores its memory limit.** The image needs glibc 2.34 or newer for the hook. Use a newer image, or enable dmem (see [Configuration](configuration.md)).
+- **A sliced pod ignores its memory limit or fails to start.** The hook needs glibc 2.34 or newer: musl and static images ignore it, and older glibc images fail with `GLIBC_2.34 not found`. Use a newer image. dmem is on by default and caps VRAM without the hook where the node supports it; for older glibc images also enable `dp.muslFailClosed` so the plugin leaves the hook out (see [Configuration](configuration.md)).
 
 ## Uninstall
 

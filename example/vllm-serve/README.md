@@ -1,151 +1,53 @@
+# Serve a model with vLLM
+
 This example shows how to serve a model with vLLM on an AMD GPU managed by HAMi and this device plugin.
 
-# Install HAMi and the device plugin
+## Install HAMi and the device plugin
 
 Follow the [installation guide](../../docs/user-guide/installation.md): install the HAMi scheduler, then the device plugin with its Helm chart.
 
-# Prepare the k8s yaml files
+## Prepare the manifests
 
-1. Secret is optional and only required for accessing gated models, you can skip this step if you are not using gated models.
+This folder holds the three manifests:
 
-    Here is the example `hf_token.yaml`
+- [hf_token.yaml](hf_token.yaml): a Secret with your Hugging Face token. It is only needed for gated models; skip it otherwise. Replace the `token` value with your token encoded in base64:
 
-    ```
-    apiVersion: v1
-    kind: Secret
-    metadata:
-    name: hf-token-secret
-    namespace: default
-    type: Opaque
-    data:
-    token: "REPLACE_WITH_TOKEN"
+    ```bash
+    echo -n '<your HF TOKEN>' | base64
     ```
 
-    NOTE: you should use base64 to encode your HF TOKEN for the hf_token.yaml
+- [deployment.yaml](deployment.yaml): the vLLM Deployment. It requests one GPU (`amd.com/gpu: "1"`) and serves `mistralai/Mistral-7B-v0.3` on port 8888.
+- [service.yaml](service.yaml): a ClusterIP Service on port 80 that forwards to the Deployment.
 
-    ```
-    echo -n `<your HF TOKEN>` | base64
-    ```
+## Launch the pods
 
-2. Define the deployment workload
-    
-    deployment.yaml
-
-    ```
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-    name: mistral-7b
-    namespace: default
-    labels:
-        app: mistral-7b
-    spec:
-    replicas: 1
-    selector:
-        matchLabels:
-        app: mistral-7b
-    template:
-        metadata:
-        labels:
-            app: mistral-7b
-        spec:
-        volumes:
-        # vLLM needs to access the host's shared memory for tensor parallel inference.
-        - name: shm
-            emptyDir:
-            medium: Memory
-            sizeLimit: "8Gi"
-        hostNetwork: true
-        hostIPC: true
-        containers:
-        - name: mistral-7b
-            image: rocm/vllm:rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4
-            securityContext:
-            seccompProfile:
-                type: Unconfined
-            capabilities:
-                add:
-                - SYS_PTRACE
-            command: ["/bin/sh", "-c"]
-            args: [
-            "vllm serve mistralai/Mistral-7B-v0.3 --port 8000 --trust-remote-code --enable-chunked-prefill --max_num_batched_tokens 1024"
-            ]
-            env:
-            - name: HUGGING_FACE_HUB_TOKEN
-            valueFrom:
-                secretKeyRef:
-                name: hf-token-secret
-                key: token
-            ports:
-            - containerPort: 8000
-            resources:
-            limits:
-                cpu: "10"
-                memory: 20G
-                amd.com/gpu: "1"
-            requests:
-                cpu: "6"
-                memory: 6G
-                amd.com/gpu: "1"
-            volumeMounts:
-            - name: shm
-            mountPath: /dev/shm
-    ```   
-
-3. Define the service.yaml
-
-    ```
-    apiVersion: v1
-    kind: Service
-    metadata:
-    name: mistral-7b
-    namespace: default
-    spec:
-    ports:
-    - name: http-mistral-7b
-        port: 80
-        protocol: TCP
-        targetPort: 8000
-    # The label selector should match the deployment labels & it is useful for prefix caching feature
-    selector:
-        app: mistral-7b
-    sessionAffinity: None
-    type: ClusterIP
-    ```
-
-
-# Launch the pods
-
-```
+```bash
 kubectl apply -f hf_token.yaml
 kubectl apply -f deployment.yaml
 kubectl apply -f service.yaml
 ```
-    
 
-# Test the service
+## Test the service
 
-Get the Service IP by 
+Get the CLUSTER-IP of the `mistral-7b` Service:
 
+```bash
+kubectl get svc mistral-7b
 ```
-kubectl get svc
-```
-The mistral-7b is the service name. We can access the vllm serve by the CLUSTER-IP and PORT of it like,
 
-Get models by (please use the real CLUSTER-IP of your environment)
+List the models (use the real CLUSTER-IP of your environment):
 
-```
+```bash
 curl http://<CLUSTER-IP>:80/v1/models
 ```
 
-Do request
-```
-curl http://<CLUSTER-IP>:80/v1/completions   -H "Content-Type: application/json"   -d '{
-        "model": "mistralai/Mistral-7B-v0.3",
-        "prompt": "San Francisco is a",
-        "max_tokens": 7,
-        "temperature": 0
-      }'
-```
+Send a request:
 
-
+```bash
+curl http://<CLUSTER-IP>:80/v1/completions -H "Content-Type: application/json" -d '{
+    "model": "mistralai/Mistral-7B-v0.3",
+    "prompt": "San Francisco is a",
+    "max_tokens": 7,
+    "temperature": 0
+  }'
+```

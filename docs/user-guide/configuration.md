@@ -11,7 +11,7 @@ The chart passes its values to the plugin as flags. The [chart README](https://g
 | `dp.healthPulse` | `-pulse` | `10` (chart), `0` (flag) | Seconds between GPU health checks. `0` disables them. |
 | `dp.dmemBackend` | `-dmem_backend` | `true` | Also cap a slice's VRAM with the kernel dmem cgroup controller. |
 | `dp.cdi.enabled`, `dp.cdi.specDir` | `-cdi_spec_dir` | off, `/var/run/cdi` | Inject GPUs through CDI. |
-| `dp.muslFailClosed.*` | `-musl_fail_closed`, `-ctr_path`, `-containerd_socket` | off | Refuse a slice whose image cannot load the memory hook. |
+| `dp.muslFailClosed.*` | `-musl_fail_closed`, `-ctr_path`, `-containerd_socket` | off | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34). |
 | | `-resource_naming_strategy` | `single` | `single` or `mixed`; see below. |
 | `dp.hookInstaller.enabled` | | `true` | Copy `libamvgpu.so` from the image to `<dp.hostHookPath>/vgpu` on each node. |
 | `dp.hostHookPath` | | `/usr/local` | Host directory for the hook. Workloads always see it at `/usr/local/vgpu/libamvgpu.so`. |
@@ -23,15 +23,15 @@ The memory hook limits VRAM inside the process, so it needs glibc 2.34 or newer 
 - cgroup v2 with the `dmem` controller (a recent kernel, listed in `/sys/fs/cgroup/cgroup.controllers`),
 - the systemd cgroup driver (`/sys/fs/cgroup/kubepods.slice` exists).
 
-For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgroup's `dmem.max`. A whole-GPU pod gets no dmem cap. Do not put whole-GPU pods and slices on the same card if VRAM isolation matters.
+For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgroup's `dmem.max`. The cap is written in the background shortly after the container starts, because the pod cgroup can take a few seconds to appear, and lowering `dmem.max` below current usage does not reclaim VRAM, so memory a workload allocates before the cap lands stays allocated. A whole-GPU pod gets no dmem cap. Do not put whole-GPU pods and slices on the same card if VRAM isolation matters.
 
 ## musl fail-closed
 
-`dp.muslFailClosed.enabled=true` makes the plugin inspect a sliced pod's image with `ctr` before it starts. If the image is musl-based or statically linked, the memory hook would not load, so the pod is refused, unless dmem caps its VRAM anyway. The containerd socket and data directory must be mounted with `mountPropagation: HostToContainer`. The chart's defaults are RKE2 paths; override `dp.muslFailClosed.ctrPath`, `containerdSocketDir`, `containerdSocket` and `containerdDataDir` for other distributions. This is experimental.
+`dp.muslFailClosed.enabled=true` makes the plugin inspect a sliced pod's image with `ctr` before it starts. If the image is musl-based, statically linked, or uses glibc older than 2.34, the memory hook would not load, so the pod is refused, unless dmem caps its VRAM anyway, in which case the plugin leaves the hook out. The containerd socket and data directory must be mounted with `mountPropagation: HostToContainer`. The chart's defaults are RKE2 paths; override `dp.muslFailClosed.ctrPath`, `containerdSocketDir`, `containerdSocket` and `containerdDataDir` for other distributions. This is experimental.
 
 ## CDI
 
-With `dp.cdi.enabled=true` the plugin writes an `amd.com/gpu` CDI spec to `dp.cdi.specDir`, with one device per DRM card plus `/dev/kfd`, and returns CDI device names instead of device nodes. The container runtime must have CDI enabled and read that directory; containerd 2.x and CRI-O do by default.
+With `dp.cdi.enabled=true` the plugin writes an `amd.com/gpu` CDI spec to `dp.cdi.specDir`, with one device per DRM card plus `/dev/kfd`, and returns CDI device names instead of device nodes. The container runtime must have CDI enabled and read that directory; containerd 2.x and CRI-O do by default. CDI device responses from a device plugin need Kubernetes 1.28 or newer (the `DevicePluginCDIDevices` feature gate, on by default since 1.29).
 
 ## Resource naming strategy
 
