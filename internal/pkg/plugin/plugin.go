@@ -800,32 +800,53 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			// The hook only enforces slices and needs glibc >= 2.34, so whole-GPU
 			// requests must not depend on it.
 			if !p.isWholeGPU(devreq) {
+				auditCompatible := true
 				if p.libcheckInspector != nil {
 					libc, checkErr := p.libcheckInspector.Inspect(ctx, currentCtr.Image)
 					if checkErr != nil {
 						utils.PodAllocationFailed(nodename, current, NodeLockName)
 						return &pluginapi.AllocateResponse{}, fmt.Errorf("verify LD_AUDIT compatibility of image %q: %w", currentCtr.Image, checkErr)
 					}
-					if !libc.AuditCompatible() {
-						utils.PodAllocationFailed(nodename, current, NodeLockName)
-						return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s, not glibc; LD_AUDIT (and so the memory/CU-slice limit) would silently not apply, refusing to start unprotected", currentCtr.Image, libc)
+					auditCompatible = libc.AuditCompatible()
+					if !auditCompatible {
+						// LD_AUDIT cannot enforce the memory limit on this
+						// image, but the dmem cgroup backend caps VRAM at
+						// the driver and needs neither LD_AUDIT nor glibc
+						// (Project-HAMi/amd-hami-core#6). Fail closed only
+						// when that fallback isn't actually available for
+						// every requested device; otherwise the limit is
+						// still a hard kernel-enforced cap, just without
+						// libamvgpu's hipMemGetInfo override.
+						dmemFallback := p.dmemEnabled
+						for i := 0; dmemFallback && i < len(devreq); i++ {
+							if _, ok := p.dmemRegion(devreq[i].UUID); !ok {
+								dmemFallback = false
+							}
+						}
+						if !dmemFallback {
+							utils.PodAllocationFailed(nodename, current, NodeLockName)
+							return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s, not glibc; LD_AUDIT cannot enforce the memory limit and no dmem cgroup fallback is available, refusing to start unprotected", currentCtr.Image, libc)
+						}
 					}
 				}
-				// libamvgpu reads one limit per container-local device index.
-				for i, d := range devreq {
-					car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
+				if auditCompatible {
+					// libamvgpu reads one limit per container-local device index.
+					for i, d := range devreq {
+						car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
+					}
+					car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 				}
-				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 				if p.dmemEnabled {
 					// The pod's cgroup can take several seconds to appear
 					// after binding (measured up to ~7s on a real RKE2
 					// node), well past what Allocate should ever block for.
 					// Apply the cap in the background; libamvgpu's
 					// HIP_DEVICE_MEMORY_LIMIT_<i> above is already the
-					// synchronous enforcement path.
+					// synchronous enforcement path when auditCompatible.
 					podNamespace, podName, podUID, qos := current.Namespace, current.Name, string(current.UID), current.Status.QOSClass
-					d := devreq[0]
-					go p.applyDmemCap(podNamespace, podName, podUID, qos, d)
+					for _, d := range devreq {
+						go p.applyDmemCap(podNamespace, podName, podUID, qos, d)
+					}
 				}
 			}
 		}
@@ -884,23 +905,8 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 // the pod cgroup this writes to can take several seconds to appear after
 // binding, far more than Allocate should ever block a container on.
 func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos corev1.PodQOSClass, d utils.ContainerDevice) {
-	if !dmem.Available(dmem.DefaultCgroupRoot) {
-		return
-	}
-	deviceData, err := p.deviceDataFromAllocationUUID(d.UUID, "")
-	if err != nil {
-		glog.Warningf("dmem: resolve topology for %s: %v", d.UUID, err)
-		return
-	}
-	bdf, ok := deviceData["devID"].(string)
-	if !ok || bdf == "" {
-		glog.Warningf("dmem: missing PCI BDF for %s", d.UUID)
-		return
-	}
-	bdf = dmem.NormalizeBDF(bdf)
-	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	region, ok := p.dmemRegion(d.UUID)
 	if !ok {
-		glog.Infof("dmem: no VRAM region registered for %s (%s); skipping cap", d.UUID, bdf)
 		return
 	}
 	podCgroup := dmem.PodCgroupPath(dmem.DefaultCgroupRoot, podUID, qos)
@@ -910,6 +916,32 @@ func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos co
 		return
 	}
 	glog.Infof("dmem: capped %s at %d bytes on pod %s/%s (%s)", region, limitBytes, podNamespace, podName, podCgroup)
+}
+
+// dmemRegion resolves uuid's registered dmem VRAM region, logging (not
+// failing) on any lookup problem so callers can treat "" as simply
+// unavailable.
+func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
+	if !dmem.Available(dmem.DefaultCgroupRoot) {
+		return "", false
+	}
+	deviceData, err := p.deviceDataFromAllocationUUID(uuid, "")
+	if err != nil {
+		glog.Warningf("dmem: resolve topology for %s: %v", uuid, err)
+		return "", false
+	}
+	bdf, ok := deviceData["devID"].(string)
+	if !ok || bdf == "" {
+		glog.Warningf("dmem: missing PCI BDF for %s", uuid)
+		return "", false
+	}
+	bdf = dmem.NormalizeBDF(bdf)
+	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	if !ok {
+		glog.Infof("dmem: no VRAM region registered for %s (%s)", uuid, bdf)
+		return "", false
+	}
+	return region, true
 }
 
 func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string) (map[string]cuallocation.Allocation, error) {
