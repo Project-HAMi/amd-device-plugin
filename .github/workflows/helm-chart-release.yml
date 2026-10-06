@@ -49,7 +49,8 @@ jobs:
         with:
           # The charts directory
           charts_dir: helm
-          # The GitHub Pages URL to the charts repo (default: https://<owner>.github.io/<repo>)
+          # Chart changes without a version bump must not fail on the existing release.
+          skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
           CR_RELEASE_NAME_TEMPLATE: "{{ .Name }}-helm-{{ .Version }}"
