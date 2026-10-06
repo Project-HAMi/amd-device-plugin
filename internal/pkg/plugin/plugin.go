@@ -80,7 +80,7 @@ type AMDGPUPlugin struct {
 	// dmem cgroup controller when available, a hard driver-level VRAM cap
 	// that needs no LD_AUDIT injection (see Project-HAMi/amd-hami-core#6).
 	// A failure to set it is logged and never fails Allocate; libamvgpu's
-	// HIP_DEVICE_MEMORY_LIMIT remains the enforcement path either way.
+	// HIP_DEVICE_MEMORY_LIMIT_<i> remains the enforcement path either way.
 	dmemEnabled bool
 	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
 	// allocation whose container image is not LD_AUDIT-compatible (musl,
@@ -811,14 +811,17 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s, not glibc; LD_AUDIT (and so the memory/CU-slice limit) would silently not apply, refusing to start unprotected", currentCtr.Image, libc)
 					}
 				}
-				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
+				// libamvgpu reads one limit per container-local device index.
+				for i, d := range devreq {
+					car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
+				}
 				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
 				if p.dmemEnabled {
 					// The pod's cgroup can take several seconds to appear
 					// after binding (measured up to ~7s on a real RKE2
 					// node), well past what Allocate should ever block for.
 					// Apply the cap in the background; libamvgpu's
-					// HIP_DEVICE_MEMORY_LIMIT above is already the
+					// HIP_DEVICE_MEMORY_LIMIT_<i> above is already the
 					// synchronous enforcement path.
 					podNamespace, podName, podUID, qos := current.Namespace, current.Name, string(current.UID), current.Status.QOSClass
 					d := devreq[0]
@@ -876,7 +879,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 // driver-level VRAM limit independent of libamvgpu (see internal/pkg/dmem).
 // Any failure (controller unavailable, GPU not registered, pod cgroup not
 // yet created, wrong cgroup driver) is logged and never fails Allocate;
-// libamvgpu's HIP_DEVICE_MEMORY_LIMIT is the enforcement path regardless.
+// libamvgpu's HIP_DEVICE_MEMORY_LIMIT_<i> is the enforcement path regardless.
 // applyDmemCap runs in its own goroutine, outside Allocate's response path:
 // the pod cgroup this writes to can take several seconds to appear after
 // binding, far more than Allocate should ever block a container on.
