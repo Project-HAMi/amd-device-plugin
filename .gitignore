@@ -41,3 +41,6 @@ helm/**/requirements.lock
 
 # documentation artifacts
 _build/
+
+# make save-* output
+dist/
