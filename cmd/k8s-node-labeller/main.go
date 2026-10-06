@@ -141,6 +141,30 @@ var reSimdCount = regexp.MustCompile(`simd_count\s(\d+)`)
 var reSimdPerCu = regexp.MustCompile(`simd_per_cu\s(\d+)`)
 var reDrmRenderMinor = regexp.MustCompile(`drm_render_minor\s(\d+)`)
 
+// topologyRoot holds the KFD topology nodes; tests point it at a fake tree.
+var topologyRoot = "/sys/class/kfd/kfd/topology/nodes"
+
+// gpuTopologyNodes returns, for each GPU, the KFD topology node directory
+// whose drm_render_minor matches the GPU's render node.
+func gpuTopologyNodes(gpus map[string]map[string]interface{}) []string {
+	files, err := filepath.Glob(filepath.Join(topologyRoot, "*", "properties"))
+	if err != nil || len(files) == 0 {
+		log.Error(err, "Fail to glob topology properties", "root", topologyRoot)
+		return nil
+	}
+	var dirs []string
+	for _, gpu := range gpus {
+		for _, file := range files {
+			minor, err := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
+			if err == nil && matchesRenderD(minor, gpu) {
+				dirs = append(dirs, filepath.Dir(file))
+				break
+			}
+		}
+	}
+	return dirs
+}
+
 var labelGenerators = map[string]func(map[string]map[string]interface{}) map[string]string{
 	"firmware": func(gpus map[string]map[string]interface{}) map[string]string {
 		counts := map[string]int{}
@@ -263,122 +287,46 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 		return createLabels("product-name", counts)
 	},
 	"vram": func(gpus map[string]map[string]interface{}) map[string]string {
-		const bytePerMB = int64(1024 * 1024)
 		counts := map[string]int{}
-
-		propertiesPath := "/sys/class/kfd/kfd/topology/nodes/*/properties"
-		var files []string
-		var err error
-
-		if files, err = filepath.Glob(propertiesPath); err != nil || len(files) == 0 {
-			log.Error(err, "Fail to glob topology properties")
-			return map[string]string{}
-		}
-
-		for _, gpu := range gpus {
-			// /sys/class/kfd/kfd/topology/nodes/*/properties
-
-			for _, file := range files {
-				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
-
-				if !matchesRenderD(render_minor, gpu) {
-					continue
-				}
-				parts := strings.Split(file, "/")
-				nodeNumber := parts[len(parts)-2]
-
-				vramTotalPath := fmt.Sprintf("/sys/class/kfd/kfd/topology/nodes/%s/mem_banks/0/properties", nodeNumber)
-
-				vSize, err := amdgpu.ParseTopologyProperties(vramTotalPath, reSizeInBytes)
-				if err != nil {
-					log.Error(err, vramTotalPath)
-					continue
-				}
-
-				tmp := vSize / bytePerMB
-				s := int(math.Round(float64(tmp) / 1024))
-				counts[fmt.Sprintf("%dG", s)]++
-				break
+		for _, dir := range gpuTopologyNodes(gpus) {
+			vramPath := filepath.Join(dir, "mem_banks", "0", "properties")
+			vSize, err := amdgpu.ParseTopologyProperties(vramPath, reSizeInBytes)
+			if err != nil {
+				log.Error(err, vramPath)
+				continue
 			}
+			counts[fmt.Sprintf("%dG", int(math.Round(float64(vSize)/(1<<30))))]++
 		}
-
 		return createLabels("vram", counts)
 	},
 	"simd-count": func(gpus map[string]map[string]interface{}) map[string]string {
 		counts := map[string]int{}
-
-		propertiesPath := "/sys/class/kfd/kfd/topology/nodes/*/properties"
-		var files []string
-		var err error
-
-		if files, err = filepath.Glob(propertiesPath); err != nil || len(files) == 0 {
-			log.Error(err, "Fail to glob topology properties")
-			return map[string]string{}
-		}
-
-		for _, gpu := range gpus {
-			// /sys/class/kfd/kfd/topology/nodes/*/properties
-			// simd_count
-
-			for _, file := range files {
-				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
-
-				if !matchesRenderD(render_minor, gpu) {
-					continue
-				}
-
-				s, e := amdgpu.ParseTopologyProperties(file, reSimdCount)
-				if e != nil {
-					log.Error(e, "Error parsing simd-count")
-					continue
-				}
-
-				counts[fmt.Sprintf("%d", s)]++
-				break
+		for _, dir := range gpuTopologyNodes(gpus) {
+			s, err := amdgpu.ParseTopologyProperties(filepath.Join(dir, "properties"), reSimdCount)
+			if err != nil {
+				log.Error(err, "Error parsing simd-count")
+				continue
 			}
+			counts[strconv.FormatInt(s, 10)]++
 		}
-
 		return createLabels("simd-count", counts)
 	},
 	"cu-count": func(gpus map[string]map[string]interface{}) map[string]string {
 		counts := map[string]int{}
-
-		propertiesPath := "/sys/class/kfd/kfd/topology/nodes/*/properties"
-		var files []string
-		var err error
-
-		if files, err = filepath.Glob(propertiesPath); err != nil || len(files) == 0 {
-			log.Error(err, "Fail to glob topology properties")
-			return map[string]string{}
-		}
-
-		for _, gpu := range gpus {
-			// /sys/class/kfd/kfd/topology/nodes/*/properties
-			// simd_count / simd_per_cu
-
-			for _, file := range files {
-				render_minor, _ := amdgpu.ParseTopologyProperties(file, reDrmRenderMinor)
-
-				if !matchesRenderD(render_minor, gpu) {
-					continue
-				}
-
-				s, e := amdgpu.ParseTopologyProperties(file, reSimdCount)
-				if e != nil {
-					log.Error(e, "Error parsing simd-count")
-					continue
-				}
-				c, e := amdgpu.ParseTopologyProperties(file, reSimdPerCu)
-				if e != nil || c == 0 {
-					log.Error(e, fmt.Sprintf("Error parsing simd-per-cu %d", c))
-					continue
-				}
-
-				counts[fmt.Sprintf("%d", s/c)]++
-				break
+		for _, dir := range gpuTopologyNodes(gpus) {
+			props := filepath.Join(dir, "properties")
+			s, err := amdgpu.ParseTopologyProperties(props, reSimdCount)
+			if err != nil {
+				log.Error(err, "Error parsing simd-count")
+				continue
 			}
+			c, err := amdgpu.ParseTopologyProperties(props, reSimdPerCu)
+			if err != nil || c == 0 {
+				log.Error(err, fmt.Sprintf("Error parsing simd-per-cu %d", c))
+				continue
+			}
+			counts[strconv.FormatInt(s/c, 10)]++
 		}
-
 		return createLabels("cu-count", counts)
 	},
 	"compute-memory-partition": func(gpus map[string]map[string]interface{}) map[string]string {
@@ -430,6 +378,16 @@ func generateLabels(lblProps map[string]*bool) map[string]string {
 	return results
 }
 
+// ownNodeName returns the node this labeller runs on. Without it no node
+// event matches and the labeller would silently never label anything.
+func ownNodeName() (string, error) {
+	name := os.Getenv("DS_NODE_NAME")
+	if name == "" {
+		return "", fmt.Errorf("DS_NODE_NAME is not set; set it to spec.nodeName through the downward API")
+	}
+	return name, nil
+}
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "AMD GPU Node Labeller for Kubernetes\n")
@@ -458,7 +416,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup a new controller to Reconciler Node labels
+	// Setup a new controller to reconcile Node labels
 	entryLog.Info("Setting up controller")
 	c, err := controller.New("amdgpu-node-labeller", mgr, controller.Options{
 		Reconciler: &reconcileNodeLabels{client: mgr.GetClient(),
@@ -470,8 +428,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// laballer only respond to event about the node it is on by matching hostname
-	hostname := os.Getenv("DS_NODE_NAME")
+	// the labeller only handles events for the node it runs on
+	hostname, err := ownNodeName()
+	if err != nil {
+		entryLog.Error(err, "unable to find this node")
+		os.Exit(1)
+	}
 
 	pred := predicate.TypedFuncs[*corev1.Node]{
 		// Create returns true if the Create event should be processed

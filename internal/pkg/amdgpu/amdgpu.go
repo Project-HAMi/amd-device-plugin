@@ -24,25 +24,23 @@ package amdgpu
 // #include <drm.h>
 // #include <amdgpu.h>
 // #include <amdgpu_drm.h>
-// // Older distribution libdrm headers do not define these newer families.
-// // Define sentinel values solely to keep the switch below portable; systems
-// // with current headers use the kernel-provided values instead.
+// // Older distribution libdrm headers do not define these newer families;
+// // use the kernel UAPI values so the GPUs are still recognized.
 // #ifndef AMDGPU_FAMILY_GC_11_0_0
-// #define AMDGPU_FAMILY_GC_11_0_0 0x7fff0001
+// #define AMDGPU_FAMILY_GC_11_0_0 145
 // #endif
 // #ifndef AMDGPU_FAMILY_GC_11_0_1
-// #define AMDGPU_FAMILY_GC_11_0_1 0x7fff0002
+// #define AMDGPU_FAMILY_GC_11_0_1 148
 // #endif
 // #ifndef AMDGPU_FAMILY_GC_10_3_6
-// #define AMDGPU_FAMILY_GC_10_3_6 0x7fff0003
+// #define AMDGPU_FAMILY_GC_10_3_6 149
 // #endif
 // #ifndef AMDGPU_FAMILY_GC_10_3_7
-// #define AMDGPU_FAMILY_GC_10_3_7 0x7fff0004
+// #define AMDGPU_FAMILY_GC_10_3_7 151
 // #endif
 // #ifndef AMDGPU_FAMILY_GC_11_5_0
-// #define AMDGPU_FAMILY_GC_11_5_0 0x7fff0005
+// #define AMDGPU_FAMILY_GC_11_5_0 150
 // #endif
-// // RDNA4 (gfx12); the kernel value, so it matches even with older headers.
 // #ifndef AMDGPU_FAMILY_GC_12_0_0
 // #define AMDGPU_FAMILY_GC_12_0_0 152
 // #endif

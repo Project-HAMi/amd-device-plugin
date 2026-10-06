@@ -395,3 +395,16 @@ func TestParseDebugFSFirmwareInfoFullUint32(t *testing.T) {
 		t.Errorf("feat %#x fw %#x", feat["SOS"], fw["SOS"])
 	}
 }
+
+// The newer families must resolve by their kernel UAPI ids even when the
+// libdrm headers the image builds against predate them.
+func TestFamilyIDtoStringUsesKernelIDs(t *testing.T) {
+	for id, want := range map[uint32]string{
+		145: "GC_11_0_0", 146: "YC", 148: "GC_11_0_1", 149: "GC_10_3_6",
+		150: "GC_11_5_0", 151: "GC_10_3_7", 152: "GC_12_0_0",
+	} {
+		if got, err := FamilyIDtoString(id); err != nil || got != want {
+			t.Errorf("FamilyIDtoString(%d) = %q, %v, want %q", id, got, err, want)
+		}
+	}
+}
