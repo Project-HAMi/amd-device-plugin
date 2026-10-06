@@ -56,30 +56,40 @@ func AddAllocation(allocation Allocation, totalCUs int, addDelta Allocation) (Al
 	return current, nil
 }
 
-// AllocateN allocates n free CUs in ascending index order (first-fit).
+// AllocateN allocates n free CUs first-fit in whole units of unit CUs: 2 on
+// RDNA, whose CU mask is applied per WGP, 1 on CDNA. n is rounded up to a
+// multiple of unit, and a unit is taken only when all its CUs are free.
 // Returns:
 //   - updated allocation bitmap
 //   - delta bitmap containing only CUs allocated in this call
-func AllocateN(allocation Allocation, totalCUs int, n int) (Allocation, Allocation, error) {
+func AllocateN(allocation Allocation, totalCUs, n, unit int) (Allocation, Allocation, error) {
 	if n <= 0 {
 		return allocation, nil, fmt.Errorf("n must be > 0")
+	}
+	if unit <= 0 {
+		unit = 1
 	}
 	if len(allocation) < wordsFor(totalCUs) {
 		return allocation, nil, fmt.Errorf("allocation bitmap is too short")
 	}
+	n = (n + unit - 1) / unit * unit
 
+	isSet := func(i int) bool { return allocation[i/bitsPerWord]&(uint64(1)<<uint(i%bitsPerWord)) != 0 }
 	allocatedDelta := make(Allocation, len(allocation))
 	allocatedCount := 0
-	for i := 0; i < totalCUs && allocatedCount < n; i++ {
-		word := i / bitsPerWord
-		bit := uint(i % bitsPerWord)
-		mask := uint64(1) << bit
-		if allocation[word]&mask != 0 {
+	for start := 0; start+unit <= totalCUs && allocatedCount < n; start += unit {
+		free := true
+		for i := start; i < start+unit; i++ {
+			free = free && !isSet(i)
+		}
+		if !free {
 			continue
 		}
-		allocation[word] |= mask
-		allocatedDelta[word] |= mask
-		allocatedCount++
+		for i := start; i < start+unit; i++ {
+			allocation[i/bitsPerWord] |= uint64(1) << uint(i%bitsPerWord)
+			allocatedDelta[i/bitsPerWord] |= uint64(1) << uint(i%bitsPerWord)
+		}
+		allocatedCount += unit
 	}
 
 	if allocatedCount != n {

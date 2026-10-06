@@ -9,7 +9,7 @@ func TestAllocateN(t *testing.T) {
 		t.Fatalf("NewAllocation failed: %v", err)
 	}
 
-	allocation, delta, err := AllocateN(allocation, totalCUs, 4)
+	allocation, delta, err := AllocateN(allocation, totalCUs, 4, 1)
 	if err != nil {
 		t.Fatalf("AllocateN failed: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestReleaseManyWithDelta(t *testing.T) {
 		t.Fatalf("NewAllocation failed: %v", err)
 	}
 
-	allocation, delta, err := AllocateN(allocation, totalCUs, 5)
+	allocation, delta, err := AllocateN(allocation, totalCUs, 5, 1)
 	if err != nil {
 		t.Fatalf("AllocateN failed: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestUpdateByReleaseThenAdd(t *testing.T) {
 	}
 
 	// Initial allocation: CU 0-3.
-	allocation, _, err = AllocateN(allocation, totalCUs, 4)
+	allocation, _, err = AllocateN(allocation, totalCUs, 4, 1)
 	if err != nil {
 		t.Fatalf("AllocateN failed: %v", err)
 	}
@@ -98,3 +98,26 @@ func TestUpdateByReleaseThenAdd(t *testing.T) {
 	}
 }
 
+// RDNA applies HSA_CU_MASK per WGP (2 CUs) and ignores a mask that enables
+// one CU of a pair, so allocation must take whole, aligned pairs.
+func TestAllocateNWholeWGPs(t *testing.T) {
+	const totalCUs = 64
+	allocation, _ := NewAllocation(totalCUs)
+	allocation[0] = 1 // CU 0 held by an older single-CU allocation
+	_, delta, err := AllocateN(allocation, totalCUs, 3, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta[0] != 0b111100 {
+		t.Fatalf("delta = %#b, want CUs 2-5 (two whole WGPs)", delta[0])
+	}
+	if _, delta, err := AllocateN(make(Allocation, 1), 3, 1, 2); err != nil || delta[0] != 0b11 {
+		t.Fatalf("one CU on a 3-CU GPU = %v, %v; want the first WGP", delta, err)
+	}
+	if _, _, err := AllocateN(make(Allocation, 1), 3, 3, 2); err == nil {
+		t.Fatal("a trailing half WGP must not be handed out")
+	}
+	if _, delta, _ := AllocateN(make(Allocation, 1), totalCUs, 3, 1); delta[0] != 0b111 {
+		t.Fatalf("CDNA delta = %#b, want CUs 0-2", delta[0])
+	}
+}

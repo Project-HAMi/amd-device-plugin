@@ -18,6 +18,8 @@ package plugin
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,7 +134,7 @@ func TestNextAllocationUsesPersistedPodState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebuild first Pod allocation: %v", err)
 	}
-	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4)
+	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4, 1)
 	if err != nil {
 		t.Fatalf("allocate second Pod: %v", err)
 	}
@@ -355,6 +357,29 @@ func TestRocrVisibleListIndexFallback(t *testing.T) {
 	}
 	if _, err := p.rocrUUIDFromAllocationUUID("missing"); err == nil {
 		t.Error("unknown GPU must still fail")
+	}
+}
+
+func TestCUMaskUnit(t *testing.T) {
+	dir := t.TempDir()
+	for node, gfx := range map[string]string{"1": "120001", "2": "100306", "3": "90402"} {
+		if err := os.MkdirAll(filepath.Join(dir, node), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, node, "properties"), []byte("gfx_target_version "+gfx+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"rdna4": {"nodeId": 1}, "rdna2-apu": {"nodeId": 2}, "cdna3": {"nodeId": 3},
+		},
+		amdSMIUUIDToTopology: map[string]string{"a": "rdna4", "b": "rdna2-apu", "c": "cdna3"},
+	}
+	for uuid, want := range map[string]int{"a": 2, "b": 2, "c": 1, "unknown": 1} {
+		if got := p.cuMaskUnit(uuid, dir); got != want {
+			t.Errorf("cuMaskUnit(%s) = %d, want %d", uuid, got, want)
+		}
 	}
 }
 
