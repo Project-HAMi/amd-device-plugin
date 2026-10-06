@@ -16,6 +16,22 @@ concurrency:
 permissions: read-all
 
 jobs:
+  # Dependabot updates the ROCm digest in the Dockerfile only; read it from
+  # there, since a job container image cannot come from a file directly.
+  image:
+    name: Read the ROCm image
+    runs-on: ubuntu-latest
+    if: github.repository == 'Project-HAMi/amd-device-plugin'
+    outputs:
+      rocm: ${{ steps.rocm.outputs.image }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: rocm
+        run: echo "image=$(sed -n 's/^FROM \(.*\) AS rocm-runtime$/\1/p' Dockerfile)" >> "$GITHUB_OUTPUT"
+
   analyze:
     name: Analyze (go)
     runs-on: ubuntu-latest
@@ -24,12 +40,12 @@ jobs:
       packages: read
       actions: read
       contents: read
-    if: github.repository == 'Project-HAMi/amd-device-plugin'
+    needs: image
     # This repository uses cgo against libdrm, hwloc and AMD SMI. Run inside the
     # ROCm image so amd_smi is present, and install the remaining -dev packages,
     # so CodeQL's autobuild can compile the cgo packages.
     container:
-      image: rocm/dev-ubuntu-24.04:7.2.4@sha256:bdc8e61026cbb844ede93d44d2c50055f51ebb2041906b60182bf3bee3139054
+      image: ${{ needs.image.outputs.rocm }}
     env:
       CGO_ENABLED: "1"
       LD_LIBRARY_PATH: /opt/rocm/lib
