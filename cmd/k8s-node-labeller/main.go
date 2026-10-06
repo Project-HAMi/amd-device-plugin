@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	corev1 "k8s.io/api/core/v1"
@@ -51,25 +52,54 @@ func initLabelLists() {
 	}
 }
 
+// removeOldNodeLabels deletes every label the labeller manages: the bare
+// keys and every <key>.<suffix> variant (multi-entry, count and firmware keys),
+// so labels from a previous GPU or firmware never linger.
 func removeOldNodeLabels(node *corev1.Node) {
 	if node == nil {
 		return
 	}
-	// for the amd.com node labels
-	// directly remove the old labels
-	for _, label := range allLabelKeys {
-		delete(node.Labels, label)
-	}
-	// for the beta.amd.com node labels
-	// if it exists, both original label and counter label need to be removed, e.g.
-	// beta.amd.com/gpu.family: AI
-	// beta.amd.com/gpu.family.AI: "1"
-	for _, label := range allExperimentalLabelKeys {
-		if val, ok := node.Labels[label]; ok {
-			delete(node.Labels, label)
-			delete(node.Labels, fmt.Sprintf("%s.%s", label, val))
+	for k := range node.Labels {
+		if isManagedLabel(k) {
+			delete(node.Labels, k)
 		}
 	}
+}
+
+func isManagedLabel(k string) bool {
+	for _, keys := range [][]string{allLabelKeys, allExperimentalLabelKeys} {
+		for _, p := range keys {
+			if k == p || strings.HasPrefix(k, p+".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// productNameMaxLen keeps beta.amd.com/gpu.product-name.<value> keys within the
+// 63-character label name limit.
+const productNameMaxLen = 63 - len("gpu.product-name.")
+
+// sanitizeLabelValue maps s onto the Kubernetes label value charset
+// ([A-Za-z0-9._-], at most maxLen chars, alphanumeric at both ends).
+func sanitizeLabelValue(s string, maxLen int) string {
+	s = strings.NewReplacer("(", "", ")", "").Replace(strings.TrimSpace(s))
+	s = strings.Map(func(r rune) rune {
+		if r < 0x80 && (r == '.' || r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			return r
+		}
+		return '_'
+	}, s)
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return strings.TrimFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+}
+
+// parseDeviceID returns the hex device id from a sysfs device file.
+func parseDeviceID(s string) string {
+	return strings.TrimPrefix(strings.TrimSpace(s), "0x")
 }
 
 func createLabelPrefix(name string, experimental bool) string {
@@ -196,9 +226,9 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 				log.Error(err, devidPath)
 				continue
 			}
-			devid := strings.TrimSpace(string(b))
-			if devid[0:2] == "0x" {
-				devid = devid[2:]
+			devid := parseDeviceID(string(b))
+			if devid == "" {
+				continue
 			}
 			counts[devid]++
 		}
@@ -207,7 +237,6 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 	},
 	"product-name": func(gpus map[string]map[string]interface{}) map[string]string {
 		counts := map[string]int{}
-		replacer := strings.NewReplacer(" ", "_", "(", "", ")", "")
 
 		for _, v := range gpus {
 			prodnamePath := fmt.Sprintf("/sys/class/drm/card%d/device/product_name", v["card"])
@@ -215,14 +244,14 @@ var labelGenerators = map[string]func(map[string]map[string]interface{}) map[str
 			if err != nil {
 				log.Error(err, prodnamePath)
 			}
-			prodName := replacer.Replace(strings.TrimSpace(string(b)))
+			prodName := sanitizeLabelValue(string(b), productNameMaxLen)
 			// if we are not able to get the product name from sysfs, try to read the value using libdrm
 			if prodName == "" {
 				prodName, err = amdgpu.GetCardProductName(fmt.Sprintf("card%d", v["card"]))
 				if err != nil {
 					log.Error(err, prodnamePath)
 				} else {
-					prodName = replacer.Replace(strings.TrimSpace(prodName))
+					prodName = sanitizeLabelValue(prodName, productNameMaxLen)
 				}
 			}
 			if prodName == "" {
