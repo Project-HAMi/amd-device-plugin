@@ -14,7 +14,7 @@ resources:
     amd.com/gpumem: 4096
 ```
 
-Inside the container, `HSA_CU_MASK` holds the CU slice and `HIP_DEVICE_MEMORY_LIMIT_0` the VRAM limit, The `libamvgpu.so` hook enforces the memory limit and pins `HSA_CU_MASK`, which ROCm enforces:
+Inside the container, `HSA_CU_MASK` holds the CU slice and `HIP_DEVICE_MEMORY_LIMIT_0` the VRAM limit. The `libamvgpu.so` hook enforces the memory limit and pins `HSA_CU_MASK`, which ROCm enforces:
 
 ```bash
 kubectl exec <pod> -- sh -c 'echo $HSA_CU_MASK $HIP_DEVICE_MEMORY_LIMIT_0'

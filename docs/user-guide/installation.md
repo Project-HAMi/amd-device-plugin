@@ -18,6 +18,8 @@
 helm upgrade --install amd-gpu ./helm/amd-gpu --namespace kube-system --create-namespace
 ```
 
+The chart defaults to the `0.0.1` image, which predates flags the chart now passes. Until a newer release is published, add `--set dp.image.tag=main` for the image CI builds from `main`.
+
 The chart creates the DaemonSet, the ServiceAccount and RBAC the plugin needs to write node and pod annotations, and a `postStart` hook that copies the `libamvgpu.so` memory hook to `/usr/local/vgpu` on each node. See [Configuration](configuration.md) for the values.
 
 ## Verify
