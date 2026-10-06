@@ -18,7 +18,6 @@
 package plugin
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -67,9 +67,14 @@ func splitCountFor(topoNodesDir string, nodeId int) int {
 	return 10
 }
 
-// Plugin is identical to DevicePluginServer interface of device plugin API.
+// AMDGPUPlugin implements the kubelet device plugin API for AMD GPUs.
 type AMDGPUPlugin struct {
 	pluginapi.UnimplementedDevicePluginServer
+	// mu guards AMDGPUs, the UUID maps, deviceCache and cdiSpecDir. Device
+	// discovery replaces the maps wholesale every 30s while Allocate,
+	// ListAndWatch and the dmem goroutines read them; published maps are
+	// never mutated, so readers may keep a reference after unlocking.
+	mu                         sync.RWMutex
 	AMDGPUs                    map[string]map[string]interface{}
 	Heartbeat                  chan bool
 	signal                     chan os.Signal
@@ -102,10 +107,11 @@ type AMDGPUPlugin struct {
 	dmemCgroupRoot string
 	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
 	// allocation whose container image is not LD_AUDIT-compatible (musl,
-	// or no dynamic loader at all), instead of silently running it
-	// unprotected (Project-HAMi/amd-hami-core#3). Unlike dmemEnabled this
-	// check is synchronous: it must complete before Allocate returns, or
-	// the container could already be running by the time it is.
+	// static, or glibc older than 2.34), instead of silently running it
+	// unprotected (Project-HAMi/amd-hami-core#3). The check itself runs
+	// before Allocate returns. When the image is refused by it but dmem is
+	// available, the allocation is still admitted and the dmem cap is
+	// applied asynchronously shortly after the container starts.
 	libcheckInspector *libcheck.Inspector
 }
 
@@ -218,7 +224,6 @@ const (
 
 func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 	devices := p.getAPIDevices()
-	p.deviceCache = devices
 	glog.Infof("start working on the devices: %v", devices)
 
 	annos := make(map[string]string)
@@ -229,7 +234,7 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 		return err
 	}
 
-	annos[registerAnnosKey] = marshalNodeDevices(p.deviceCache)
+	annos[registerAnnosKey] = marshalNodeDevices(devices)
 	glog.Infof("patch node with the following annos %v", annos)
 	err = utils.PatchNodeAnnotations(node, annos)
 	if err != nil {
@@ -239,13 +244,13 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 }
 
 func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
-	p.AMDGPUs = amdgpu.GetAMDGPUs()
+	gpus := amdgpu.GetAMDGPUs()
 
 	// Resolve a stable per-device UUID through the AMD SMI C API. Unlike the
 	// node labeller, this is not an aggregated node-level value and supports
 	// SR-IOV virtual functions.
-	bdfs := make([]string, 0, len(p.AMDGPUs))
-	for _, deviceData := range p.AMDGPUs {
+	bdfs := make([]string, 0, len(gpus))
+	for _, deviceData := range gpus {
 		if bdf, ok := deviceData["devID"].(string); ok {
 			bdfs = append(bdfs, bdf)
 		}
@@ -254,30 +259,33 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	if err != nil {
 		glog.Warningf("AMD SMI UUID lookup incomplete; GPUs without an AMD SMI UUID will not be registered: %v", err)
 	}
-	p.amdSMIUUIDToTopology = make(map[string]string, len(amdSMIUUIDs))
-	p.amdSMIUUIDToROCrUUID = make(map[string]string, len(amdSMIUUIDs))
-	p.bdfToROCrUUID = make(map[string]string, len(p.AMDGPUs))
+	toTopology := make(map[string]string, len(amdSMIUUIDs))
+	toROCr := make(map[string]string, len(amdSMIUUIDs))
+	bdfToROCr := make(map[string]string, len(gpus))
 	rocrUUIDs := amdgpu.GetROCrUUIDsFromTopology()
 	amdSMIProductNames, err := amdsmi.GetAMDSMIProductNames(bdfs)
 	if err != nil {
 		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
 	}
 
-	keys := make([]string, 0, len(p.AMDGPUs))
-	for key := range p.AMDGPUs {
+	keys := make([]string, 0, len(gpus))
+	for key := range gpus {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
 	out := make([]*utils.DeviceInfo, 0, len(keys))
 	for _, key := range keys {
-		deviceData := p.AMDGPUs[key]
+		deviceData := gpus[key]
 
 		card, _ := deviceData["card"].(int)
 		numa, _ := deviceData["numaNode"].(int)
-		capacity, capacityErr := amdgpu.GetDeviceCapacity(fmt.Sprintf("card%d", card))
+		capacity, capacityErr := getDeviceCapacity(fmt.Sprintf("card%d", card))
 		if capacityErr != nil {
-			glog.Warningf("libdrm capacity lookup failed for GPU %s (card%d): %v", key, card, capacityErr)
+			// With no CU or VRAM count every slice of it would fail in
+			// Allocate, and rebuilding CU occupancy would fail the node.
+			glog.Errorf("skip GPU %s: libdrm capacity lookup failed (card%d): %v", key, card, capacityErr)
+			continue
 		}
 
 		bdf, ok := deviceData["devID"].(string)
@@ -304,9 +312,9 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		}
 		// Keep BDF in the annotation for consumers that need to locate the
 		// device node. Allocate uses the in-memory UUID -> topology map below.
-		p.amdSMIUUIDToTopology[uuid] = key
-		p.amdSMIUUIDToROCrUUID[uuid] = rocrUUID
-		p.bdfToROCrUUID[key] = rocrUUID
+		toTopology[uuid] = key
+		toROCr[uuid] = rocrUUID
+		bdfToROCr[key] = rocrUUID
 		nodeId, _ := deviceData["nodeId"].(int)
 		customInfo := deviceCustomInfo(key, kfdTopologyNodes, nodeId)
 		deviceType := "amd-gpu"
@@ -329,8 +337,20 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		})
 	}
 
+	p.publish(gpus, toTopology, toROCr, bdfToROCr, out)
 	return out
 }
+
+// publish swaps in a new discovery result for Allocate, ListAndWatch and the
+// dmem goroutines to read.
+func (p *AMDGPUPlugin) publish(gpus map[string]map[string]interface{}, toTopology, toROCr, bdfToROCr map[string]string, devices []*utils.DeviceInfo) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.AMDGPUs, p.amdSMIUUIDToTopology, p.amdSMIUUIDToROCrUUID, p.bdfToROCrUUID, p.deviceCache = gpus, toTopology, toROCr, bdfToROCr, devices
+}
+
+// getDeviceCapacity is amdgpu.GetDeviceCapacity, replaceable in tests.
+var getDeviceCapacity = amdgpu.GetDeviceCapacity
 
 func marshalNodeDevices(devices []*utils.DeviceInfo) string {
 	b, err := json.Marshal(devices)
@@ -407,46 +427,6 @@ func (p *AMDGPUPlugin) Stop() error {
 	return nil
 }
 
-var topoSIMDre = regexp.MustCompile(`simd_count\s(\d+)`)
-
-func countGPUDevFromTopology(topoRootParam ...string) int {
-	topoRoot := "/sys/class/kfd/kfd"
-	if len(topoRootParam) == 1 {
-		topoRoot = topoRootParam[0]
-	}
-
-	count := 0
-	var nodeFiles []string
-	var err error
-	if nodeFiles, err = filepath.Glob(topoRoot + "/topology/nodes/*/properties"); err != nil {
-		glog.Fatalf("glob error: %s", err)
-		return count
-	}
-
-	for _, nodeFile := range nodeFiles {
-		glog.Info("Parsing " + nodeFile)
-		f, e := os.Open(nodeFile)
-		if e != nil {
-			continue
-		}
-
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			m := topoSIMDre.FindStringSubmatch(scanner.Text())
-			if m == nil {
-				continue
-			}
-
-			if v, _ := strconv.Atoi(m[1]); v > 0 {
-				count++
-				break
-			}
-		}
-		f.Close()
-	}
-	return count
-}
-
 // GetDevicePluginOptions returns options to be communicated with Device
 // Manager
 func (p *AMDGPUPlugin) GetDevicePluginOptions(ctx context.Context, e *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
@@ -469,119 +449,78 @@ func (p *AMDGPUPlugin) PreStartContainer(ctx context.Context, r *pluginapi.PreSt
 // Whenever a Device state change or a Device disappears, ListAndWatch
 // returns the new list
 func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
-
-	p.AMDGPUs = amdgpu.GetAMDGPUs()
-
-	glog.Infof("Found %d AMDGPUs", len(p.AMDGPUs))
+	gpus := amdgpu.GetAMDGPUs()
+	glog.Infof("Found %d AMDGPUs", len(gpus))
+	p.mu.Lock()
+	p.AMDGPUs = gpus
 	if p.cdiSpecDir != "" {
-		if err := writeCDISpec(p.cdiSpecDir, p.AMDGPUs); err != nil {
+		if err := writeCDISpec(p.cdiSpecDir, gpus); err != nil {
 			glog.Errorf("write CDI spec to %s: %v; falling back to device nodes", p.cdiSpecDir, err)
 			p.cdiSpecDir = ""
 		}
 	}
+	p.mu.Unlock()
+	return p.serveDevices(s, kubeletDevices(gpus, amdgpu.IsHomogeneous(), p.Resource), amdgpu.DevFunctional)
+}
 
-	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs))
-	isHomogeneous := amdgpu.IsHomogeneous()
-	// Initialize a map to store partitionType based device list
-	resourceTypeDevs := make(map[string][]*pluginapi.Device)
-
-	if isHomogeneous {
-		// limit scope for hwloc
-		func() {
-			for id, device := range p.AMDGPUs {
-				numas := []int64{int64(device["numaNode"].(int))}
-				glog.Infof("Watching GPU with bus ID: %s NUMA Node: %+v", id, numas)
-
-				numaNodes := make([]*pluginapi.NUMANode, len(numas))
-				for j, v := range numas {
-					numaNodes[j] = &pluginapi.NUMANode{
-						ID: int64(v),
-					}
-				}
-
-				for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, device["nodeId"].(int)); splitIdx++ {
-					dev := &pluginapi.Device{
-						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
-						Health: pluginapi.Healthy,
-						Topology: &pluginapi.TopologyInfo{
-							Nodes: numaNodes,
-						},
-					}
-					devs = append(devs, dev)
-				}
-			}
-		}()
-		s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
-	} else {
-		func() {
-			for id, device := range p.AMDGPUs {
-				numas := []int64{int64(device["numaNode"].(int))}
-				glog.Infof("Watching GPU with bus ID: %s NUMA Node: %+v", id, numas)
-
-				numaNodes := make([]*pluginapi.NUMANode, len(numas))
-				for j, v := range numas {
-					numaNodes[j] = &pluginapi.NUMANode{
-						ID: int64(v),
-					}
-				}
-
-				partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
-				for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, device["nodeId"].(int)); splitIdx++ {
-					dev := &pluginapi.Device{
-						ID:     fmt.Sprintf("%s#%d", id, splitIdx),
-						Health: pluginapi.Healthy,
-						Topology: &pluginapi.TopologyInfo{
-							Nodes: numaNodes,
-						},
-					}
-					// Append a split device belonging to this partition type.
-					resourceTypeDevs[partitionType] = append(resourceTypeDevs[partitionType], dev)
-				}
-			}
-		}()
-		// Send the appropriate list of devices based on the partitionType
-		if devList, exists := resourceTypeDevs[p.Resource]; exists {
-			s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
+// kubeletDevices lists the split devices kubelet sees for resource: every
+// GPU on a homogeneous node, otherwise the GPUs whose partition type is
+// resource.
+func kubeletDevices(gpus map[string]map[string]interface{}, homogeneous bool, resource string) []*pluginapi.Device {
+	var devs []*pluginapi.Device
+	for id, device := range gpus {
+		if !homogeneous && device["computePartitionType"].(string)+"_"+device["memoryPartitionType"].(string) != resource {
+			continue
+		}
+		numa := int64(device["numaNode"].(int))
+		glog.Infof("Watching GPU with bus ID: %s NUMA Node: %d", id, numa)
+		topology := &pluginapi.TopologyInfo{Nodes: []*pluginapi.NUMANode{{ID: numa}}}
+		for splitIdx := 0; splitIdx < splitCountFor(kfdTopologyNodes, device["nodeId"].(int)); splitIdx++ {
+			devs = append(devs, &pluginapi.Device{ID: fmt.Sprintf("%s#%d", id, splitIdx), Health: pluginapi.Healthy, Topology: topology})
 		}
 	}
+	return devs
+}
 
-loop:
+// serveDevices sends devs, then resends them with fresh health on every
+// heartbeat until kubelet closes the stream or the plugin is told to stop.
+// A stream left running after kubelet restarts would keep taking heartbeats
+// from the live one.
+func (p *AMDGPUPlugin) serveDevices(s pluginapi.DevicePlugin_ListAndWatchServer, devs []*pluginapi.Device, functional func(card string) bool) error {
+	if err := s.Send(&pluginapi.ListAndWatchResponse{Devices: devs}); err != nil {
+		return err
+	}
 	for {
 		select {
 		case <-p.Heartbeat:
 			// exporter state (ECC, throttle) where available, then a GPU whose
 			// DRM device cannot be opened is unhealthy regardless
-			if isHomogeneous {
-				exporter.PopulatePerGPUDHealth(devs, pluginapi.Healthy)
-				p.markNonFunctional(devs, amdgpu.DevFunctional)
-				s.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
-			} else {
-				if devList, exists := resourceTypeDevs[p.Resource]; exists {
-					exporter.PopulatePerGPUDHealth(devList, pluginapi.Healthy)
-					p.markNonFunctional(devList, amdgpu.DevFunctional)
-					s.Send(&pluginapi.ListAndWatchResponse{Devices: devList})
-				}
+			exporter.PopulatePerGPUDHealth(devs, pluginapi.Healthy)
+			p.markNonFunctional(devs, functional)
+			if err := s.Send(&pluginapi.ListAndWatchResponse{Devices: devs}); err != nil {
+				return err
 			}
-
+		case <-s.Context().Done():
+			return nil
 		case <-p.signal:
 			glog.Infof("Received signal, exiting")
-			break loop
+			return nil
 		}
 	}
-	// returning a value with this function will unregister the plugin from k8s
-
-	return nil
 }
 
 // markNonFunctional marks every split of a GPU unhealthy when functional
 // reports that its DRM card cannot be opened, or the GPU is no longer known.
 func (p *AMDGPUPlugin) markNonFunctional(devs []*pluginapi.Device, functional func(card string) bool) {
+	p.mu.RLock()
+	gpus := p.AMDGPUs
+	p.mu.RUnlock()
 	ok := map[string]bool{}
 	for _, d := range devs {
 		id := strings.SplitN(d.ID, "#", 2)[0]
 		f, seen := ok[id]
 		if !seen {
-			card, known := p.AMDGPUs[id]["card"].(int)
+			card, known := gpus[id]["card"].(int)
 			f = known && functional(fmt.Sprintf("card%d", card))
 			ok[id] = f
 		}
@@ -601,8 +540,8 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 	for _, req := range req.ContainerRequests {
 		allocated_ids, err := p.devAllocator.Allocate(req.AvailableDeviceIDs, req.MustIncludeDeviceIDs, int(req.AllocationSize))
 		if err != nil {
-			glog.Errorf("unable to get preferred allocation list. Error:%v", err)
-			return nil, fmt.Errorf("unable to get preferred allocation list. Error:%v", err)
+			glog.Errorf("unable to get preferred allocation list: %v", err)
+			return nil, fmt.Errorf("unable to get preferred allocation list: %w", err)
 		}
 		resp := &pluginapi.ContainerPreferredAllocationResponse{
 			DeviceIDs: allocated_ids,
@@ -614,16 +553,19 @@ func (p *AMDGPUPlugin) GetPreferredAllocation(ctx context.Context, req *pluginap
 
 // deviceDataFromAllocationUUID resolves the AMD SMI UUID published in
 // DeviceInfo.ID to the local topology required to prepare a container.
-func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]interface{}, error) {
-	if topoKey, ok := p.amdSMIUUIDToTopology[uuid]; ok {
-		if d, found := p.AMDGPUs[topoKey]; found {
+func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid string) (map[string]interface{}, error) {
+	p.mu.RLock()
+	gpus, toTopology := p.AMDGPUs, p.amdSMIUUIDToTopology
+	p.mu.RUnlock()
+	if topoKey, ok := toTopology[uuid]; ok {
+		if d, found := gpus[topoKey]; found {
 			return d, nil
 		}
 		return nil, fmt.Errorf("AMD SMI UUID %q resolves to unavailable topology key %q", uuid, topoKey)
 	}
 	// kubelet split ids are "<bdf>#<slot>"; resolve the bare BDF directly.
 	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
-		if d, found := p.AMDGPUs[bdf]; found {
+		if d, found := gpus[bdf]; found {
 			return d, nil
 		}
 	}
@@ -631,12 +573,15 @@ func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]
 }
 
 func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
+	p.mu.RLock()
+	toROCr, bdfToROCr := p.amdSMIUUIDToROCrUUID, p.bdfToROCrUUID
+	p.mu.RUnlock()
 	// An empty ROCr UUID is a known GPU without one, see rocrVisibleList.
-	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok {
+	if rocrUUID, ok := toROCr[uuid]; ok {
 		return rocrUUID, nil
 	}
 	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
-		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok {
+		if rocrUUID, ok := bdfToROCr[bdf]; ok {
 			return rocrUUID, nil
 		}
 	}
@@ -673,6 +618,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		return &pluginapi.AllocateResponse{}, fmt.Errorf("rebuild CU allocation for node %s: %w", nodename, err)
 	}
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
+	p.mu.RLock()
+	cdiSpecDir := p.cdiSpecDir
+	p.mu.RUnlock()
 	glog.Infof("Allocate pod name is %s/%s, annotation is %+v", current.Namespace, current.Name, current.Annotations)
 
 	// True when any container requests a core or memory slice; the CU
@@ -680,16 +628,17 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	slicedCU := false
 	for idx := range r.ContainerRequests {
 		currentCtr, devreq, err := utils.GetNextDeviceRequest("amd", *current)
-		glog.Infof("deviceAllocateFromAnnotation(container=%s)=%+v", currentCtr.Name, devreq)
 		if err != nil || len(devreq) != len(r.ContainerRequests[idx].DevicesIds) {
-			// The fork scheduler's annotation key is not the one this plugin
-			// reads; fall back to kubelet's own allocation (whole GPU).
+			// No usable scheduler annotation for this container (missing,
+			// malformed, or a different device count than kubelet passed);
+			// fall back to kubelet's own allocation as whole GPUs.
 			glog.Warningf("annotation allocation unavailable (%v); using kubelet device ids %v", err, r.ContainerRequests[idx].DevicesIds)
 			devreq = utils.ContainerDevices{}
 			for _, id := range r.ContainerRequests[idx].DevicesIds {
 				devreq = append(devreq, utils.ContainerDevice{UUID: id, Type: "AMDGPU", Usedcores: 0})
 			}
 		} else {
+			glog.Infof("scheduler allocation for container %s: %+v", currentCtr.Name, devreq)
 			err = utils.EraseNextDeviceTypeFromAnnotation("amd", *current)
 			if err != nil {
 				utils.PodAllocationFailed(nodename, current, NodeLockName)
@@ -704,7 +653,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		renderMinors := make([]int, 0, len(devreq))
 
 		// KFD + DRI from annotation UUID topology; with CDI the spec carries them.
-		if p.cdiSpecDir == "" {
+		if cdiSpecDir == "" {
 			car.Devices = append(car.Devices, &pluginapi.DeviceSpec{
 				HostPath:      "/dev/kfd",
 				ContainerPath: "/dev/kfd",
@@ -713,7 +662,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		}
 		for _, d := range devreq {
 			glog.Infof("Allocating device from annotation UUID: %s", d.UUID)
-			deviceData, topoErr := p.deviceDataFromAllocationUUID(d.UUID, nodename)
+			deviceData, topoErr := p.deviceDataFromAllocationUUID(d.UUID)
 			if topoErr != nil {
 				utils.PodAllocationFailed(nodename, current, NodeLockName)
 				return &pluginapi.AllocateResponse{}, topoErr
@@ -731,7 +680,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			}
 			rocrVisibleDevices = append(rocrVisibleDevices, rocrUUID)
 			renderMinors = append(renderMinors, renderMinor)
-			if p.cdiSpecDir != "" {
+			if cdiSpecDir != "" {
 				car.CdiDevices = append(car.CdiDevices, &pluginapi.CDIDevice{Name: cdiDeviceName(cardMinor)})
 				continue
 			}
@@ -753,13 +702,6 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 
 		if len(devreq) > 0 {
 			hsaCuSets := make([]string, 0, len(devreq))
-			for _, d := range devreq {
-				if d.UUID == "" {
-					utils.PodAllocationFailed(nodename, current, NodeLockName)
-					return &pluginapi.AllocateResponse{}, fmt.Errorf("empty device uuid in allocation request")
-				}
-			}
-
 			for i, d := range devreq {
 				totalCUs, err := p.getDeviceTotalCUs(d.UUID)
 				if err != nil {
@@ -777,6 +719,13 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				}
 				cores := int(d.Usedcores)
 				if cores == 0 {
+					if !p.isWholeGPU(utils.ContainerDevices{d}) {
+						// A memory-only slice shares every CU with the GPU's
+						// other pods, so it holds none of them exclusively.
+						hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:0-%d", i, totalCUs-1))
+						slicedCU = true
+						continue
+					}
 					// Whole GPU: mask every CU.
 					cores = totalCUs
 				}
@@ -857,6 +806,13 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
 					}
 					car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+					// Mount the hook only where it is loaded, so whole-GPU
+					// pods start even when no hook is installed on the node.
+					car.Mounts = append(car.Mounts, &pluginapi.Mount{
+						ContainerPath: "/usr/local/vgpu/libamvgpu.so",
+						HostPath:      hostHookPath + "/vgpu/libamvgpu.so",
+						ReadOnly:      true,
+					})
 				}
 				if p.dmemEnabled {
 					// The pod's cgroup can take several seconds to appear
@@ -872,14 +828,6 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				}
 			}
 		}
-
-		car.Mounts = append(car.Mounts,
-			&pluginapi.Mount{
-				ContainerPath: "/usr/local/vgpu/libamvgpu.so",
-				HostPath:      hostHookPath + "/vgpu/libamvgpu.so",
-				ReadOnly:      true,
-			},
-		)
 
 		response.ContainerResponses = append(response.ContainerResponses, &car)
 	}
@@ -905,7 +853,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			} else {
 				utils.PodAllocationFailed(nodename, current, NodeLockName)
 				if getErr != nil {
-					return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w (and failed to confirm persisted state: %v)", utils.CuAllocation, err, getErr)
+					return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w (and failed to confirm persisted state: %w)", utils.CuAllocation, err, getErr)
 				}
 				return &pluginapi.AllocateResponse{}, fmt.Errorf("patch pod %s annotation: %w", utils.CuAllocation, err)
 			}
@@ -954,7 +902,7 @@ func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
 	if !dmem.Available(p.cgroupRoot()) {
 		return "", false
 	}
-	deviceData, err := p.deviceDataFromAllocationUUID(uuid, "")
+	deviceData, err := p.deviceDataFromAllocationUUID(uuid)
 	if err != nil {
 		glog.Warningf("dmem: resolve topology for %s: %v", uuid, err)
 		return "", false
@@ -1086,15 +1034,13 @@ const kfdTopologyNodes = "/sys/class/kfd/kfd/topology/nodes"
 
 var cpQueuesRe = regexp.MustCompile(`num_cp_queues\s(\d+)`)
 
-// computeQueues returns the user compute queue (HQD) slots KFD reports for a
-// GPU node. Processes sharing a GPU beyond these slots contend for dispatch.
 var gfxVersionRe = regexp.MustCompile(`gfx_target_version\s(\d+)`)
 
 // cuMaskUnit returns how many CUs HSA_CU_MASK must enable together on a GPU.
 // RDNA (gfx10 and later) applies the mask per WGP, two CUs, and silently
 // ignores a mask that enables only one CU of a pair; CDNA masks single CUs.
 func (p *AMDGPUPlugin) cuMaskUnit(uuid, topoNodesDir string) int {
-	data, err := p.deviceDataFromAllocationUUID(uuid, "")
+	data, err := p.deviceDataFromAllocationUUID(uuid)
 	if err != nil {
 		return 1
 	}
@@ -1124,6 +1070,8 @@ func cuPerWGP(topoNodesDir string, nodeId int) int {
 	return 1
 }
 
+// computeQueues returns the user compute queue (HQD) slots KFD reports for a
+// GPU node. Processes sharing a GPU beyond these slots contend for dispatch.
 func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
 	q, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), cpQueuesRe)
 	return q, err == nil && q > 0
@@ -1132,8 +1080,11 @@ func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
 // lookupDevice finds the registered device for an AMD SMI UUID or a kubelet
 // split id ("<bdf>#<slot>"), which only matches the registered pciBDF.
 func (p *AMDGPUPlugin) lookupDevice(uuid string) *utils.DeviceInfo {
+	p.mu.RLock()
+	cache := p.deviceCache
+	p.mu.RUnlock()
 	bdf := strings.SplitN(uuid, "#", 2)[0]
-	for _, d := range p.deviceCache {
+	for _, d := range cache {
 		if d == nil {
 			continue
 		}
@@ -1320,9 +1271,9 @@ func (p *AMDGPUPlugin) parseCuAllocation(annotations map[string]string) (map[str
 	return out, nil
 }
 
-// Lister serves as an interface between imlementation and Manager machinery. User passes
-// implementation of this interface to NewManager function. Manager will use it to obtain resource
-// namespace, monitor available resources and instantate a new plugin for them.
+// AMDGPULister connects this plugin to the device plugin Manager: the
+// Manager uses it to obtain the resource namespace, discover the available
+// resources and instantiate a plugin for each of them.
 type AMDGPULister struct {
 	ResUpdateChan chan dpm.PluginNameList
 	Heartbeat     chan bool

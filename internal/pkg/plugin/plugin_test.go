@@ -18,30 +18,25 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
-
-func TestCountGPUDevFromTopology(t *testing.T) {
-	count := countGPUDevFromTopology("../../../testdata/topology-parsing")
-
-	expCount := 2
-	if count != expCount {
-		t.Errorf("Count was incorrect, got: %d, want: %d.", count, expCount)
-	}
-}
 
 func TestDeviceDataFromAMDSMIUUID(t *testing.T) {
 	p := &AMDGPUPlugin{
@@ -56,7 +51,7 @@ func TestDeviceDataFromAMDSMIUUID(t *testing.T) {
 		},
 	}
 
-	device, err := p.deviceDataFromAllocationUUID("8eff74b5-0000-1000-801b-b56457addd1b", "node-a")
+	device, err := p.deviceDataFromAllocationUUID("8eff74b5-0000-1000-801b-b56457addd1b")
 	if err != nil {
 		t.Fatalf("resolve AMD SMI UUID: %v", err)
 	}
@@ -282,12 +277,16 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 			amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-1"},
 			deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 32, Devmem: 16304}},
 		}
-		_, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
 			ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:06:00.0#0"}}},
 		})
 		utils.KubeClient = old
 		if (err != nil) != tc.wantErr {
 			t.Fatalf("%s: Allocate error = %v, want error %v", tc.name, err, tc.wantErr)
+		}
+		// A whole GPU loads no hook, so it must not need one on the node.
+		if err == nil && len(resp.ContainerResponses[0].Mounts) != 0 {
+			t.Errorf("%s: whole-GPU allocation mounts %v", tc.name, resp.ContainerResponses[0].Mounts)
 		}
 		got, getErr := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
 		if getErr != nil {
@@ -443,6 +442,9 @@ func TestAllocatePerGPUMemoryLimit(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, envs[k], want)
 		}
 	}
+	if m := resp.ContainerResponses[0].Mounts; len(m) != 1 || m[0].ContainerPath != "/usr/local/vgpu/libamvgpu.so" {
+		t.Errorf("sliced allocation mounts %v, want the hook", m)
+	}
 }
 
 // The scheduler rounds core requests by the published cuPerWGP, so it must
@@ -502,5 +504,159 @@ func TestApplyDmemCapPerGPU(t *testing.T) {
 		if got, _ := os.ReadFile(filepath.Join(pod, "dmem.max")); string(got) != tc.want {
 			t.Errorf("dmem.max after %s = %q, want %q", tc.d.UUID, got, tc.want)
 		}
+	}
+}
+
+// A memory-only slice shares every CU, so it must not hold them: a second
+// memory-only pod on the same GPU would otherwise find no free CUs.
+func TestAllocateMemoryOnlySliceHoldsNoCUs(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+			utils.BindTimeAnnotations:     "1",
+			utils.AssignedNodeAnnotations: "n",
+			utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+			utils.DeviceToAllocate:        "uuid-a,AMDGPU,4096,0:;",
+		}},
+		Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
+		utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
+	}}}
+	cs := fake.NewSimpleClientset(node, pod)
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{
+		AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
+		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
+		deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64, Devmem: 16304}},
+	}
+	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.ContainerResponses[0].Envs["HSA_CU_MASK"]; got != "0:0-63" {
+		t.Errorf("HSA_CU_MASK = %q, want every CU", got)
+	}
+	if got := resp.ContainerResponses[0].Envs["HIP_DEVICE_MEMORY_LIMIT_0"]; got != "4096m" {
+		t.Errorf("HIP_DEVICE_MEMORY_LIMIT_0 = %q, want 4096m", got)
+	}
+	got, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cu, held := got.Annotations[utils.CuAllocation]; held {
+		t.Errorf("memory-only slice holds CUs %s", cu)
+	}
+}
+
+// Discovery swaps the device maps every 30s while Allocate, ListAndWatch and
+// the dmem goroutines read them; run with -race.
+func TestPublishWhileReading(t *testing.T) {
+	p := &AMDGPUPlugin{}
+	gpus := map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}}
+	ids := map[string]string{"uuid-a": "0000:08:00.0"}
+	cache := []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64}}
+	p.publish(gpus, ids, map[string]string{"uuid-a": "GPU-a"}, map[string]string{"0000:08:00.0": "GPU-a"}, cache)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			p.publish(gpus, ids, map[string]string{"uuid-a": "GPU-a"}, map[string]string{"0000:08:00.0": "GPU-a"}, cache)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_, _ = p.deviceDataFromAllocationUUID("uuid-a")
+			_, _ = p.rocrUUIDFromAllocationUUID("0000:08:00.0#1")
+			_ = p.lookupDevice("uuid-a")
+			p.markNonFunctional([]*pluginapi.Device{{ID: "0000:08:00.0#0"}}, func(string) bool { return true })
+		}
+	}()
+	wg.Wait()
+}
+
+func TestKubeletDevices(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 3
+	gpus := map[string]map[string]interface{}{
+		"a": {"numaNode": 0, "nodeId": 1, "computePartitionType": "spx", "memoryPartitionType": "nps1"},
+		"b": {"numaNode": 1, "nodeId": 2, "computePartitionType": "cpx", "memoryPartitionType": "nps4"},
+	}
+	if got := len(kubeletDevices(gpus, true, "gpu")); got != 6 {
+		t.Errorf("homogeneous node lists %d devices, want 6", got)
+	}
+	devs := kubeletDevices(gpus, false, "cpx_nps4")
+	if len(devs) != 3 || !strings.HasPrefix(devs[0].ID, "b#") || devs[0].Topology.Nodes[0].ID != 1 {
+		t.Errorf("cpx_nps4 resource lists %v, want the 3 slots of b on NUMA 1", devs)
+	}
+}
+
+// fakeListAndWatch fails every send after the first okSends.
+type fakeListAndWatch struct {
+	grpc.ServerStream
+	ctx     context.Context
+	okSends int
+	sends   int
+}
+
+func (f *fakeListAndWatch) Send(*pluginapi.ListAndWatchResponse) error {
+	f.sends++
+	if f.sends > f.okSends {
+		return errors.New("transport closed")
+	}
+	return nil
+}
+func (f *fakeListAndWatch) Context() context.Context { return f.ctx }
+
+// A stream must end when kubelet goes away or a send fails; a stale one
+// would keep taking the heartbeats meant for kubelet's new stream.
+func TestServeDevicesEndsWithTheStream(t *testing.T) {
+	devs := []*pluginapi.Device{{ID: "a#0"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &AMDGPUPlugin{Heartbeat: make(chan bool)}
+	if err := p.serveDevices(&fakeListAndWatch{ctx: ctx, okSends: 1}, devs, func(string) bool { return true }); err != nil {
+		t.Errorf("closed stream: err = %v, want nil", err)
+	}
+
+	beat := make(chan bool, 1)
+	beat <- true
+	p = &AMDGPUPlugin{Heartbeat: beat}
+	done := make(chan error, 1)
+	go func() {
+		done <- p.serveDevices(&fakeListAndWatch{ctx: context.Background(), okSends: 1}, devs, func(string) bool { return true })
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("failed send: err = nil, want it returned")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveDevices kept running after a failed send")
+	}
+}
+
+// A GPU whose capacity cannot be read has no CU or VRAM count; registering
+// it would fail every slice on it and the CU rebuild for the whole node.
+func TestGetAPIDevicesSkipsGPUWithoutCapacity(t *testing.T) {
+	if _, err := os.Stat("/sys/module/amdgpu/drivers/"); err != nil {
+		t.Skip("no amdgpu driver")
+	}
+	defer func(f func(string) (amdgpu.DeviceCapacity, error)) { getDeviceCapacity = f }(getDeviceCapacity)
+	getDeviceCapacity = func(string) (amdgpu.DeviceCapacity, error) {
+		return amdgpu.DeviceCapacity{}, errors.New("ioctl failed")
+	}
+	p := &AMDGPUPlugin{}
+	if devs := p.getAPIDevices(); len(devs) != 0 {
+		t.Errorf("registered %d GPUs without capacity, want none", len(devs))
 	}
 }
