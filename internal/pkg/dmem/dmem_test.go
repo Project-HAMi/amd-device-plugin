@@ -186,3 +186,28 @@ func TestRegionIgnoresUnrelatedLines(t *testing.T) {
 		t.Errorf("Region = %q, %v; want the matching line among several", region, ok)
 	}
 }
+
+// The cap is on by default, so a node without the systemd pod slices must
+// report unusable instead of retrying every slice's cgroup.
+func TestUsable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "cgroup.controllers"), []byte("cpu memory dmem\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if Usable(root) {
+		t.Error("dmem without kubepods.slice (cgroupfs driver) should be unusable")
+	}
+	if err := os.Mkdir(filepath.Join(root, "kubepods.slice"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !Usable(root) {
+		t.Error("dmem with kubepods.slice should be usable")
+	}
+	noDmem := t.TempDir()
+	if err := os.Mkdir(filepath.Join(noDmem, "kubepods.slice"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if Usable(noDmem) {
+		t.Error("kubepods.slice without the dmem controller should be unusable")
+	}
+}

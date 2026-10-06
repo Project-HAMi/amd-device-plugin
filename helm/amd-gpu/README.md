@@ -18,7 +18,7 @@ Kubernetes: `>= 1.18.0`
 | dp.hookInstaller.enabled | bool | `true` | Temporarily install the image-bundled `libamvgpu.so` to the node with a HAMi-style postStart hook. |
 | dp.hostHookPath | string | `"/usr/local"` | Host path prefix; the hook is installed under `<hostHookPath>/vgpu`. |
 | dp.healthPulse | int | `10` | Seconds between per-GPU health checks; 0 disables them. |
-| dp.splitCount | int | `10` | How many workloads may share one GPU. On gfx12 more than about 2 sharers contend for compute queues. |
+| dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, where more sharers contend for compute queues, otherwise 10. |
 | dp.allocatorPolicy | string | `"besteffort"` | Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread. |
 | dp.cdi.enabled | bool | `false` | Inject GPUs through CDI instead of device nodes. |
 | dp.cdi.specDir | string | `"/var/run/cdi"` | Host directory the CDI spec is written to; the runtime must read it. |

@@ -117,10 +117,10 @@ func main() {
 	var ctrPath, containerdSocket string
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
-	flag.IntVar(&splitCount, "split_count", 10, "How many workloads may share one GPU (HAMi device Count). gfx12 GPUs contend above about 2.")
+	flag.IntVar(&splitCount, "split_count", 0, "How many workloads may share one GPU (HAMi device Count). 0 picks it per GPU: 2 on gfx12, whose throughput collapses above about 2 sharers, otherwise 10.")
 	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
-	flag.BoolVar(&dmemBackend, "dmem_backend", false, "Also cap sliced allocations through the kernel dmem cgroup controller when available (requires cgroup v2, systemd cgroup driver, and a privileged pod with host cgroup visibility). Experimental; see Project-HAMi/amd-hami-core#10.")
+	flag.BoolVar(&dmemBackend, "dmem_backend", true, "Also cap sliced allocations through the kernel dmem cgroup controller. Used only when the node has the dmem controller and the systemd cgroup driver, and the plugin sees the host cgroup hierarchy; see Project-HAMi/amd-hami-core#10.")
 	flag.BoolVar(&muslFailClosed, "musl_fail_closed", false, "Refuse a sliced allocation whose image is not LD_AUDIT-compatible (musl, or statically linked), instead of silently running it unprotected. Requires the containerd socket and snapshotter data dir mounted with mountPropagation: HostToContainer (see Helm dp.muslFailClosed). Experimental; see Project-HAMi/amd-hami-core#3.")
 	flag.StringVar(&ctrPath, "ctr_path", "/usr/local/bin/ctr", "Path to the ctr binary inside this pod, used only when -musl_fail_closed is set.")
 	flag.StringVar(&containerdSocket, "containerd_socket", "/run/containerd/containerd.sock", "containerd socket path inside this pod, used only when -musl_fail_closed is set.")
@@ -132,8 +132,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if splitCount < 1 {
-		glog.Errorf("split_count must be at least 1, got %d", splitCount)
+	if splitCount < 0 {
+		glog.Errorf("split_count must not be negative, got %d", splitCount)
 		os.Exit(1)
 	}
 	if _, err := allocator.NewPolicy(allocatorPolicy); err != nil {

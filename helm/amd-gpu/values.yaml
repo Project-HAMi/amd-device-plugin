@@ -31,16 +31,17 @@ dp:
   hostHookPath: "/usr/local"
   # Seconds between per-GPU health checks; 0 disables them.
   healthPulse: 10
-  # How many workloads may share one GPU. On gfx12 (RDNA4) more than about 2
-  # sharers contend for compute queues; see the README.
-  splitCount: 10
+  # How many workloads may share one GPU. 0 picks it per GPU: 2 on gfx12
+  # (RDNA4), where more sharers contend for compute queues (see the README),
+  # otherwise 10.
+  splitCount: 0
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
-  # Experimental: also cap sliced allocations through the kernel dmem cgroup
-  # controller when available, a hard driver-level VRAM limit independent of
-  # libamvgpu. Requires cgroup v2 and the systemd cgroup driver; silently
-  # skipped when either is absent. See Project-HAMi/amd-hami-core#10.
-  dmemBackend: false
+  # Also cap sliced allocations through the kernel dmem cgroup controller, a
+  # hard driver-level VRAM limit independent of libamvgpu. Used only when the
+  # node has the dmem controller and the systemd cgroup driver; otherwise
+  # skipped with one log line. See Project-HAMi/amd-hami-core#10.
+  dmemBackend: true
   # Experimental: refuse a sliced allocation whose container image is not
   # LD_AUDIT-compatible (musl/Alpine, or statically linked) instead of
   # silently running it unprotected. See Project-HAMi/amd-hami-core#3.

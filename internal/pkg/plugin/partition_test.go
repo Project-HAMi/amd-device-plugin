@@ -57,6 +57,8 @@ func TestNewAMDGPUPluginReadsEnv(t *testing.T) {
 }
 
 func TestResolveUpstreamAMDGPUIndex(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	p := &AMDGPUPlugin{
 		AMDGPUs: map[string]map[string]interface{}{
 			"0000:05:00.0": {"card": 1},
@@ -123,6 +125,8 @@ func xcpFixture(t *testing.T) string {
 }
 
 func TestXCPRegistrationReplacesParent(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	golden := loadAmdsmiGolden(t, "../../../testdata/amdsmi-mi355x.json")
 	lookup := func(field func(amdsmiGolden) string) func([]string) (map[string]string, error) {
 		return func(bdfs []string) (map[string]string, error) {
@@ -206,6 +210,8 @@ func wholeGPUCount() int {
 // GPUs without a compute partition type stay soft in both modes, so kubelet
 // sees splitCount slots per GPU either way.
 func TestListAndWatchOnHardware(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	if !hasAMDGPU() {
 		t.Skip("no AMD GPU")
 	}
@@ -238,6 +244,8 @@ func TestListAndWatchOnHardware(t *testing.T) {
 // mode, the partition flip fails harmlessly on a part without profiles, and
 // the register annotation carries the soft GPU.
 func TestStartOnHardware(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	if !hasAMDGPU() {
 		t.Skip("no AMD GPU")
 	}
@@ -339,5 +347,30 @@ func TestStartWithoutNode(t *testing.T) {
 	<-p.ackDisableWatchAndRegister
 	if p.operatingMode != "cu" {
 		t.Fatalf("mode = %q, want the cu default", p.operatingMode)
+	}
+}
+
+// GPUs can publish different slot counts (2 on gfx12, 10 otherwise), so an
+// upstream flat slot index must walk the per-GPU counts, not divide.
+func TestGPUIndexOfSlotMixedCounts(t *testing.T) {
+	root := t.TempDir()
+	for node, gfx := range map[string]string{"1": "120001", "2": "90402"} {
+		dir := filepath.Join(root, "class/kfd/kfd/topology/nodes", node)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "properties"), []byte("gfx_target_version "+gfx+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &AMDGPUPlugin{
+		sysfsRoot:  root,
+		sortedBDFs: []string{"gfx12", "cdna"},
+		AMDGPUs:    map[string]map[string]interface{}{"gfx12": {"nodeId": 1}, "cdna": {"nodeId": 2}},
+	}
+	for slot, want := range map[int]int{0: 0, 1: 0, 2: 1, 11: 1, 12: -1} {
+		if got := p.gpuIndexOfSlot(slot); got != want {
+			t.Errorf("gpuIndexOfSlot(%d) = %d, want %d", slot, got, want)
+		}
 	}
 }

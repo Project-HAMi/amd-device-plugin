@@ -28,6 +28,7 @@ import (
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
@@ -227,15 +228,28 @@ func TestComputeQueues(t *testing.T) {
 	}
 }
 
+// gfx12 has only 2 CP pipes for user queues, so it defaults to 2 sharers per
+// GPU; an explicit --split_count applies to every GPU.
 func TestListerSplitCount(t *testing.T) {
 	defer func(n int) { splitCount = n }(splitCount)
-	(&AMDGPULister{}).NewPlugin("gpu")
-	if splitCount != 10 {
-		t.Fatalf("default splitCount = %d, want 10", splitCount)
+	dir := t.TempDir()
+	for node, gfx := range map[string]string{"1": "120001", "2": "100306", "3": "90402"} {
+		if err := os.MkdirAll(filepath.Join(dir, node), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, node, "properties"), []byte("gfx_target_version "+gfx+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	(&AMDGPULister{SplitCount: 2}).NewPlugin("gpu")
-	if splitCount != 2 {
-		t.Errorf("splitCount = %d, want 2", splitCount)
+	(&AMDGPULister{}).NewPlugin("gpu")
+	for node, want := range map[int]int{1: 2, 2: 10, 3: 10, 9: 10} {
+		if got := splitCountFor(dir, node); got != want {
+			t.Errorf("default split count on node %d = %d, want %d", node, got, want)
+		}
+	}
+	(&AMDGPULister{SplitCount: 4}).NewPlugin("gpu")
+	if got := splitCountFor(dir, 1); got != 4 {
+		t.Errorf("explicit split count on gfx12 = %d, want 4", got)
 	}
 }
 
@@ -289,6 +303,8 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 }
 
 func TestIsSchedulableTopologyKey(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	wholeGPU := map[string]interface{}{"devID": "0000:05:00.0", "computePartitionType": "spx", "memoryPartitionType": "nps1"}
 	qpxParent := map[string]interface{}{"devID": "0000:15:00.0", "computePartitionType": "qpx", "memoryPartitionType": "nps1"}
 	noPartition := map[string]interface{}{"devID": "0000:75:00.0", "computePartitionType": "", "memoryPartitionType": ""}
@@ -334,6 +350,8 @@ func TestIsSchedulableTopologyKey(t *testing.T) {
 // The scheduler (registerHardEntry) and kubelet (kubeletIDs) views must agree:
 // a hard entry is exactly one kubelet device, a soft one splitCount slots.
 func TestKubeletAndSchedulerViewsAgree(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	devices := map[string]map[string]interface{}{
 		"amdgpu_xcp_30": {"computePartitionType": "cpx"},
 		"0000:05:00.0":  {"computePartitionType": "spx"},
@@ -394,6 +412,8 @@ func hasAMDGPU() bool {
 }
 
 func TestRocmModeRegistrationOnHardware(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	if !hasAMDGPU() {
 		t.Skip("no AMD GPU on this machine")
 	}
@@ -547,6 +567,8 @@ func loadMemoryPartitionGolden(t *testing.T, path string) []string {
 // (Count 1). XCP partition registration on this kernel is impossible by
 // construction; it appears on kernels whose KFD topology exposes XCP nodes.
 func TestRegistrationFromFixture(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 10 // these tests pin one slot count for every GPU
 	root := "../../../testdata/sysfs-mi355x-spx/sys"
 	golden := loadAmdsmiGolden(t, "../../../testdata/amdsmi-mi355x.json")
 	memoryPartitions := loadMemoryPartitionGolden(t, "../../../testdata/amdsmi-partition-m-mi355x.json")
@@ -853,5 +875,44 @@ func TestDeviceCustomInfo(t *testing.T) {
 	}
 	if cdna := deviceCustomInfo("0000:0A:00.0", dir, 2); cdna["cuPerWGP"] != 1 || cdna["pciBDF"] != "0000:0a:00.0" {
 		t.Errorf("CDNA custominfo = %v", cdna)
+	}
+}
+
+// Each GPU of a multi-GPU slice gets its own dmem region capped at its own
+// share, not the first GPU's.
+func TestApplyDmemCapPerGPU(t *testing.T) {
+	root := t.TempDir()
+	pod := dmem.PodCgroupPath(root, "u-1", corev1.PodQOSBestEffort)
+	if err := os.MkdirAll(pod, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"cgroup.controllers": "cpu memory dmem\n",
+		"dmem.capacity":      "drm/0000:08:00.0/vram 17095983104\ndrm/0000:0a:00.0/vram 4294967296\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &AMDGPUPlugin{
+		dmemCgroupRoot: root,
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:08:00.0": {"devID": "0000:08:00:0"},
+			"0000:0a:00.0": {"devID": "0000:0a:00:0"},
+		},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+	}
+	for _, tc := range []struct {
+		d    utils.ContainerDevice
+		want string
+	}{
+		{utils.ContainerDevice{UUID: "uuid-b", Usedmem: 1024}, "drm/0000:0a:00.0/vram 1073741824\n"},
+		{utils.ContainerDevice{UUID: "uuid-a", Usedmem: 8192}, "drm/0000:08:00.0/vram 8589934592\n"},
+	} {
+		p.applyDmemCap("ns", "p", "u-1", corev1.PodQOSBestEffort, tc.d)
+		// cgroupfs applies each write to its region; a plain file keeps the last.
+		if got, _ := os.ReadFile(filepath.Join(pod, "dmem.max")); string(got) != tc.want {
+			t.Errorf("dmem.max after %s = %q, want %q", tc.d.UUID, got, tc.want)
+		}
 	}
 }

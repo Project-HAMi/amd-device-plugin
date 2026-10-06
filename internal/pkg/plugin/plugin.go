@@ -49,8 +49,23 @@ import (
 )
 
 // splitCount is how many workloads may share one GPU. Set once at startup
-// from AMDGPULister.SplitCount; gfx12 GPUs contend above about 2 (see README).
-var splitCount = 10
+// from AMDGPULister.SplitCount; 0 picks it per GPU, see splitCountFor.
+var splitCount = 0
+
+// splitCountFor returns how many workloads may share the GPU at a KFD node.
+// gfx12 has only 2 CP pipes for user compute queues, so more than about 2
+// processes per GPU collapse each other's throughput (see README); other
+// GPUs keep the long-standing default of 10.
+func splitCountFor(topoNodesDir string, nodeId int) int {
+	if splitCount > 0 {
+		return splitCount
+	}
+	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
+	if err == nil && v >= 120000 {
+		return 2
+	}
+	return 10
+}
 
 func IsPartitionMode(mode string) bool {
 	switch mode {
@@ -113,7 +128,7 @@ type AMDGPUPlugin struct {
 	rocrUUIDToTopology map[string]string
 	// sortedBDFs holds the registered PCI BDFs in list order (sorted topology
 	// keys). Upstream HAMi invents flat "AMDGPU-<i>" device ids over node
-	// capacity; device i resolves to GPU sortedBDFs[i/splitCount].
+	// capacity; device i resolves to its GPU through gpuIndexOfSlot.
 	sortedBDFs []string
 	// bdfToROCrUUID maps a topology key to its ROCr UUID, for resolving
 	// whole-GPU allocations and "<bdf>#<slot>" kubelet split ids during
@@ -125,6 +140,9 @@ type AMDGPUPlugin struct {
 	// A failure to set it is logged and never fails Allocate; libamvgpu's
 	// HIP_DEVICE_MEMORY_LIMIT_<i> remains the enforcement path either way.
 	dmemEnabled bool
+	// dmemCgroupRoot overrides dmem.DefaultCgroupRoot; tests point it at a
+	// fake hierarchy.
+	dmemCgroupRoot string
 	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
 	// allocation whose container image is not LD_AUDIT-compatible (musl,
 	// or no dynamic loader at all), instead of silently running it
@@ -195,6 +213,16 @@ func WithAMDSPartitionProfiles(lookup func([]string) (map[string][]amdsmi.Partit
 	return func(p *AMDGPUPlugin) {
 		p.amdsmiPartitionProfileLookup = lookup
 	}
+}
+
+// dmemUsable checks once, at startup, whether this node supports the dmem
+// cap, so an unsupported node does not retry the pod cgroup for every slice.
+func dmemUsable() bool {
+	if dmem.Usable(dmem.DefaultCgroupRoot) {
+		return true
+	}
+	glog.Infof("dmem: controller or systemd kubepods.slice not found under %s; sliced VRAM is capped by libamvgpu only", dmem.DefaultCgroupRoot)
+	return false
 }
 
 // WithDmemBackend enables the dmem cgroup VRAM cap for sliced allocations.
@@ -397,7 +425,7 @@ func partitionCounts(devices map[string]map[string]interface{}, profiles map[str
 }
 
 // kubeletIDs lists the kubelet device ids of one topology entry: a single
-// hard "<key>#<type>" in partition mode, splitCount soft slots otherwise.
+// hard "<key>#<type>" in partition mode, splitCountFor soft slots otherwise.
 // It must stay in step with registerHardEntry.
 func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{}) []string {
 	if p.operatingMode == "partition" {
@@ -405,7 +433,8 @@ func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{})
 			return []string{key + "#" + t}
 		}
 	}
-	ids := make([]string, splitCount)
+	nodeId, _ := deviceData["nodeId"].(int)
+	ids := make([]string, splitCountFor(p.kfdNodesDir(), nodeId))
 	for i := range ids {
 		ids[i] = fmt.Sprintf("%s#%d", key, i)
 	}
@@ -612,7 +641,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		soft := &utils.DeviceInfo{
 			ID:           infoID,
 			Index:        uint(card),
-			Count:        int32(splitCount),
+			Count:        int32(splitCountFor(p.kfdNodesDir(), nodeId)),
 			Devmem:       capacity.VRAMMiB,
 			Devcore:      capacity.CUCount,
 			Type:         deviceType,
@@ -809,7 +838,7 @@ func (p *AMDGPUPlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin
 		}
 	}
 
-	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs)*(splitCount+1))
+	devs := make([]*pluginapi.Device, 0, len(p.AMDGPUs))
 	parents := xcpParents(p.AMDGPUs)
 	isHomogeneous := amdgpu.IsHomogeneous()
 	// Initialize a map to store partitionType based device list
@@ -973,9 +1002,9 @@ func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]
 	}
 	if i := parseAMDGPUIndex(uuid); i >= 0 {
 		// Upstream HAMi device i is the i-th split slot in registration order.
-		gpuIdx := i / splitCount
-		glog.Infof("resolving upstream AMDGPU id %s: index=%d gpuIdx=%d splitCount=%d sortedBDFs=%d", uuid, i, gpuIdx, splitCount, len(p.sortedBDFs))
-		if gpuIdx < len(p.sortedBDFs) {
+		gpuIdx := p.gpuIndexOfSlot(i)
+		glog.Infof("resolving upstream AMDGPU id %s: index=%d gpuIdx=%d sortedBDFs=%d", uuid, i, gpuIdx, len(p.sortedBDFs))
+		if gpuIdx >= 0 {
 			if d, found := p.AMDGPUs[p.sortedBDFs[gpuIdx]]; found {
 				return d, nil
 			}
@@ -983,6 +1012,20 @@ func (p *AMDGPUPlugin) deviceDataFromAllocationUUID(uuid, _ string) (map[string]
 		}
 	}
 	return nil, fmt.Errorf("no local GPU topology entry for device id %q", uuid)
+}
+
+// gpuIndexOfSlot maps the i-th split slot in registration order to its GPU
+// in sortedBDFs, since GPUs can publish different slot counts; -1 if none.
+func (p *AMDGPUPlugin) gpuIndexOfSlot(i int) int {
+	for idx, bdf := range p.sortedBDFs {
+		nodeId, _ := p.AMDGPUs[bdf]["nodeId"].(int)
+		n := splitCountFor(p.kfdNodesDir(), nodeId)
+		if i < n {
+			return idx
+		}
+		i -= n
+	}
+	return -1
 }
 
 func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
@@ -1002,8 +1045,7 @@ func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
 		}
 	}
 	if i := parseAMDGPUIndex(uuid); i >= 0 {
-		gpuIdx := i / splitCount
-		if gpuIdx < len(p.sortedBDFs) {
+		if gpuIdx := p.gpuIndexOfSlot(i); gpuIdx >= 0 {
 			if rocrUUID, ok := p.bdfToROCrUUID[p.sortedBDFs[gpuIdx]]; ok {
 				return rocrUUID, nil
 			}
@@ -1301,7 +1343,7 @@ func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos co
 	if !ok {
 		return
 	}
-	podCgroup := dmem.PodCgroupPath(dmem.DefaultCgroupRoot, podUID, qos)
+	podCgroup := dmem.PodCgroupPath(p.cgroupRoot(), podUID, qos)
 	limitBytes := int64(d.Usedmem) * 1024 * 1024
 	if err := dmem.SetMaxWithRetry(podCgroup, region, limitBytes); err != nil {
 		glog.Warningf("dmem: cap %s at %d bytes on %s: %v", region, limitBytes, podCgroup, err)
@@ -1310,11 +1352,18 @@ func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos co
 	glog.Infof("dmem: capped %s at %d bytes on pod %s/%s (%s)", region, limitBytes, podNamespace, podName, podCgroup)
 }
 
+func (p *AMDGPUPlugin) cgroupRoot() string {
+	if p.dmemCgroupRoot != "" {
+		return p.dmemCgroupRoot
+	}
+	return dmem.DefaultCgroupRoot
+}
+
 // dmemRegion resolves uuid's registered dmem VRAM region, logging (not
 // failing) on any lookup problem so callers can treat "" as simply
 // unavailable.
 func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
-	if !dmem.Available(dmem.DefaultCgroupRoot) {
+	if !dmem.Available(p.cgroupRoot()) {
 		return "", false
 	}
 	deviceData, err := p.deviceDataFromAllocationUUID(uuid, "")
@@ -1328,7 +1377,7 @@ func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
 		return "", false
 	}
 	bdf = dmem.NormalizeBDF(bdf)
-	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	region, ok := dmem.Region(p.cgroupRoot(), bdf)
 	if !ok {
 		glog.Infof("dmem: no VRAM region registered for %s (%s)", uuid, bdf)
 		return "", false
@@ -1747,7 +1796,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithResource(resourceLastName),
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
-		WithDmemBackend(l.DmemBackend),
+		WithDmemBackend(l.DmemBackend && dmemUsable()),
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)

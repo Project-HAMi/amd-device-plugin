@@ -212,7 +212,7 @@ The CU slice set through `HSA_CU_MASK` is a cooperative limit, not a hard guaran
 
 ## Compute-queue contention
 
-Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. On gfx12 nodes, consider limiting sharers per GPU with `--split_count` (Helm `dp.splitCount`), for example 2. See [#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54).
+Processes sharing a GPU also share its user compute queue (HQD) slots, which `custominfo.computeQueues` reports. On gfx12 amdgpu reserves half of the slots for kernel compute rings by default, leaving 4. Two or more ROCm processes on the same GPU can then contend for dispatch and lose most of their throughput, independent of the CU and memory slices. Loading amdgpu with `num_kcq=0` frees the reserved slots; its effect depends on the ASIC and firmware, so measure it per node rather than assume it. gfx12 GPUs therefore default to 2 sharers per GPU and other GPUs to 10; `--split_count` (Helm `dp.splitCount`) sets one value for every GPU instead. See [#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54).
 
 ## Validation status
 
