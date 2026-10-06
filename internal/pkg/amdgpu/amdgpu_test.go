@@ -54,6 +54,9 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 		// debugfs path/interface may not be stable
 		debugFSfeatVersion, debugFSfwVersion :=
 			parseDebugFSFirmwareInfo("/sys/kernel/debug/dri/" + card[4:] + "/amdgpu_firmware_info")
+		if len(debugFSfeatVersion) == 0 && len(debugFSfwVersion) == 0 {
+			t.Skipf("debugfs amdgpu_firmware_info unavailable for %s; skipping ioctl/debugfs consistency check", card)
+		}
 		featVersion, fwVersion, err := GetFirmwareVersions(card)
 		if err != nil {
 			t.Errorf("Fail to get firmware version %s", err.Error())
