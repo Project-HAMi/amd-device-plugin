@@ -2,7 +2,7 @@
 
 The HAMi AMD Device Plugin discovers AMD GPUs, reports hardware identity through HAMi node annotations, and enforces HAMi fractional GPU allocations in Kubernetes clusters.
 
-> The top-level [README](../README.md) and Helm chart are the canonical deployment documentation for the HAMi fork. Some detailed pages below describe inherited upstream ROCm functionality and examples.
+> The top-level [README](https://github.com/Project-HAMi/amd-device-plugin/blob/main/README.md) and Helm chart are the canonical deployment documentation for the HAMi fork. Some detailed pages below describe inherited upstream ROCm functionality and examples.
 
 ## Features
 
