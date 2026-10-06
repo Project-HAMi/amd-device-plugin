@@ -491,7 +491,6 @@ func main() {
 
 		// Generic returns true if the Generic event should be processed
 		GenericFunc: func(e event.TypedGenericEvent[*corev1.Node]) bool {
-			//entryLog.Info("predicate generic triggered: ")
 			return false
 		},
 	}

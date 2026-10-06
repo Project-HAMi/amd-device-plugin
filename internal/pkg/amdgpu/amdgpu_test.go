@@ -51,7 +51,7 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 		card := fmt.Sprintf("card%d", dev["card"])
 		t.Logf("%s, %s", pci, card)
 
-		//debugfs path/interface may not be stable
+		// debugfs path/interface may not be stable
 		debugFSfeatVersion, debugFSfwVersion :=
 			parseDebugFSFirmwareInfo("/sys/kernel/debug/dri/" + card[4:] + "/amdgpu_firmware_info")
 		featVersion, fwVersion, err := GetFirmwareVersions(card)
