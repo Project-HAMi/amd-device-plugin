@@ -1,0 +1,4 @@
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Project-HAMi/amd-device-plugin/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue. See SECURITY.md.
