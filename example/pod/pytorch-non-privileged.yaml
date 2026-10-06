@@ -4,7 +4,7 @@ metadata:
   name: pytorch-non-privileged-gpu-pod
 spec:
   restartPolicy: Never
-  hostIPC: true  
+  hostIPC: true
   containers:
   - name: pytorch-gpu-container
     image: rocm/pytorch:latest
@@ -27,6 +27,6 @@ spec:
         amd.com/gpu: 1  # Request 1 AMD GPU
     securityContext:
       privileged: false
-      allowPrivilegeEscalation: false      
+      allowPrivilegeEscalation: false
       seccompProfile:
         type: Unconfined
