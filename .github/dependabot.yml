@@ -19,6 +19,13 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
+  # the pinned docs build (Read the Docs)
+  - package-ecosystem: pip
+    directory: /docs/sphinx
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
   # the memory hook is built from this submodule
   - package-ecosystem: gitsubmodule
     directory: /
