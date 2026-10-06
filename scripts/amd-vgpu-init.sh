@@ -7,8 +7,8 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
     exit 1
 fi
 
-# Temporary image-bundled source. The environment override is used by CI and
-# also keeps the handoff to an official amd-hami-core artifact explicit.
+# Image-bundled hook built from amd-hami-core; AMD_VGPU_HOOK_SOURCE overrides
+# it, for example to test the script outside the image.
 source_file="${AMD_VGPU_HOOK_SOURCE:-/opt/hami/lib/amd/libamvgpu.so}"
 dest_dir="${1%/}"
 dest_file="${dest_dir}/libamvgpu.so"

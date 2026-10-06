@@ -5,4 +5,4 @@ metadata:
   namespace: default
 type: Opaque
 data:
-  token: "<TF_TOKEN in base64>"
+  token: "<HF_TOKEN in base64>"
