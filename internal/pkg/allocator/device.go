@@ -249,6 +249,25 @@ func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, fold
 			return err
 		}
 	}
+	// GPUs with no direct io/p2p link (consumer cards, passthrough VMs) only
+	// reach each other through the host, the costliest path.
+	for i, from := range devices {
+		for _, to := range devices[i+1:] {
+			if from.NodeId > to.NodeId {
+				from, to = to, from
+			}
+			if from.NodeId == to.NodeId {
+				continue
+			}
+			if _, ok := p2pWeights[from.NodeId][to.NodeId]; ok {
+				continue
+			}
+			if p2pWeights[from.NodeId] == nil {
+				p2pWeights[from.NodeId] = make(map[int]int)
+			}
+			p2pWeights[from.NodeId][to.NodeId] = calculatePairWeight(from, to, -1)
+		}
+	}
 	return nil
 }
 
