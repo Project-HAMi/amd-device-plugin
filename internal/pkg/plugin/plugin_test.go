@@ -430,3 +430,24 @@ func TestAllocatePerGPUMemoryLimit(t *testing.T) {
 		}
 	}
 }
+
+// The scheduler rounds core requests by the published cuPerWGP, so it must
+// match what Allocate uses.
+func TestDeviceCustomInfo(t *testing.T) {
+	dir := t.TempDir()
+	for node, props := range map[string]string{"1": "gfx_target_version 120001\nnum_cp_queues 4\n", "2": "gfx_target_version 90402\n"} {
+		if err := os.MkdirAll(filepath.Join(dir, node), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, node, "properties"), []byte(props), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rdna := deviceCustomInfo("0000:08:00.0", dir, 1)
+	if rdna["cuPerWGP"] != 2 || rdna["computeQueues"] != int64(4) || rdna["pciBDF"] != "0000:08:00.0" {
+		t.Errorf("RDNA custominfo = %v", rdna)
+	}
+	if cdna := deviceCustomInfo("0000:0A:00.0", dir, 2); cdna["cuPerWGP"] != 1 || cdna["pciBDF"] != "0000:0a:00.0" {
+		t.Errorf("CDNA custominfo = %v", cdna)
+	}
+}

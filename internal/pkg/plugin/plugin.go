@@ -279,13 +279,8 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		p.amdSMIUUIDToTopology[uuid] = key
 		p.amdSMIUUIDToROCrUUID[uuid] = rocrUUID
 		p.bdfToROCrUUID[key] = rocrUUID
-		// key is the standard PCI BDF spelling (domain:bus:device.function).
-		// The KFD topology bdf above uses a fourth colon-separated component.
-		customInfo := map[string]any{"pciBDF": strings.ToLower(key)}
 		nodeId, _ := deviceData["nodeId"].(int)
-		if q, ok := computeQueues(kfdTopologyNodes, nodeId); ok {
-			customInfo["computeQueues"] = q
-		}
+		customInfo := deviceCustomInfo(key, kfdTopologyNodes, nodeId)
 		deviceType := "amd-gpu"
 		if productName, ok := amdSMIProductNames[strings.ToLower(bdf)]; ok && productName != "" {
 			deviceType = productName
@@ -1070,6 +1065,24 @@ func (p *AMDGPUPlugin) cuMaskUnit(uuid, topoNodesDir string) int {
 		return 1
 	}
 	nodeId, _ := data["nodeId"].(int)
+	return cuPerWGP(topoNodesDir, nodeId)
+}
+
+// deviceCustomInfo builds the custominfo published for a GPU. The scheduler
+// rounds core requests to cuPerWGP so it accounts the whole WGPs Allocate
+// hands out.
+func deviceCustomInfo(bdf, topoNodesDir string, nodeId int) map[string]any {
+	// bdf is the standard PCI BDF spelling (domain:bus:device.function).
+	// The KFD topology bdf uses a fourth colon-separated component.
+	info := map[string]any{"pciBDF": strings.ToLower(bdf), "cuPerWGP": cuPerWGP(topoNodesDir, nodeId)}
+	if q, ok := computeQueues(topoNodesDir, nodeId); ok {
+		info["computeQueues"] = q
+	}
+	return info
+}
+
+// cuPerWGP reads the CU mask granularity of a KFD node: 2 on gfx10 and later.
+func cuPerWGP(topoNodesDir string, nodeId int) int {
 	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
 	if err == nil && v >= 100000 {
 		return 2
