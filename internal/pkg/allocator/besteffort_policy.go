@@ -18,7 +18,6 @@ package allocator
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"slices"
 
@@ -83,22 +82,9 @@ func (b *BestEffortPolicy) getDevicesFromIds(ids []string) []*Device {
 	return res
 }
 
-// gpuCount returns how many distinct GPUs (KFD nodes) the devices belong to.
-func gpuCount(devs []*Device) int {
-	nodes := map[int]struct{}{}
-	for _, d := range devs {
-		nodes[d.NodeId] = struct{}{}
-	}
-	return len(nodes)
-}
-
 // Init initializes pair wise weights of all devices and stores in-memory
 func (b *BestEffortPolicy) Init(devs []*Device, topoDir string) error {
 	err := fetchAllPairWeights(devs, b.p2pWeights, topoDir)
-	// one GPU, however many splits it has, has no peers, so empty weights are expected
-	if len(b.p2pWeights) == 0 && gpuCount(devs) > 1 {
-		return fmt.Errorf("besteffort policy init failed to initialize p2pWeights")
-	}
 	if err == nil {
 		b.devices = devs
 		for idx := range devs {

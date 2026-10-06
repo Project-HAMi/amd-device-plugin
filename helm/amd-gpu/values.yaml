@@ -36,6 +36,25 @@ dp:
   splitCount: 10
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
+  # Experimental: also cap sliced allocations through the kernel dmem cgroup
+  # controller when available, a hard driver-level VRAM limit independent of
+  # libamvgpu. Requires cgroup v2 and the systemd cgroup driver; silently
+  # skipped when either is absent. See Project-HAMi/amd-hami-core#10.
+  dmemBackend: false
+  # Experimental: refuse a sliced allocation whose container image is not
+  # LD_AUDIT-compatible (musl/Alpine, or statically linked) instead of
+  # silently running it unprotected. See Project-HAMi/amd-hami-core#3.
+  # Requires the containerd socket and its snapshotter data directory
+  # mounted with mountPropagation: HostToContainer, so this pod's mount
+  # namespace can see the read-only image mount "ctr images mount" makes;
+  # verified on RKE2 (paths below are RKE2's defaults, override for other
+  # distros).
+  muslFailClosed:
+    enabled: false
+    ctrPath: /var/lib/rancher/rke2/bin/ctr
+    containerdSocketDir: /run/k3s/containerd
+    containerdSocket: /run/k3s/containerd/containerd.sock
+    containerdDataDir: /var/lib/rancher/rke2/agent/containerd
   # Inject GPUs through CDI instead of device nodes. The plugin writes an
   # amd.com/gpu spec to specDir on the host; the container runtime must have
   # CDI enabled and read that directory (containerd 2.x and CRI-O do by default).

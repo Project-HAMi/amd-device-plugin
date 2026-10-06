@@ -291,7 +291,7 @@ func TestNumPartitionsForUnknownType(t *testing.T) {
 }
 
 // A GPU whose KFD unique_id is 0 (APU without a Device Serial Number) is
-// addressed by ROCr agent index.
+// still registered; Allocate names it by its container-local index.
 func TestRegistrationByROCrIndex(t *testing.T) {
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS(mi355xRoot)); err != nil {
@@ -315,8 +315,8 @@ func TestRegistrationByROCrIndex(t *testing.T) {
 	p := NewAMDGPUPlugin(WithSysfsRoot(root), WithAmdSMI(uuid, uuid, uuid),
 		WithAMDSPartitionProfiles(func([]string) (map[string][]amdsmi.PartitionProfile, error) { return nil, nil }))
 	p.getAPIDevices()
-	if rocr := p.bdfToROCrUUID["0000:75:00.0"]; rocr != "0" {
-		t.Fatalf("ROCr id for the unique_id 0 GPU = %q, want agent index 0", rocr)
+	if rocr, ok := p.bdfToROCrUUID["0000:75:00.0"]; !ok || rocr != "" {
+		t.Fatalf("ROCr id for the unique_id 0 GPU = %q, %v; want registered with no UUID", rocr, ok)
 	}
 }
 

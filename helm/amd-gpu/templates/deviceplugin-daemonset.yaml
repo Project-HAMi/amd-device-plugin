@@ -37,7 +37,7 @@ spec:
           image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
           command: ["./k8s-device-plugin"]
-          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}", "-allocator_policy={{ .Values.dp.allocatorPolicy }}"{{ if .Values.dp.cdi.enabled }}, "-cdi_spec_dir={{ .Values.dp.cdi.specDir }}"{{ end }}]
+          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "-pulse={{ .Values.dp.healthPulse }}", "-split_count={{ .Values.dp.splitCount }}", "-allocator_policy={{ .Values.dp.allocatorPolicy }}"{{ if .Values.dp.cdi.enabled }}, "-cdi_spec_dir={{ .Values.dp.cdi.specDir }}"{{ end }}{{ if .Values.dp.dmemBackend }}, "-dmem_backend=true"{{ end }}{{ if .Values.dp.muslFailClosed.enabled }}, "-musl_fail_closed=true", "-ctr_path=/opt/amd-gpu-ctr-host/ctr", "-containerd_socket={{ .Values.dp.muslFailClosed.containerdSocket }}"{{ end }}]
           {{- if .Values.dp.hookInstaller.enabled }}
           # Temporary HAMi-style delivery: copy the image-bundled hook into
           # the hostPath after the device-plugin container is created.
@@ -76,6 +76,17 @@ spec:
             - name: host-vgpu-hook
               mountPath: {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
             {{- end }}
+            {{- if .Values.dp.muslFailClosed.enabled }}
+            - name: ctr-bin
+              mountPath: /opt/amd-gpu-ctr-host/ctr
+              readOnly: true
+            - name: containerd-sock
+              mountPath: {{ .Values.dp.muslFailClosed.containerdSocketDir | quote }}
+              mountPropagation: HostToContainer
+            - name: containerd-data
+              mountPath: {{ .Values.dp.muslFailClosed.containerdDataDir | quote }}
+              mountPropagation: HostToContainer
+            {{- end }}
           resources:
             {{- toYaml .Values.dp.resources | nindent 12 }}
       volumes:
@@ -100,4 +111,18 @@ spec:
           hostPath:
             path: {{ printf "%s/vgpu" (trimSuffix "/" .Values.dp.hostHookPath) | quote }}
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if .Values.dp.muslFailClosed.enabled }}
+        - name: ctr-bin
+          hostPath:
+            path: {{ .Values.dp.muslFailClosed.ctrPath | quote }}
+            type: File
+        - name: containerd-sock
+          hostPath:
+            path: {{ .Values.dp.muslFailClosed.containerdSocketDir | quote }}
+            type: Directory
+        - name: containerd-data
+          hostPath:
+            path: {{ .Values.dp.muslFailClosed.containerdDataDir | quote }}
+            type: Directory
         {{- end }}

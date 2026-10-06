@@ -36,7 +36,9 @@ import (
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/exporter"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/libcheck"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
@@ -117,6 +119,19 @@ type AMDGPUPlugin struct {
 	// whole-GPU allocations and "<bdf>#<slot>" kubelet split ids during
 	// Allocate.
 	bdfToROCrUUID map[string]string
+	// dmemEnabled additionally caps sliced allocations through the kernel
+	// dmem cgroup controller when available, a hard driver-level VRAM cap
+	// that needs no LD_AUDIT injection (see Project-HAMi/amd-hami-core#6).
+	// A failure to set it is logged and never fails Allocate; libamvgpu's
+	// HIP_DEVICE_MEMORY_LIMIT_<i> remains the enforcement path either way.
+	dmemEnabled bool
+	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
+	// allocation whose container image is not LD_AUDIT-compatible (musl,
+	// or no dynamic loader at all), instead of silently running it
+	// unprotected (Project-HAMi/amd-hami-core#3). Unlike dmemEnabled this
+	// check is synchronous: it must complete before Allocate returns, or
+	// the container could already be running by the time it is.
+	libcheckInspector *libcheck.Inspector
 }
 
 type AMDGPUPluginOption func(*AMDGPUPlugin)
@@ -179,6 +194,29 @@ func WithAmdSMI(uuidLookup, productNameLookup, memoryPartitionLookup func([]stri
 func WithAMDSPartitionProfiles(lookup func([]string) (map[string][]amdsmi.PartitionProfile, error)) AMDGPUPluginOption {
 	return func(p *AMDGPUPlugin) {
 		p.amdsmiPartitionProfileLookup = lookup
+	}
+}
+
+// WithDmemBackend enables the dmem cgroup VRAM cap for sliced allocations.
+func WithDmemBackend(enabled bool) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		p.dmemEnabled = enabled
+	}
+}
+
+// WithMuslFailClosed enables refusing sliced allocations on an
+// LD_AUDIT-incompatible image. ctrPath and containerdSocket must resolve
+// inside the plugin's own container (see internal/pkg/libcheck).
+func WithMuslFailClosed(enabled bool, ctrPath, containerdSocket string) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		if !enabled {
+			return
+		}
+		p.libcheckInspector = &libcheck.Inspector{
+			CtrPath:          ctrPath,
+			ContainerdSocket: containerdSocket,
+			Namespace:        "k8s.io",
+		}
 	}
 }
 
@@ -390,6 +428,15 @@ func (p *AMDGPUPlugin) registerHardEntry(deviceData map[string]interface{}, info
 	return true
 }
 
+// kfdNodesDir is the KFD topology nodes directory under the sysfs root.
+func (p *AMDGPUPlugin) kfdNodesDir() string {
+	root := p.sysfsRoot
+	if root == "" {
+		root = "/sys"
+	}
+	return filepath.Join(root, "class/kfd/kfd/topology/nodes")
+}
+
 func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 	root := p.sysfsRoot
 	if root == "" {
@@ -455,7 +502,6 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		glog.Warningf("AMD SMI UUID lookup incomplete; GPUs without an AMD SMI UUID will not be registered: %v", err)
 	}
 	rocrUUIDs := amdgpu.GetROCrUUIDsFromTopology(filepath.Join(root, "class/kfd/kfd"))
-	rocrIndexes := amdgpu.GetROCrIndexesFromTopology(filepath.Join(root, "class/kfd/kfd"))
 	amdSMIProductNames, err := nameLookup(bdfs)
 	if err != nil {
 		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
@@ -515,18 +561,14 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			glog.Errorf("skip GPU %s: missing or invalid render node in topology", key)
 			continue
 		}
-		rocrUUID, found := rocrUUIDs[renderD]
-		if !found || rocrUUID == "" {
-			// APUs without a PCI Device Serial Number report unique_id 0 and
-			// ROCr addresses them by agent index instead of a GPU- UUID.
-			if idx, ok := rocrIndexes[renderD]; ok {
-				rocrUUID = strconv.Itoa(idx)
-			} else {
-				glog.Errorf("skip GPU %s: no ROCr UUID found for renderD%d", key, renderD)
-				continue
-			}
+		rocrUUID := rocrUUIDs[renderD]
+		if rocrUUID == "" {
+			// APUs report KFD unique_id 0; Allocate addresses them by index.
+			glog.Warningf("GPU %s has no ROCr UUID for renderD%d; using its container-local index", key, renderD)
 		}
-		p.rocrUUIDToTopology[rocrUUID] = key
+		if rocrUUID != "" {
+			p.rocrUUIDToTopology[rocrUUID] = key
+		}
 		p.bdfToROCrUUID[key] = rocrUUID
 
 		// Soft entry ID: AMD SMI UUID for whole GPUs, ROCr UUID for partitions.
@@ -951,18 +993,19 @@ func (p *AMDGPUPlugin) rocrUUIDFromAllocationUUID(uuid string) (string, error) {
 	if strings.HasPrefix(uuid, "GPU-") {
 		return uuid, nil
 	}
-	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok && rocrUUID != "" {
+	// An empty ROCr UUID is a known GPU without one, see rocrVisibleList.
+	if rocrUUID, ok := p.amdSMIUUIDToROCrUUID[uuid]; ok {
 		return rocrUUID, nil
 	}
 	if bdf := strings.SplitN(uuid, "#", 2)[0]; bdf != uuid {
-		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok && rocrUUID != "" {
+		if rocrUUID, ok := p.bdfToROCrUUID[bdf]; ok {
 			return rocrUUID, nil
 		}
 	}
 	if i := parseAMDGPUIndex(uuid); i >= 0 {
 		gpuIdx := i / splitCount
 		if gpuIdx < len(p.sortedBDFs) {
-			if rocrUUID, ok := p.bdfToROCrUUID[p.sortedBDFs[gpuIdx]]; ok && rocrUUID != "" {
+			if rocrUUID, ok := p.bdfToROCrUUID[p.sortedBDFs[gpuIdx]]; ok {
 				return rocrUUID, nil
 			}
 		}
@@ -1029,6 +1072,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			Envs: map[string]string{},
 		}
 		rocrVisibleDevices := make([]string, 0, len(devreq))
+		renderMinors := make([]int, 0, len(devreq))
 
 		// KFD + DRI from annotation UUID topology; with CDI the spec carries them.
 		if p.cdiSpecDir == "" {
@@ -1057,6 +1101,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 				return &pluginapi.AllocateResponse{}, rocrErr
 			}
 			rocrVisibleDevices = append(rocrVisibleDevices, rocrUUID)
+			renderMinors = append(renderMinors, renderMinor)
 			if p.cdiSpecDir != "" {
 				car.CdiDevices = append(car.CdiDevices, &pluginapi.CDIDevice{Name: cdiDeviceName(cardMinor)})
 				continue
@@ -1106,7 +1151,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					// Whole GPU: mask every CU.
 					cores = totalCUs
 				}
-				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores)
+				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, p.cuMaskUnit(d.UUID, p.kfdNodesDir()))
 				if err != nil {
 					utils.PodAllocationFailed(nodename, current, NodeLockName)
 					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
@@ -1136,7 +1181,7 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			// ROCr renumbers devices after this list is applied. HSA_CU_MASK uses
 			// those container-local indices, so it is built in the same order.
-			car.Envs["ROCR_VISIBLE_DEVICES"] = strings.Join(rocrVisibleDevices, ",")
+			car.Envs["ROCR_VISIBLE_DEVICES"] = rocrVisibleList(rocrVisibleDevices, renderMinors)
 			// HIP/Ray/PyTorch read HIP_VISIBLE_DEVICES (CUDA-compatible semantics).
 			// Ray errors if only ROCR_VISIBLE_DEVICES is set; inject matching
 			// container-local indices so both layers agree after ROCr renumbering.
@@ -1148,8 +1193,54 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			// The hook only enforces slices and needs glibc >= 2.34, so whole-GPU
 			// requests must not depend on it.
 			if !p.isWholeGPU(devreq) {
-				car.Envs["HIP_DEVICE_MEMORY_LIMIT"] = fmt.Sprintf("%vm", devreq[0].Usedmem)
-				car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+				auditCompatible := true
+				if p.libcheckInspector != nil {
+					libc, checkErr := p.libcheckInspector.Inspect(ctx, currentCtr.Image)
+					if checkErr != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("verify LD_AUDIT compatibility of image %q: %w", currentCtr.Image, checkErr)
+					}
+					auditCompatible = libc.AuditCompatible()
+					if !auditCompatible {
+						// LD_AUDIT cannot enforce the memory limit on this
+						// image, but the dmem cgroup backend caps VRAM at
+						// the driver and needs neither LD_AUDIT nor glibc
+						// (Project-HAMi/amd-hami-core#6). Fail closed only
+						// when that fallback isn't actually available for
+						// every requested device; otherwise the limit is
+						// still a hard kernel-enforced cap, just without
+						// libamvgpu's hipMemGetInfo override.
+						dmemFallback := p.dmemEnabled
+						for i := 0; dmemFallback && i < len(devreq); i++ {
+							if _, ok := p.dmemRegion(devreq[i].UUID); !ok {
+								dmemFallback = false
+							}
+						}
+						if !dmemFallback {
+							utils.PodAllocationFailed(nodename, current, NodeLockName)
+							return &pluginapi.AllocateResponse{}, fmt.Errorf("image %q uses %s; LD_AUDIT cannot enforce the memory limit and no dmem cgroup fallback is available, refusing to start unprotected", currentCtr.Image, libc)
+						}
+					}
+				}
+				if auditCompatible {
+					// libamvgpu reads one limit per container-local device index.
+					for i, d := range devreq {
+						car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
+					}
+					car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+				}
+				if p.dmemEnabled {
+					// The pod's cgroup can take several seconds to appear
+					// after binding (measured up to ~7s on a real RKE2
+					// node), well past what Allocate should ever block for.
+					// Apply the cap in the background; libamvgpu's
+					// HIP_DEVICE_MEMORY_LIMIT_<i> above is already the
+					// synchronous enforcement path when auditCompatible.
+					podNamespace, podName, podUID, qos := current.Namespace, current.Name, string(current.UID), current.Status.QOSClass
+					for _, d := range devreq {
+						go p.applyDmemCap(podNamespace, podName, podUID, qos, d)
+					}
+				}
 			}
 		}
 
@@ -1196,6 +1287,54 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	utils.PodAllocationTrySuccess(nodename, podDevices, NodeLockName, current)
 
 	return response, nil
+}
+
+// applyDmemCap caps d's device at the kernel dmem cgroup controller, a hard
+// driver-level VRAM limit independent of libamvgpu (see internal/pkg/dmem).
+// Any failure (controller unavailable, GPU not registered, pod cgroup not
+// yet created, wrong cgroup driver) is logged and never fails Allocate;
+// libamvgpu's HIP_DEVICE_MEMORY_LIMIT_<i> is the enforcement path regardless.
+// applyDmemCap runs in its own goroutine, outside Allocate's response path:
+// the pod cgroup this writes to can take several seconds to appear after
+// binding, far more than Allocate should ever block a container on.
+func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos corev1.PodQOSClass, d utils.ContainerDevice) {
+	region, ok := p.dmemRegion(d.UUID)
+	if !ok {
+		return
+	}
+	podCgroup := dmem.PodCgroupPath(dmem.DefaultCgroupRoot, podUID, qos)
+	limitBytes := int64(d.Usedmem) * 1024 * 1024
+	if err := dmem.SetMaxWithRetry(podCgroup, region, limitBytes); err != nil {
+		glog.Warningf("dmem: cap %s at %d bytes on %s: %v", region, limitBytes, podCgroup, err)
+		return
+	}
+	glog.Infof("dmem: capped %s at %d bytes on pod %s/%s (%s)", region, limitBytes, podNamespace, podName, podCgroup)
+}
+
+// dmemRegion resolves uuid's registered dmem VRAM region, logging (not
+// failing) on any lookup problem so callers can treat "" as simply
+// unavailable.
+func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
+	if !dmem.Available(dmem.DefaultCgroupRoot) {
+		return "", false
+	}
+	deviceData, err := p.deviceDataFromAllocationUUID(uuid, "")
+	if err != nil {
+		glog.Warningf("dmem: resolve topology for %s: %v", uuid, err)
+		return "", false
+	}
+	bdf, ok := deviceData["devID"].(string)
+	if !ok || bdf == "" {
+		glog.Warningf("dmem: missing PCI BDF for %s", uuid)
+		return "", false
+	}
+	bdf = dmem.NormalizeBDF(bdf)
+	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	if !ok {
+		glog.Infof("dmem: no VRAM region registered for %s (%s)", uuid, bdf)
+		return "", false
+	}
+	return region, true
 }
 
 func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string) (map[string]cuallocation.Allocation, error) {
@@ -1311,6 +1450,24 @@ var cpQueuesRe = regexp.MustCompile(`num_cp_queues\s(\d+)`)
 
 // computeQueues returns the user compute queue (HQD) slots KFD reports for a
 // GPU node. Processes sharing a GPU beyond these slots contend for dispatch.
+var gfxVersionRe = regexp.MustCompile(`gfx_target_version\s(\d+)`)
+
+// cuMaskUnit returns how many CUs HSA_CU_MASK must enable together on a GPU.
+// RDNA (gfx10 and later) applies the mask per WGP, two CUs, and silently
+// ignores a mask that enables only one CU of a pair; CDNA masks single CUs.
+func (p *AMDGPUPlugin) cuMaskUnit(uuid, topoNodesDir string) int {
+	data, err := p.deviceDataFromAllocationUUID(uuid, "")
+	if err != nil {
+		return 1
+	}
+	nodeId, _ := data["nodeId"].(int)
+	v, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), gfxVersionRe)
+	if err == nil && v >= 100000 {
+		return 2
+	}
+	return 1
+}
+
 func computeQueues(topoNodesDir string, nodeId int) (int64, bool) {
 	q, err := amdgpu.ParseTopologyProperties(filepath.Join(topoNodesDir, strconv.Itoa(nodeId), "properties"), cpQueuesRe)
 	return q, err == nil && q > 0
@@ -1351,6 +1508,28 @@ func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1
 		return false, err
 	}
 	return refreshed.Annotations[utils.CuAllocation] == expected, nil
+}
+
+// rocrVisibleList joins ROCr UUIDs for ROCR_VISIBLE_DEVICES. A GPU without
+// one is named by its index among the container's GPUs, which ROCr enumerates
+// in KFD node order.
+// ponytail: render minor order stands in for KFD node order; read node ids if they ever diverge.
+func rocrVisibleList(uuids []string, renderMinors []int) string {
+	out := make([]string, len(uuids))
+	for i, u := range uuids {
+		if u != "" {
+			out[i] = u
+			continue
+		}
+		idx := 0
+		for _, m := range renderMinors {
+			if m < renderMinors[i] {
+				idx++
+			}
+		}
+		out[i] = strconv.Itoa(idx)
+	}
+	return strings.Join(out, ",")
 }
 
 // allocationToIDList converts a CU bitmap to ID_List grammar used by HSA_CU_MASK, e.g. "0-3,8,10-12".
@@ -1498,6 +1677,16 @@ type AMDGPULister struct {
 	SplitCount int
 	// CDISpecDir enables CDI device injection with specs written there.
 	CDISpecDir string
+	// DmemBackend additionally caps sliced allocations through the kernel
+	// dmem cgroup controller when available.
+	DmemBackend bool
+	// MuslFailClosed refuses a sliced allocation whose image is not
+	// LD_AUDIT-compatible, instead of silently running it unprotected.
+	MuslFailClosed bool
+	// CtrPath and ContainerdSocket locate the ctr binary and containerd
+	// socket this pod's own mount namespace can see, used only when
+	// MuslFailClosed is set.
+	CtrPath, ContainerdSocket string
 }
 
 // GetResourceNamespace must return namespace (vendor ID) of implemented Lister. e.g. for
@@ -1541,6 +1730,8 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithResource(resourceLastName),
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
+		WithDmemBackend(l.DmemBackend),
+		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)
 }

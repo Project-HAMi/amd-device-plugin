@@ -611,8 +611,12 @@ func GetROCrUUIDsFromTopology(topoRootParam ...string) map[int]string {
 			continue
 		}
 		uniqueID, err := parseTopologyUniqueID(nodeFile)
-		if err != nil || uniqueID == 0 {
+		if err != nil {
 			glog.Errorf("read ROCr UUID source from %s: %v", nodeFile, err)
+			continue
+		}
+		if uniqueID == 0 {
+			// APUs have no unique_id; the plugin names them by index.
 			continue
 		}
 		uuids[int(renderMinor)] = fmt.Sprintf("GPU-%016x", uniqueID)

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
@@ -136,7 +137,7 @@ func TestNextAllocationUsesPersistedPodState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebuild first Pod allocation: %v", err)
 	}
-	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4)
+	_, delta, err := cuallocation.AllocateN(occupied[uuid], totalCUs, 4, 1)
 	if err != nil {
 		t.Fatalf("allocate second Pod: %v", err)
 	}
@@ -685,5 +686,151 @@ func TestDevicesForResource(t *testing.T) {
 	}
 	if got := devicesForResource(byType, "gpu"); len(got) != 2 {
 		t.Fatalf("single strategy on a mixed node = %v, want every device", got)
+	}
+}
+
+// ROCr renumbers devices in ROCR_VISIBLE_DEVICES order and HSA_CU_MASK
+// indexes the renumbered list, so both must follow the request order.
+func TestAllocateMultiGPUMaskOrder(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+			utils.BindTimeAnnotations:     "1",
+			utils.AssignedNodeAnnotations: "n",
+			utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+			utils.DeviceToAllocate:        "uuid-b,AMDGPU,512,2:uuid-a,AMDGPU,16304,64:;",
+		}},
+		Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	cs := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, pod)
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:08:00.0": {"card": 1, "renderD": 128},
+			"0000:0a:00.0": {"card": 2, "renderD": 130},
+		},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a", "uuid-b": "GPU-b"},
+		deviceCache: []*utils.DeviceInfo{
+			{ID: "uuid-a", Devcore: 64, Devmem: 16304},
+			{ID: "uuid-b", Devcore: 2, Devmem: 512},
+		},
+	}
+	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:0a:00.0#0", "0000:08:00.0#0"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envs := resp.ContainerResponses[0].Envs
+	for k, want := range map[string]string{
+		"ROCR_VISIBLE_DEVICES": "GPU-b,GPU-a",
+		"HSA_CU_MASK":          "0:0-1;1:0-63",
+		"HIP_VISIBLE_DEVICES":  "0,1",
+	} {
+		if envs[k] != want {
+			t.Errorf("%s = %q, want %q", k, envs[k], want)
+		}
+	}
+}
+
+// An APU reports KFD unique_id 0, so ROCr has no UUID for it and only the
+// index among the container's GPUs, in render node order, names it.
+func TestRocrVisibleListIndexFallback(t *testing.T) {
+	for _, tc := range []struct {
+		uuids  []string
+		minors []int
+		want   string
+	}{
+		{[]string{"GPU-a", "GPU-b"}, []int{128, 130}, "GPU-a,GPU-b"},
+		{[]string{"", "GPU-a"}, []int{130, 128}, "1,GPU-a"},
+		{[]string{"GPU-a", ""}, []int{128, 130}, "GPU-a,1"},
+		{[]string{""}, []int{130}, "0"},
+	} {
+		if got := rocrVisibleList(tc.uuids, tc.minors); got != tc.want {
+			t.Errorf("rocrVisibleList(%v, %v) = %q, want %q", tc.uuids, tc.minors, got, tc.want)
+		}
+	}
+	p := &AMDGPUPlugin{amdSMIUUIDToROCrUUID: map[string]string{"apu": ""}}
+	if got, err := p.rocrUUIDFromAllocationUUID("apu"); err != nil || got != "" {
+		t.Errorf("known GPU without ROCr UUID = %q, %v; want empty, nil", got, err)
+	}
+	if _, err := p.rocrUUIDFromAllocationUUID("missing"); err == nil {
+		t.Error("unknown GPU must still fail")
+	}
+}
+
+func TestCUMaskUnit(t *testing.T) {
+	dir := t.TempDir()
+	for node, gfx := range map[string]string{"1": "120001", "2": "100306", "3": "90402"} {
+		if err := os.MkdirAll(filepath.Join(dir, node), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, node, "properties"), []byte("gfx_target_version "+gfx+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"rdna4": {"nodeId": 1}, "rdna2-apu": {"nodeId": 2}, "cdna3": {"nodeId": 3},
+		},
+		amdSMIUUIDToTopology: map[string]string{"a": "rdna4", "b": "rdna2-apu", "c": "cdna3"},
+	}
+	for uuid, want := range map[string]int{"a": 2, "b": 2, "c": 1, "unknown": 1} {
+		if got := p.cuMaskUnit(uuid, dir); got != want {
+			t.Errorf("cuMaskUnit(%s) = %d, want %d", uuid, got, want)
+		}
+	}
+}
+
+// libamvgpu caps each container-local device by HIP_DEVICE_MEMORY_LIMIT_<i>;
+// one shared limit capped every GPU of a multi-GPU slice at the first's size.
+func TestAllocatePerGPUMemoryLimit(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+			utils.BindTimeAnnotations:     "1",
+			utils.AssignedNodeAnnotations: "n",
+			utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+			utils.DeviceToAllocate:        "uuid-b,AMDGPU,4096,1:uuid-a,AMDGPU,16304,32:;",
+		}},
+		Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
+		utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
+	}}}
+	cs := fake.NewSimpleClientset(node, pod)
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:08:00.0": {"card": 1, "renderD": 128},
+			"0000:0a:00.0": {"card": 2, "renderD": 130},
+		},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a", "uuid-b": "GPU-b"},
+		deviceCache: []*utils.DeviceInfo{
+			{ID: "uuid-a", Devcore: 64, Devmem: 16304},
+			{ID: "uuid-b", Devcore: 2, Devmem: 4096},
+		},
+	}
+	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:0a:00.0#0", "0000:08:00.0#0"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envs := resp.ContainerResponses[0].Envs
+	for k, want := range map[string]string{"HIP_DEVICE_MEMORY_LIMIT_0": "4096m", "HIP_DEVICE_MEMORY_LIMIT_1": "16304m"} {
+		if envs[k] != want {
+			t.Errorf("%s = %q, want %q", k, envs[k], want)
+		}
 	}
 }
