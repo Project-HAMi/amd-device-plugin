@@ -16,7 +16,7 @@ This folder holds the three manifests:
     echo -n '<your HF TOKEN>' | base64
     ```
 
-- [deployment.yaml](deployment.yaml): the vLLM Deployment. It requests one GPU (`amd.com/gpu: "1"`) and serves `mistralai/Mistral-7B-v0.3` on port 8888.
+- [deployment.yaml](deployment.yaml): the vLLM Deployment. It requests one GPU (`amd.com/gpu: "1"`) and serves `mistralai/Mistral-7B-v0.3` on port 8888. That model needs a GPU with more than 16 GB of VRAM; on a smaller card change the model in `args`.
 - [service.yaml](service.yaml): a ClusterIP Service on port 80 that forwards to the Deployment.
 
 ## Launch the pods

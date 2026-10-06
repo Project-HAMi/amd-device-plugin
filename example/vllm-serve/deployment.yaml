@@ -34,6 +34,8 @@ spec:
             add:
             - SYS_PTRACE
         command: ["/bin/sh", "-c"]
+        # Mistral-7B in bf16 needs a GPU with more than 16 GB of VRAM; on a
+        # 16 GB card serve a smaller model, such as Qwen/Qwen2.5-0.5B-Instruct
         args: [
           "vllm serve mistralai/Mistral-7B-v0.3 --port 8888 --trust-remote-code --enable-chunked-prefill --max_num_batched_tokens 1024"
         ]
