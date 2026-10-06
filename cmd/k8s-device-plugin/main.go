@@ -62,9 +62,10 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 	}
 	if isHomogeneous {
 		// Homogeneous node will report only "gpu" resource if strategy is single. If strategy is mixed, it will report resources under the partition type name
-		if resourceNamingStrategy == StrategySingle {
+		switch resourceNamingStrategy {
+		case StrategySingle:
 			resources = []string{"gpu"}
-		} else if resourceNamingStrategy == StrategyMixed {
+		case StrategyMixed:
 			if len(partitionCountMap) == 0 {
 				// If partitioning is not supported on the node, we should report resources under "gpu" regardless of the strategy
 				resources = []string{"gpu"}
@@ -78,9 +79,10 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 		}
 	} else {
 		// Heterogeneous node reports resources based on partition types if strategy is mixed. Heterogeneous is not allowed if Strategy is single
-		if resourceNamingStrategy == StrategySingle {
+		switch resourceNamingStrategy {
+		case StrategySingle:
 			return resources, fmt.Errorf("partitions of different styles across GPUs in a node are not supported with the single strategy, start the device plugin with the mixed strategy")
-		} else if resourceNamingStrategy == StrategyMixed {
+		case StrategyMixed:
 			for partitionType, count := range partitionCountMap {
 				if count > 0 {
 					resources = append(resources, partitionType)
@@ -169,7 +171,7 @@ func main() {
 		if _, err := os.Stat(path); err == nil {
 			resources, err := getResourceList(strategy)
 			if err != nil {
-				glog.Errorf("Error occured: %v", err)
+				glog.Errorf("Error occurred: %v", err)
 				os.Exit(1)
 			}
 			if len(resources) > 0 {

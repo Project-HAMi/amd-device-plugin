@@ -16,7 +16,7 @@ Kubernetes: `>= 1.18.0`
 | dp.image.tag | string | `"0.0.1"` | Image tag. |
 | dp.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
 | dp.serviceAccount.create | bool | `true` | Create the service account and RBAC needed to register devices and persist allocations. |
-| dp.serviceAccount.name | string | `""` | Override the service account name. |
+| dp.serviceAccount.name | string | `""` | Override the service account name. With `create: false`, RBAC is bound to this existing account, or skipped when it is empty. |
 | dp.serviceAccount.annotations | object | `{}` | Service account annotations. |
 | dp.securityContext.privileged | bool | `true` | Let the plugin query AMD GPU device nodes on the host. |
 | dp.securityContext.capabilities.drop | list | `["ALL"]` | Capabilities dropped from the plugin container. |
