@@ -11,7 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-FROM registry.access.redhat.com/ubi9/ubi:latest as builder
+FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:5858f9ace07316e3b12caab62f6c2481a5030bb6bafdca5a9ea324c321ef36df as builder
 USER root
 RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ && \
@@ -36,7 +36,7 @@ RUN echo "73A2,   C0, AMD Radeon Pro W6900X" >> /go/src/github.com/Project-HAMi/
 RUN echo "73AB,   C0, AMD Radeon Pro W6800X" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 RUN echo "74BC,   00, AMD Instinct MI308X HF VF" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8@sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae
 LABEL \
     name="amd-k8s-node-labeller" \ 
     maintainer="Project-HAMi maintainers" \
