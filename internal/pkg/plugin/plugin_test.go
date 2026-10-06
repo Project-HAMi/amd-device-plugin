@@ -281,3 +281,52 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 		}
 	}
 }
+
+// ROCr renumbers devices in ROCR_VISIBLE_DEVICES order and HSA_CU_MASK
+// indexes the renumbered list, so both must follow the request order.
+func TestAllocateMultiGPUMaskOrder(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+			utils.BindTimeAnnotations:     "1",
+			utils.AssignedNodeAnnotations: "n",
+			utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+			utils.DeviceToAllocate:        "uuid-b,AMDGPU,512,2:uuid-a,AMDGPU,16304,64:;",
+		}},
+		Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	cs := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, pod)
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:08:00.0": {"card": 1, "renderD": 128},
+			"0000:0a:00.0": {"card": 2, "renderD": 130},
+		},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a", "uuid-b": "GPU-b"},
+		deviceCache: []*utils.DeviceInfo{
+			{ID: "uuid-a", Devcore: 64, Devmem: 16304},
+			{ID: "uuid-b", Devcore: 2, Devmem: 512},
+		},
+	}
+	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:0a:00.0#0", "0000:08:00.0#0"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envs := resp.ContainerResponses[0].Envs
+	for k, want := range map[string]string{
+		"ROCR_VISIBLE_DEVICES": "GPU-b,GPU-a",
+		"HSA_CU_MASK":          "0:0-1;1:0-63",
+		"HIP_VISIBLE_DEVICES":  "0,1",
+	} {
+		if envs[k] != want {
+			t.Errorf("%s = %q, want %q", k, envs[k], want)
+		}
+	}
+}
