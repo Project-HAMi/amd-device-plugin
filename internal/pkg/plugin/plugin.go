@@ -82,6 +82,9 @@ type AMDGPUPlugin struct {
 	// A failure to set it is logged and never fails Allocate; libamvgpu's
 	// HIP_DEVICE_MEMORY_LIMIT_<i> remains the enforcement path either way.
 	dmemEnabled bool
+	// dmemCgroupRoot overrides dmem.DefaultCgroupRoot; tests point it at a
+	// fake hierarchy.
+	dmemCgroupRoot string
 	// libcheckInspector, when non-nil, makes Allocate refuse a sliced
 	// allocation whose container image is not LD_AUDIT-compatible (musl,
 	// or no dynamic loader at all), instead of silently running it
@@ -904,7 +907,7 @@ func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos co
 	if !ok {
 		return
 	}
-	podCgroup := dmem.PodCgroupPath(dmem.DefaultCgroupRoot, podUID, qos)
+	podCgroup := dmem.PodCgroupPath(p.cgroupRoot(), podUID, qos)
 	limitBytes := int64(d.Usedmem) * 1024 * 1024
 	if err := dmem.SetMaxWithRetry(podCgroup, region, limitBytes); err != nil {
 		glog.Warningf("dmem: cap %s at %d bytes on %s: %v", region, limitBytes, podCgroup, err)
@@ -913,11 +916,18 @@ func (p *AMDGPUPlugin) applyDmemCap(podNamespace, podName, podUID string, qos co
 	glog.Infof("dmem: capped %s at %d bytes on pod %s/%s (%s)", region, limitBytes, podNamespace, podName, podCgroup)
 }
 
+func (p *AMDGPUPlugin) cgroupRoot() string {
+	if p.dmemCgroupRoot != "" {
+		return p.dmemCgroupRoot
+	}
+	return dmem.DefaultCgroupRoot
+}
+
 // dmemRegion resolves uuid's registered dmem VRAM region, logging (not
 // failing) on any lookup problem so callers can treat "" as simply
 // unavailable.
 func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
-	if !dmem.Available(dmem.DefaultCgroupRoot) {
+	if !dmem.Available(p.cgroupRoot()) {
 		return "", false
 	}
 	deviceData, err := p.deviceDataFromAllocationUUID(uuid, "")
@@ -931,7 +941,7 @@ func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
 		return "", false
 	}
 	bdf = dmem.NormalizeBDF(bdf)
-	region, ok := dmem.Region(dmem.DefaultCgroupRoot, bdf)
+	region, ok := dmem.Region(p.cgroupRoot(), bdf)
 	if !ok {
 		glog.Infof("dmem: no VRAM region registered for %s (%s)", uuid, bdf)
 		return "", false

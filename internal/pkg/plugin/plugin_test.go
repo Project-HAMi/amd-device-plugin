@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/cuallocation"
+	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/dmem"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
@@ -449,5 +450,44 @@ func TestDeviceCustomInfo(t *testing.T) {
 	}
 	if cdna := deviceCustomInfo("0000:0A:00.0", dir, 2); cdna["cuPerWGP"] != 1 || cdna["pciBDF"] != "0000:0a:00.0" {
 		t.Errorf("CDNA custominfo = %v", cdna)
+	}
+}
+
+// Each GPU of a multi-GPU slice gets its own dmem region capped at its own
+// share, not the first GPU's.
+func TestApplyDmemCapPerGPU(t *testing.T) {
+	root := t.TempDir()
+	pod := dmem.PodCgroupPath(root, "u-1", corev1.PodQOSBestEffort)
+	if err := os.MkdirAll(pod, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"cgroup.controllers": "cpu memory dmem\n",
+		"dmem.capacity":      "drm/0000:08:00.0/vram 17095983104\ndrm/0000:0a:00.0/vram 4294967296\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &AMDGPUPlugin{
+		dmemCgroupRoot: root,
+		AMDGPUs: map[string]map[string]interface{}{
+			"0000:08:00.0": {"devID": "0000:08:00:0"},
+			"0000:0a:00.0": {"devID": "0000:0a:00:0"},
+		},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+	}
+	for _, tc := range []struct {
+		d    utils.ContainerDevice
+		want string
+	}{
+		{utils.ContainerDevice{UUID: "uuid-b", Usedmem: 1024}, "drm/0000:0a:00.0/vram 1073741824\n"},
+		{utils.ContainerDevice{UUID: "uuid-a", Usedmem: 8192}, "drm/0000:08:00.0/vram 8589934592\n"},
+	} {
+		p.applyDmemCap("ns", "p", "u-1", corev1.PodQOSBestEffort, tc.d)
+		// cgroupfs applies each write to its region; a plain file keeps the last.
+		if got, _ := os.ReadFile(filepath.Join(pod, "dmem.max")); string(got) != tc.want {
+			t.Errorf("dmem.max after %s = %q, want %q", tc.d.UUID, got, tc.want)
+		}
 	}
 }
