@@ -153,12 +153,7 @@ var (
 
 func init() {
 	InRequestDevices = make(map[string]string)
-	// Upstream HAMi (>= 2.9) writes the committed allocation under
-	// hami.io/amd-devices-allocated. The fork's own scheduler writes the same
-	// payload under hami.io/amd-devices-to-allocate first. Read both; the
-	// second key is only consulted when the first has no payload.
-	InRequestDevices["amd"] = DeviceAllocation
-	InRequestDevices["amd-pending"] = DeviceToAllocate
+	InRequestDevices["amd"] = DeviceToAllocate
 	SupportDevices = make(map[string]string)
 	SupportDevices["amd"] = DeviceAllocation
 }
