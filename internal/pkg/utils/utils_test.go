@@ -44,8 +44,8 @@ func lockedNode(owner string) *corev1.Node {
 	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{NodeLockKey: lockOf("ns", owner)}}}
 }
 
-func testPod(name, toAllocate string, ctrs ...string) *corev1.Pod {
-	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", Annotations: map[string]string{
+func testPod(toAllocate string, ctrs ...string) *corev1.Pod {
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
 		BindTimeAnnotations:     "1",
 		AssignedNodeAnnotations: "n",
 		DeviceBindPhase:         DeviceBindAllocating,
@@ -76,7 +76,7 @@ func TestPodAllocationTrySuccess(t *testing.T) {
 		{"all erased", ";;", true},
 		{"annotation empty", "", true},
 	} {
-		pod := testPod("p", tc.remaining)
+		pod := testPod(tc.remaining)
 		pod.Annotations[DeviceAllocation] = "uuid-a,AMDGPU,1024,10:;uuid-b,AMDGPU,1024,10:;"
 		cs := setup(t, lockedNode("p"), pod)
 		PodAllocationTrySuccess("n", "lock", pod)
@@ -89,7 +89,7 @@ func TestPodAllocationTrySuccess(t *testing.T) {
 // A failed phase patch must not leave the node locked.
 func TestPodAllocationFailedReleasesLockWhenPatchFails(t *testing.T) {
 	cs := setup(t, lockedNode("p")) // pod missing, so the patch fails
-	PodAllocationFailed("n", testPod("p", ""), "lock")
+	PodAllocationFailed("n", testPod(""), "lock")
 	if l := nodeLock(t, cs); l != "" {
 		t.Errorf("node lock %q kept after failed pod patch", l)
 	}
@@ -109,7 +109,7 @@ func TestReleaseNodeLockRechecksOwnerOnRetry(t *testing.T) {
 		}
 		return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "nodes"}, "n", nil)
 	})
-	if err := ReleaseNodeLock("n", testPod("p", ""), false); err != nil {
+	if err := ReleaseNodeLock("n", testPod(""), false); err != nil {
 		t.Fatal(err)
 	}
 	if l := nodeLock(t, cs); l != lockOf("ns", "other") {
@@ -119,7 +119,7 @@ func TestReleaseNodeLockRechecksOwnerOnRetry(t *testing.T) {
 
 // A deleted lock owner falls back to scanning pods on the node.
 func TestGetPendingPodLockOwnerDeleted(t *testing.T) {
-	setup(t, lockedNode("gone"), testPod("p", ""))
+	setup(t, lockedNode("gone"), testPod(""))
 	pod, err := GetPendingPod(context.Background(), "n")
 	if err != nil || pod == nil || pod.Name != "p" {
 		t.Fatalf("GetPendingPod = %v, %v; want pod p", pod, err)
@@ -128,7 +128,7 @@ func TestGetPendingPodLockOwnerDeleted(t *testing.T) {
 
 // Entries stay aligned with Spec.Containers when a GPU-less container comes first.
 func TestNextDeviceRequestSkipsGPULessContainer(t *testing.T) {
-	pod := testPod("p", ";uuid-a,AMDGPU,4096,25:;uuid-b,AMDGPU,4096,25:;", "sidecar", "gpu1", "gpu2")
+	pod := testPod(";uuid-a,AMDGPU,4096,25:;uuid-b,AMDGPU,4096,25:;", "sidecar", "gpu1", "gpu2")
 	cs := setup(t, pod)
 	for _, want := range []string{"gpu1", "gpu2"} {
 		cur, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
