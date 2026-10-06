@@ -25,6 +25,12 @@
 - Whole-GPU requests no longer inject the `libamvgpu.so` `LD_AUDIT` hook or `HIP_DEVICE_MEMORY_LIMIT`, so musl and older glibc images start (#58).
 - Node labeller compares the DRM render minor without narrowing int64 (#61).
 - `labeller.Dockerfile` builds with Go 1.26 to satisfy `go.mod` (#80).
+- The memory hook counts concurrent allocations exactly, so parallel `hipMalloc` calls cannot overshoot the limit (#126, Project-HAMi/amd-hami-core#14).
+- Memory-only slices hold no CUs, plugin restarts end stale kubelet streams, and GPU discovery data is read under a lock (#125).
+- Split devices work with the `besteffort` and `spread` allocators (#120); node locks are always released (#118); per-GPU discovery state resets between scans and MI300 partitions take their parent GPU's health (#123).
+- The musl check picks the loader the image actually uses, and CU bitmaps stay intact on allocation errors (#121).
+- The node labeller, chart RBAC and image CI are hardened (#119).
+- An unreachable metrics exporter is logged once per outage instead of every health check (#127).
 
 ### Changed
 
@@ -33,6 +39,8 @@
 - Replaced deprecated `io/ioutil` and `grpc.Dial`, and fixed staticcheck findings (#59, #66, #75).
 - Docs build dependencies are bumped to patched versions (#40, #79 and Dependabot updates); grpc is past GO-2026-6443 (#113).
 - The chart icon is the HAMi logo instead of the bundled AMD `logo.png` (#112).
+- README, user guide and repository files are rewritten for the HAMi plugin (#116, #117, #122); remaining lint findings are fixed (#124).
+- The UBI images verify the Go toolchain checksum.
 - The raw `k8s-ds-amdgpu-dp*.yaml` manifests are removed: they lacked the RBAC HAMi needs; use the Helm chart.
 
 ## v0.0.1

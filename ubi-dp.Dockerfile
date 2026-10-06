@@ -11,7 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:5858f9ace07316e3b12caab62f6c2481a5030bb6bafdca5a9ea324c321ef36df as builder
+FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:5858f9ace07316e3b12caab62f6c2481a5030bb6bafdca5a9ea324c321ef36df AS builder
 USER root
 RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ && \
@@ -20,6 +20,7 @@ RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf install git pkgconfig gcc gcc-c++ make glibc-devel binutils libdrm-devel hwloc-devel wget tar gzip -y && \
     dnf clean all
 RUN wget https://golang.org/dl/go1.26.8.linux-amd64.tar.gz && \
+    echo "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b  go1.26.8.linux-amd64.tar.gz" | sha256sum -c - && \
     tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz && \
     rm go1.26.8.linux-amd64.tar.gz
 # AMD SMI SDK at the same ROCm release as the main image.
@@ -44,7 +45,7 @@ RUN cd /build/amd-hami-core && make -f Makefile.hip clean all
 
 FROM registry.access.redhat.com/ubi9/ubi-init:9.8@sha256:9e376e17d0102564aed1d0db808e52ab71f34464adf6d89a9f24c2a1bd3e497f
 LABEL \
-    name="amd-k8s-device-plugin" \ 
+    name="amd-k8s-device-plugin" \
     maintainer="Project-HAMi maintainers" \
     vendor="Project-HAMi" \
     version="0.0.1" \
