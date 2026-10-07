@@ -1,8 +1,8 @@
 header:
   schema-version: 2.0.0
-  last-updated: '2026-10-06'
+  last-updated: '2026-10-07'
   last-reviewed: '2026-09-29'
-  url: https://github.com/Project-HAMi/amd-device-plugin/blob/main/SECURITY-INSIGHTS.yml
+  url: https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/SECURITY-INSIGHTS.yml
   comment: |
     Security metadata for the HAMi amd-device-plugin repository, following
     the OpenSSF Security Insights specification.
