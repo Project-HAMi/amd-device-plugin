@@ -52,6 +52,7 @@ func fixture(t *testing.T) *Collector {
 	card := filepath.Join(drm, "card1", "device")
 	writeFile(t, filepath.Join(card, "uevent"), "DRIVER=amdgpu\nPCI_SLOT_NAME="+testBDF+"\n")
 	writeFile(t, filepath.Join(card, "mem_info_vram_used"), "1251446784\n")
+	writeFile(t, filepath.Join(card, "mem_info_vram_total"), "17095983104\n")
 	writeFile(t, filepath.Join(card, "gpu_busy_percent"), "37\n")
 	writeFile(t, filepath.Join(card, "hwmon", "hwmon3", "temp1_input"), "42000\n")
 	writeFile(t, filepath.Join(card, "hwmon", "hwmon3", "power1_average"), "11000000\n")
@@ -96,6 +97,9 @@ func TestCollect(t *testing.T) {
 # HELP hami_host_gpu_memory_used_bytes GPU device memory usage in bytes
 # TYPE hami_host_gpu_memory_used_bytes gauge
 hami_host_gpu_memory_used_bytes{device_index="1",device_type="AMD Radeon Graphics",device_uuid="` + testUUID + `",node="gpu-1"} 1.251446784e+09
+# HELP hami_host_gpu_memory_total_bytes GPU device memory capacity in bytes
+# TYPE hami_host_gpu_memory_total_bytes gauge
+hami_host_gpu_memory_total_bytes{device_index="1",device_type="AMD Radeon Graphics",device_uuid="` + testUUID + `",node="gpu-1"} 1.7095983104e+10
 # HELP hami_host_gpu_power_usage_watts GPU power draw in watts
 # TYPE hami_host_gpu_power_usage_watts gauge
 hami_host_gpu_power_usage_watts{device_index="1",device_type="AMD Radeon Graphics",device_uuid="` + testUUID + `",node="gpu-1"} 11
