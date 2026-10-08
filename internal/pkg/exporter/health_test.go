@@ -87,3 +87,26 @@ func TestStaleSocketWarnsOnce(t *testing.T) {
 		t.Errorf("warnings = %d over 3 failed checks, want 1", warnings)
 	}
 }
+
+func TestUnhealthyFrom(t *testing.T) {
+	if got := unhealthyFrom(nil); got != nil {
+		t.Fatalf("no exporter data = %v, want nil", got)
+	}
+	got := unhealthyFrom(map[string]string{
+		"0000:06:00.0": pluginapi.Healthy,
+		"0000:0a:00.0": pluginapi.Unhealthy,
+		"0000:0e:00.0": "anything else",
+	})
+	if len(got) != 2 || !got["0000:0a:00.0"] || !got["0000:0e:00.0"] || got["0000:06:00.0"] {
+		t.Fatalf("unhealthy = %v, want only the two not reported Healthy", got)
+	}
+}
+
+func TestUnhealthyGPUsWithoutExporter(t *testing.T) {
+	old := healthSocket
+	healthSocket = filepath.Join(t.TempDir(), "missing.socket")
+	t.Cleanup(func() { healthSocket = old })
+	if got := UnhealthyGPUs(); got != nil {
+		t.Fatalf("no exporter = %v, want nil so every GPU stays healthy", got)
+	}
+}

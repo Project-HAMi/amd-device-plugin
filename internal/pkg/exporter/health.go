@@ -121,6 +121,27 @@ func PopulatePerGPUDHealth(devs []*pluginapi.Device, defaultHealth string) {
 	applyHealth(devs, hMap, defaultHealth, partitionBDF("/sys/devices/platform", "/sys/class/kfd/kfd"))
 }
 
+// UnhealthyGPUs returns the GPUs, keyed by PCI BDF, the exporter reports as
+// unhealthy, or nil when the exporter cannot be reached.
+func UnhealthyGPUs() map[string]bool {
+	hMap, _ := getGPUHealth()
+	return unhealthyFrom(hMap)
+}
+
+func unhealthyFrom(hMap map[string]string) map[string]bool {
+	var out map[string]bool
+	for bdf, h := range hMap {
+		if h == pluginapi.Healthy {
+			continue
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[bdf] = true
+	}
+	return out
+}
+
 // applyHealth sets each device to the exporter health of its GPU. The exporter
 // keys GPUs by PCI BDF while device ids are "<bdf or partition>#<slot>" splits;
 // gpuBDF maps the part before '#' to the BDF.
