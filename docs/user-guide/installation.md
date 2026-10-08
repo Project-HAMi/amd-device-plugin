@@ -28,7 +28,7 @@ kubectl get node <node> -o jsonpath='{.status.allocatable.amd\.com/gpu}'
 kubectl get node <node> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
 ```
 
-`amd.com/gpu` is the number of GPUs times their share count: by default 2 per gfx12 GPU and 10 per other GPU. The annotation lists each GPU's UUID, product name, VRAM and CU count, plus `custominfo` with the PCI BDF, compute-queue count and `cuPerWGP`.
+`amd.com/gpu` is the number of GPUs times their share count: by default 2 per gfx12 GPU and 10 per other GPU. The annotation lists each GPU's UUID, product name, VRAM and CU count, plus `custominfo` with the PCI BDF, compute-queue count, `cuPerWGP` and, on GPUs linked over XGMI, `xgmiPeers`, the BDFs of the GPUs each one reaches over XGMI. A GPU the exporter reports unhealthy is published with `health` omitted (false), which the HAMi scheduler refuses with `CardNotHealth`.
 
 ## Optional components
 
