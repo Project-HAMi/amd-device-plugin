@@ -332,6 +332,8 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		})
 	}
 
+	addXGMIPeers(out, gpus, kfdTopologyNodes)
+
 	p.publish(gpus, toTopology, toROCr, bdfToROCr, out)
 	return out
 }
@@ -1312,4 +1314,27 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)
+}
+
+// addXGMIPeers records, per GPU, the registered GPUs it reaches over XGMI, so
+// the scheduler can keep a multi-GPU pod inside one fully linked group.
+func addXGMIPeers(devices []*utils.DeviceInfo, gpus map[string]map[string]interface{}, topoNodesDir string) {
+	nodeBDF := make(map[int]string, len(gpus))
+	bdfNode := make(map[string]int, len(gpus))
+	for key, gpu := range gpus {
+		if nodeID, ok := gpu["nodeId"].(int); ok {
+			bdf := strings.ToLower(key)
+			nodeBDF[nodeID], bdfNode[bdf] = bdf, nodeID
+		}
+	}
+	for _, d := range devices {
+		bdf, _ := d.CustomInfo["pciBDF"].(string)
+		nodeID, ok := bdfNode[bdf]
+		if !ok {
+			continue
+		}
+		if peers := xgmiPeers(topoNodesDir, nodeID, nodeBDF); len(peers) > 0 {
+			d.CustomInfo["xgmiPeers"] = peers
+		}
+	}
 }
