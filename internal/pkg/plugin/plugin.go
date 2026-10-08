@@ -78,6 +78,20 @@ func healthyCapacity(devices []*utils.DeviceInfo) corev1.ResourceList {
 	}
 }
 
+// memoryScaling multiplies the VRAM each GPU registers with HAMi. Above 1 the
+// node advertises more memory than the card has and pods that load libamvgpu
+// get HIP_OVERSUBSCRIBE=true, so hipMalloc is served from managed memory that
+// can spill to host RAM. Set once at startup from AMDGPULister.DeviceMemoryScaling.
+var memoryScaling = 1.0
+
+// scaledMemory returns the VRAM in MiB a GPU registers after memoryScaling.
+func scaledMemory(mib int32) int32 {
+	if memoryScaling == 1 {
+		return mib
+	}
+	return int32(float64(mib) * memoryScaling)
+}
+
 // splitCountFor returns how many workloads may share the GPU at a KFD node.
 // gfx12 has only 2 CP pipes for user compute queues, so more than about 2
 // processes per GPU collapse each other's throughput (see README); other
@@ -662,7 +676,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			ID:           infoID,
 			Index:        uint(card),
 			Count:        int32(splitCountFor(p.kfdNodesDir(), nodeId)),
-			Devmem:       capacity.VRAMMiB,
+			Devmem:       scaledMemory(capacity.VRAMMiB),
 			Devcore:      capacity.CUCount,
 			Type:         deviceType,
 			Numa:         numa,
@@ -1230,6 +1244,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					if p.hipLogLevel > 0 {
 						car.Envs["LIBHIP_LOG_LEVEL"] = strconv.Itoa(p.hipLogLevel)
 					}
+					if memoryScaling > 1 {
+						car.Envs["HIP_OVERSUBSCRIBE"] = "true"
+					}
 					// Mount the hook only where it is loaded, so whole-GPU
 					// pods start even when no hook is installed on the node.
 					car.Mounts = append(car.Mounts, &pluginapi.Mount{
@@ -1705,6 +1722,8 @@ type AMDGPULister struct {
 	SplitCount int
 	// ReportNodeCapacity publishes the healthy GPUs' memory and compute units as node capacity.
 	ReportNodeCapacity bool
+	// DeviceMemoryScaling multiplies the VRAM each GPU registers; above 1 enables oversubscription.
+	DeviceMemoryScaling float64
 	// CDISpecDir enables CDI device injection with specs written there.
 	CDISpecDir string
 	// DmemBackend additionally caps sliced allocations through the kernel
@@ -1753,6 +1772,9 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		splitCount = l.SplitCount
 	}
 	reportNodeCapacity = l.ReportNodeCapacity
+	if l.DeviceMemoryScaling > 0 {
+		memoryScaling = l.DeviceMemoryScaling
+	}
 	policy, err := allocator.NewPolicy(l.AllocatorPolicy)
 	if err != nil {
 		glog.Errorf("%v; using besteffort", err)
