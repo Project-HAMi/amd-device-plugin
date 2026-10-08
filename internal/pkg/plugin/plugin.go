@@ -600,6 +600,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 
 	out := make([]*utils.DeviceInfo, 0, len(keys))
 	sortedBDFs := make([]string, 0, len(keys))
+	nodeIDs := make([]int, 0, len(keys))
 	for _, key := range keys {
 		deviceData := gpus[key]
 		if !p.isSchedulableTopologyKey(key, deviceData, parents) {
@@ -690,8 +691,11 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			glog.Infof("registered hard partition device %s (mode %s)", info.ID, info.Mode)
 		}
 		sortedBDFs = append(sortedBDFs, key)
+		nodeIDs = append(nodeIDs, nodeId)
 		out = append(out, info)
 	}
+
+	addXGMIPeers(out, nodeIDs, p.kfdNodesDir())
 
 	p.publish(gpus, toTopology, toROCr, bdfToROCr, rocrToTopology, sortedBDFs, out)
 	return out
@@ -1823,4 +1827,22 @@ func ClearRegistration() error {
 	}
 	glog.Infof("no GPU left to serve: clearing the stale %s registration", registerAnnosKey)
 	return utils.PatchNodeAnnotations(node, map[string]string{registerAnnosKey: marshalNodeDevices([]*utils.DeviceInfo{})})
+}
+
+// addXGMIPeers records, per GPU, the PCI BDFs of the other registered GPUs it
+// reaches over XGMI, so the scheduler can keep a multi-GPU pod inside one fully
+// linked group. nodeIDs[i] is the KFD node of devices[i]. The partitions of one
+// GPU share its BDF, so they report the other GPUs and not each other.
+func addXGMIPeers(devices []*utils.DeviceInfo, nodeIDs []int, topoNodesDir string) {
+	nodeBDF := make(map[int]string, len(devices))
+	for i, d := range devices {
+		if bdf, _ := d.CustomInfo["pciBDF"].(string); bdf != "" {
+			nodeBDF[nodeIDs[i]] = strings.ToLower(bdf)
+		}
+	}
+	for i, d := range devices {
+		if peers := xgmiPeers(topoNodesDir, nodeIDs[i], nodeBDF); len(peers) > 0 {
+			d.CustomInfo["xgmiPeers"] = peers
+		}
+	}
 }
