@@ -65,6 +65,15 @@ dp:
     rollingUpdate:
       maxUnavailable: 1
 
+# Per-container VRAM and host GPU metrics of the node, as Prometheus metrics
+# under the metric names of the HAMi NVIDIA vGPUmonitor. It reads the dmem
+# cgroup controller and sysfs, so it needs the systemd cgroup driver on a
+# kernel with the dmem controller, and no ROCm tooling.
+monitor:
+  enabled: false
+  metricsBindAddress: ":9394"
+  resources: {}
+
 imagePullSecrets: []
 
 tolerations:

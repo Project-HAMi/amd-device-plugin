@@ -1,0 +1,93 @@
+{{- if .Values.monitor.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Chart.Name }}-monitor-daemonset
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "amd-gpu.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      name: {{ .Chart.Name }}-monitor-ds
+  template:
+    metadata:
+      labels:
+        name: {{ .Chart.Name }}-monitor-ds
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ trimPrefix ":" (regexReplaceAll "^.*:" .Values.monitor.metricsBindAddress ":") | quote }}
+    spec:
+      # It shares the device plugin's service account, whose role lists the
+      # node's pods and reads the node.
+      serviceAccountName: {{ include "amd-gpu.devicePluginServiceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.node_selector_enabled }}
+      {{- with .Values.node_selector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}-monitor-cntr
+          image: {{ .Values.dp.image.repository }}:{{ .Values.dp.image.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.dp.image.pullPolicy }}
+          command: ["./k8s-vgpu-monitor"]
+          args: ["-logtostderr=true", "-stderrthreshold=INFO", "-v={{ .Values.dp.logVerbosity }}", "-metrics_bind_address={{ .Values.monitor.metricsBindAddress }}"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: metrics
+              containerPort: {{ trimPrefix ":" (regexReplaceAll "^.*:" .Values.monitor.metricsBindAddress ":") }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.monitor.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+              readOnly: true
+            - name: drm
+              mountPath: /sys/class/drm
+              readOnly: true
+            - name: devices
+              mountPath: /sys/devices
+              readOnly: true
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+        # card*/device links into /sys/devices, so both have to be mounted.
+        - name: drm
+          hostPath:
+            path: /sys/class/drm
+        - name: devices
+          hostPath:
+            path: /sys/devices
+{{- end }}
