@@ -259,6 +259,10 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		glog.Warningf("AMD SMI product-name lookup incomplete; using amd-gpu where necessary: %v", err)
 	}
 
+	// GPUs the exporter reports unhealthy (ECC, throttling) stay listed but
+	// marked, so the scheduler stops placing pods on a GPU kubelet would refuse.
+	unhealthy := exporter.UnhealthyGPUs()
+
 	keys := make([]string, 0, len(gpus))
 	for key := range gpus {
 		keys = append(keys, key)
@@ -322,7 +326,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			Type:         deviceType,
 			Numa:         numa,
 			Mode:         "",
-			Health:       true,
+			Health:       !unhealthy[key],
 			DeviceVendor: "amd",
 			CustomInfo:   customInfo,
 		})
