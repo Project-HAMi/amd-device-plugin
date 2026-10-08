@@ -27,6 +27,8 @@ dp:
   # (RDNA4), where more sharers contend for compute queues (see the README),
   # otherwise 10.
   splitCount: 0
+  # Publish the healthy GPUs' memory (amd.com/gpumem) and compute units (amd.com/gpucores) as node capacity.
+  reportNodeCapacity: false
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
   # Also cap sliced allocations through the kernel dmem cgroup controller, a

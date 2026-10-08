@@ -10,6 +10,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "patch"]
+{{- if .Values.dp.reportNodeCapacity }}
+  - apiGroups: [""]
+    resources: ["nodes/status"]
+    verbs: ["patch"]
+{{- end }}
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "patch"{{ if .Values.monitor.enabled }}, "watch"{{ end }}]

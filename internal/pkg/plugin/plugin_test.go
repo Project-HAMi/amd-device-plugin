@@ -660,3 +660,15 @@ func TestGetAPIDevicesSkipsGPUWithoutCapacity(t *testing.T) {
 		t.Errorf("registered %d GPUs without capacity, want none", len(devs))
 	}
 }
+
+func TestHealthyCapacity(t *testing.T) {
+	got := healthyCapacity([]*utils.DeviceInfo{
+		{Health: true, Devmem: 16304, Devcore: 32},
+		{Health: false, Devmem: 16304, Devcore: 32},
+		{Health: true, Devmem: 8000, Devcore: 20},
+	})
+	mem, cores := got[gpuMemResource], got[gpuCoresResource]
+	if mem.Value() != 24304 || cores.Value() != 52 {
+		t.Fatalf("got mem=%v cores=%v, want 24304 and 52 (unhealthy GPU excluded)", mem.Value(), cores.Value())
+	}
+}

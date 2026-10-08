@@ -112,6 +112,26 @@ func GetAllocatePodByNode(ctx context.Context, nodeName string) (*corev1.Pod, er
 	return nil, nil
 }
 
+// PatchNodeStatusCapacity sets the given resources in the node's status capacity and allocatable.
+func PatchNodeStatusCapacity(node *corev1.Node, resources corev1.ResourceList) error {
+	if len(resources) == 0 {
+		return nil
+	}
+	type status struct {
+		Capacity    corev1.ResourceList `json:"capacity"`
+		Allocatable corev1.ResourceList `json:"allocatable"`
+	}
+	bytes, err := json.Marshal(struct {
+		Status status `json:"status"`
+	}{status{Capacity: resources, Allocatable: resources}})
+	if err != nil {
+		return err
+	}
+	_, err = GetClient().CoreV1().Nodes().
+		Patch(context.Background(), node.Name, k8stypes.StrategicMergePatchType, bytes, metav1.PatchOptions{}, "status")
+	return err
+}
+
 func PatchNodeAnnotations(node *corev1.Node, annotations map[string]string) error {
 	type patchMetadata struct {
 		Annotations map[string]string `json:"annotations,omitempty"`

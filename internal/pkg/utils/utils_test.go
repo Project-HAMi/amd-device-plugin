@@ -22,6 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -170,5 +171,25 @@ func TestDecodePodDevicesMalformed(t *testing.T) {
 		if _, err := DecodePodDevices(InRequestDevices, map[string]string{DeviceToAllocate: s}); err == nil {
 			t.Errorf("DecodePodDevices(%q) returned no error", s)
 		}
+	}
+}
+
+func TestPatchNodeStatusCapacity(t *testing.T) {
+	cs := setup(t, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}})
+	res := corev1.ResourceList{"amd.com/gpumem": resource.MustParse("16304")}
+	if err := PatchNodeStatusCapacity(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, res); err != nil {
+		t.Fatal(err)
+	}
+	patched := false
+	for _, a := range cs.Actions() {
+		if a.GetVerb() == "patch" && a.GetSubresource() == "status" {
+			patched = true
+		}
+	}
+	if !patched {
+		t.Fatal("capacity must be patched through the status subresource")
+	}
+	if err := PatchNodeStatusCapacity(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, nil); err != nil {
+		t.Fatalf("empty list must be a no-op: %v", err)
 	}
 }

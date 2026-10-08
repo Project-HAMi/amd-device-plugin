@@ -109,11 +109,12 @@ func main() {
 	var pulse int
 	var resourceNamingStrategy, allocatorPolicy, cdiSpecDir string
 	var splitCount int
-	var dmemBackend, muslFailClosed bool
+	var dmemBackend, muslFailClosed, reportNodeCapacity bool
 	var ctrPath, containerdSocket string
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
 	flag.IntVar(&splitCount, "split_count", 0, "How many workloads may share one GPU (HAMi device Count). 0 picks it per GPU: 2 on gfx12, whose throughput collapses above about 2 sharers, otherwise 10.")
+	flag.BoolVar(&reportNodeCapacity, "report_node_capacity", false, "Publish the healthy GPUs' memory (amd.com/gpumem, MiB) and compute units (amd.com/gpucores) as node capacity and allocatable.")
 	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	flag.BoolVar(&dmemBackend, "dmem_backend", true, "Also cap sliced allocations through the kernel dmem cgroup controller. Used only when the node has the dmem controller and the systemd cgroup driver, and the plugin sees the host cgroup hierarchy; see Project-HAMi/amd-hami-core#10.")
@@ -142,15 +143,16 @@ func main() {
 	}
 
 	l := plugin.AMDGPULister{
-		ResUpdateChan:    make(chan dpm.PluginNameList),
-		Heartbeat:        make(chan bool),
-		AllocatorPolicy:  allocatorPolicy,
-		SplitCount:       splitCount,
-		CDISpecDir:       cdiSpecDir,
-		DmemBackend:      dmemBackend,
-		MuslFailClosed:   muslFailClosed,
-		CtrPath:          ctrPath,
-		ContainerdSocket: containerdSocket,
+		ResUpdateChan:      make(chan dpm.PluginNameList),
+		Heartbeat:          make(chan bool),
+		AllocatorPolicy:    allocatorPolicy,
+		SplitCount:         splitCount,
+		ReportNodeCapacity: reportNodeCapacity,
+		CDISpecDir:         cdiSpecDir,
+		DmemBackend:        dmemBackend,
+		MuslFailClosed:     muslFailClosed,
+		CtrPath:            ctrPath,
+		ContainerdSocket:   containerdSocket,
 	}
 	manager := dpm.NewManager(&l)
 
