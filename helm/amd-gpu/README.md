@@ -42,6 +42,9 @@ helm install amd-gpu ./helm/amd-gpu -n kube-system
 | dp.cdi.specDir | string | `"/var/run/cdi"` | Host directory the CDI spec is written to; the runtime must read it. |
 | dp.resources | object | `{}` | Plugin container resources. |
 | dp.updateStrategy | object | `RollingUpdate, maxUnavailable: 1` | DaemonSet update strategy. |
+| monitor.enabled | bool | `false` | Run the metrics DaemonSet: per-container VRAM from the dmem cgroup controller and host memory, load, temperature and power from sysfs, under the metric names of the HAMi NVIDIA vGPUmonitor. Needs the systemd cgroup driver on a kernel with the dmem controller. |
+| monitor.metricsBindAddress | string | `":9394"` | Address the monitor serves `/metrics` on; the container port and the scrape annotation follow it. |
+| monitor.resources | object | `{}` | Monitor container resources. |
 | imagePullSecrets | list | `[]` | Image pull secrets. |
 | tolerations | list | `[{key: CriticalAddonsOnly, operator: Exists}]` | DaemonSet tolerations. |
 | node_selector_enabled | bool | `false` | Restrict the DaemonSet to `node_selector`. |

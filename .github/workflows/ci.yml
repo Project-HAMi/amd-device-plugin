@@ -76,7 +76,7 @@ jobs:
           helm template amd-gpu ./helm/amd-gpu --namespace kube-system >/dev/null
           # the optional branches render too
           helm template amd-gpu ./helm/amd-gpu --namespace kube-system \
-            --set dp.cdi.enabled=true,dp.muslFailClosed.enabled=true,node_selector_enabled=true >/dev/null
+            --set dp.cdi.enabled=true,dp.muslFailClosed.enabled=true,node_selector_enabled=true,monitor.enabled=true >/dev/null
 
   # Build-only checks so the images that CI does not publish cannot silently break.
   extra-images:

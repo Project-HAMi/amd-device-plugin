@@ -34,6 +34,7 @@ ADD . /go/src/github.com/Project-HAMi/amd-device-plugin
 WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-device-plugin
 RUN go install \
     -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty 2>/dev/null || echo unknown)"
+RUN CGO_ENABLED=0 go install ../k8s-vgpu-monitor
 
 FROM rocm-runtime
 LABEL \
@@ -48,6 +49,7 @@ COPY --from=amdsmi-sdk /opt/rocm-7.2.4/share/amd_smi/amdsmi/libamd_smi.so /opt/r
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .
+COPY --from=builder /go/bin/k8s-vgpu-monitor .
 COPY --from=amdsmi-sdk /build/amd-hami-core/build-hip/libamvgpu.so /opt/hami/lib/amd/libamvgpu.so
 COPY --from=builder /go/src/github.com/Project-HAMi/amd-device-plugin/scripts/amd-vgpu-init.sh /opt/hami/bin/amd-vgpu-init.sh
 RUN chmod 0555 /opt/hami/bin/amd-vgpu-init.sh \
