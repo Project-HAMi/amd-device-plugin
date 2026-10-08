@@ -860,6 +860,49 @@ func TestAllocatePerGPUMemoryLimit(t *testing.T) {
 	}
 }
 
+// LIBHIP_LOG_LEVEL reaches only the pods that load libamvgpu, and only when set.
+func TestAllocateHipLogLevel(t *testing.T) {
+	for _, tc := range []struct {
+		level int
+		want  string
+	}{{0, ""}, {3, "3"}} {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+				utils.BindTimeAnnotations:     "1",
+				utils.AssignedNodeAnnotations: "n",
+				utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+				utils.DeviceToAllocate:        "uuid-a,AMDGPU,4096,8:;",
+			}},
+			Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodPending},
+		}
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
+			utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
+		}}}
+		old := utils.KubeClient
+		utils.KubeClient = fake.NewSimpleClientset(node, pod)
+		t.Setenv(utils.NodeNameEnvName, "n")
+
+		p := &AMDGPUPlugin{
+			AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
+			amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
+			amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
+			deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 32, Devmem: 16304}},
+		}
+		WithHipLogLevel(tc.level)(p)
+		resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+			ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
+		})
+		utils.KubeClient = old
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.ContainerResponses[0].Envs["LIBHIP_LOG_LEVEL"]; got != tc.want {
+			t.Errorf("level %d: LIBHIP_LOG_LEVEL = %q, want %q", tc.level, got, tc.want)
+		}
+	}
+}
+
 // The scheduler rounds core requests by the published cuPerWGP, so it must
 // match what Allocate uses.
 func TestDeviceCustomInfo(t *testing.T) {
@@ -1085,5 +1128,39 @@ func TestHealthyCapacity(t *testing.T) {
 	mem, cores := got[gpuMemResource], got[gpuCoresResource]
 	if mem.Value() != 24304 || cores.Value() != 52 {
 		t.Fatalf("got mem=%v cores=%v, want 24304 and 52 (unhealthy GPU excluded)", mem.Value(), cores.Value())
+	}
+}
+
+func TestClearRegistration(t *testing.T) {
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	t.Setenv(utils.NodeNameEnvName, "n")
+	get := func(cs *fake.Clientset) (string, bool) {
+		n, err := cs.CoreV1().Nodes().Get(context.Background(), "n", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, ok := n.Annotations[registerAnnosKey]
+		return v, ok
+	}
+
+	// A registration left by an earlier run is emptied.
+	cs := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{registerAnnosKey: `[{"id":"gone"}]`}}})
+	utils.KubeClient = cs
+	if err := ClearRegistration(); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := get(cs); !ok || strings.TrimSpace(v) != "[]" {
+		t.Fatalf("registration = %q (present %v), want []", v, ok)
+	}
+
+	// A node that never registered is not touched.
+	cs = fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}})
+	utils.KubeClient = cs
+	if err := ClearRegistration(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := get(cs); ok {
+		t.Fatal("an unregistered node got a registration annotation")
 	}
 }

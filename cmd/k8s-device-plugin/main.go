@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/allocator"
@@ -119,6 +120,10 @@ func main() {
 	flag.StringVar(&resourceNamingStrategy, "resource_naming_strategy", "single", "Resource strategy to be used: single or mixed")
 	flag.IntVar(&splitCount, "split_count", 0, "How many workloads may share one GPU (HAMi device Count). 0 picks it per GPU: 2 on gfx12, whose throughput collapses above about 2 sharers, otherwise 10.")
 	flag.BoolVar(&reportNodeCapacity, "report_node_capacity", false, "Publish the healthy GPUs' memory (amd.com/gpumem, MiB) and compute units (amd.com/gpucores) as node capacity and allocatable.")
+	var excludeGPUs string
+	var hipLogLevel int
+	flag.IntVar(&hipLogLevel, "hip_log_level", 0, "LIBHIP_LOG_LEVEL for pods that load libamvgpu: 1 error, 2 warn, 3 info, 4 debug. 0 keeps the library default.")
+	flag.StringVar(&excludeGPUs, "exclude_gpus", "", "Comma-separated GPUs this node keeps for itself and does not register: PCI BDFs (0000:06:00.0) or DRM cards (card1).")
 	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	flag.BoolVar(&dmemBackend, "dmem_backend", true, "Also cap sliced allocations through the kernel dmem cgroup controller. Used only when the node has the dmem controller and the systemd cgroup driver, and the plugin sees the host cgroup hierarchy; see Project-HAMi/amd-hami-core#10.")
@@ -142,6 +147,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	amdgpu.SetExcluded(strings.Split(excludeGPUs, ","))
+
 	for _, v := range versions {
 		glog.Infof("%s", v)
 	}
@@ -154,6 +161,7 @@ func main() {
 		ReportNodeCapacity: reportNodeCapacity,
 		CDISpecDir:         cdiSpecDir,
 		DmemBackend:        dmemBackend,
+		HipLogLevel:        hipLogLevel,
 		MuslFailClosed:     muslFailClosed,
 		CtrPath:            ctrPath,
 		ContainerdSocket:   containerdSocket,
@@ -181,6 +189,8 @@ func main() {
 			}
 			if len(resources) > 0 {
 				l.ResUpdateChan <- resources
+			} else if err := plugin.ClearRegistration(); err != nil {
+				glog.Errorf("clear the stale GPU registration: %v", err)
 			}
 		}
 	}()

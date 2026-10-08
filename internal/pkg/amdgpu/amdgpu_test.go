@@ -556,3 +556,24 @@ func TestIsHomogeneousUsesGivenGPUs(t *testing.T) {
 		}
 	}
 }
+
+func TestWithoutExcluded(t *testing.T) {
+	gpus := map[string]map[string]interface{}{
+		"0000:06:00.0": {"card": 1},
+		"0000:0A:00.0": {"card": 2},
+		"0000:0e:00.0": {"card": 3},
+	}
+	SetExcluded([]string{" 0000:0a:00.0 ", "CARD3", "", "card9"})
+	t.Cleanup(func() { SetExcluded(nil) })
+	got := withoutExcluded(gpus, excluded)
+	if len(got) != 1 || got["0000:06:00.0"] == nil {
+		t.Fatalf("kept %v, want only 0000:06:00.0 (BDF match is case-insensitive, card names too)", got)
+	}
+	if len(gpus) != 3 {
+		t.Fatal("the input map was modified")
+	}
+	SetExcluded(nil)
+	if got := withoutExcluded(gpus, excluded); len(got) != 3 {
+		t.Fatalf("nothing excluded kept %d GPUs, want 3", len(got))
+	}
+}
