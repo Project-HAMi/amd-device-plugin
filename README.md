@@ -87,7 +87,7 @@ See the [chart README](helm/amd-gpu/README.md) for all values and the [configura
 
 - **CU slices are cooperative.** ROCm applies the mask inside the process. The hook pins `HSA_CU_MASK` to the pod spec, so `setenv` or `os.environ` cannot widen it. A process that re-executes itself without `LD_AUDIT`, however, runs outside the slice. Do not rely on CU slices to isolate untrusted tenants until KFD enforces a CU limit ([#55](https://github.com/Project-HAMi/amd-device-plugin/issues/55)).
 - **Memory limits need glibc 2.34 or newer** because the hook loads through `LD_AUDIT`. musl and static images never load the hook, so only dmem caps them, and only where dmem is available. On older glibc the dynamic linker fails to load the hook (`GLIBC_2.34 not found`) and the container does not start. With `dp.muslFailClosed.enabled` the plugin checks the image first: it leaves the hook out when dmem caps the slice, and refuses the pod otherwise.
-- **gfx12 shares poorly beyond 2 pods.** These GPUs have few compute queues, so more than about 2 processes per GPU lose most of their throughput. This is why `dp.splitCount` defaults to 2 there ([#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54)).
+- **gfx12 shares poorly beyond 2 pods.** These GPUs have few compute queues, so more than about 2 processes per GPU can lose most of their throughput, depending on the model and firmware: an Ollama qwen2.5:3b pair lost about 83%, while a plain kernel loop split the card evenly across 6 processes with no loss in total. This is why `dp.splitCount` defaults to 2 there ([#54](https://github.com/Project-HAMi/amd-device-plugin/issues/54)).
 
 ## Tested hardware
 

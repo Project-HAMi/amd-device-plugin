@@ -8,7 +8,7 @@
 
 ## Shares per GPU
 
-Each GPU is published `count` times; that count is how many pods may share it. By default it is 2 on gfx12 GPUs and 10 on others; `dp.splitCount` overrides it for every GPU. gfx12 has only 2 hardware pipes for user compute queues, so more than about 2 processes on one GPU lose most of their throughput, independent of their CU and memory slices.
+Each GPU is published `count` times; that count is how many pods may share it. By default it is 2 on gfx12 GPUs and 10 on others; `dp.splitCount` overrides it for every GPU. gfx12 has only 2 hardware pipes for user compute queues, so more than about 2 processes on one GPU can lose most of their throughput, independent of their CU and memory slices. How much depends on the model and firmware: an Ollama qwen2.5:3b pair lost about 83%, while a plain kernel loop split the card evenly across 6 processes with no loss in total.
 
 ## Compute units
 
