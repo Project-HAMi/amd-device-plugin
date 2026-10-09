@@ -812,6 +812,29 @@ func TestCUMaskUnit(t *testing.T) {
 // libamvgpu caps each container-local device by HIP_DEVICE_MEMORY_LIMIT_<i>;
 // one shared limit capped every GPU of a multi-GPU slice at the first's size.
 func TestAllocatePerGPUMemoryLimit(t *testing.T) {
+	envs := allocateTwoGPUSlice(t)
+	for k, want := range map[string]string{"HIP_DEVICE_MEMORY_LIMIT_0": "4096m", "HIP_DEVICE_MEMORY_LIMIT_1": "16304m"} {
+		if envs[k] != want {
+			t.Errorf("%s = %q, want %q", k, envs[k], want)
+		}
+	}
+	if v, ok := envs["HIP_OVERSUBSCRIBE"]; ok {
+		t.Errorf("HIP_OVERSUBSCRIBE = %q without memory scaling", v)
+	}
+}
+
+// Above 1 the registered memory is scaled and pods get managed memory.
+func TestAllocateOversubscribe(t *testing.T) {
+	old := memoryScaling
+	t.Cleanup(func() { memoryScaling = old })
+	memoryScaling = 1.5
+	if got := allocateTwoGPUSlice(t)["HIP_OVERSUBSCRIBE"]; got != "true" {
+		t.Errorf("HIP_OVERSUBSCRIBE = %q, want true", got)
+	}
+}
+
+func allocateTwoGPUSlice(t *testing.T) map[string]string {
+	t.Helper()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
 			utils.BindTimeAnnotations:     "1",
@@ -849,15 +872,10 @@ func TestAllocatePerGPUMemoryLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envs := resp.ContainerResponses[0].Envs
-	for k, want := range map[string]string{"HIP_DEVICE_MEMORY_LIMIT_0": "4096m", "HIP_DEVICE_MEMORY_LIMIT_1": "16304m"} {
-		if envs[k] != want {
-			t.Errorf("%s = %q, want %q", k, envs[k], want)
-		}
-	}
 	if m := resp.ContainerResponses[0].Mounts; len(m) != 1 || m[0].ContainerPath != "/usr/local/vgpu/libamvgpu.so" {
 		t.Errorf("sliced allocation mounts %v, want the hook", m)
 	}
+	return resp.ContainerResponses[0].Envs
 }
 
 // LIBHIP_LOG_LEVEL reaches only the pods that load libamvgpu, and only when set.
@@ -1162,5 +1180,20 @@ func TestClearRegistration(t *testing.T) {
 	}
 	if _, ok := get(cs); ok {
 		t.Fatal("an unregistered node got a registration annotation")
+	}
+}
+
+func TestScaledMemory(t *testing.T) {
+	old := memoryScaling
+	t.Cleanup(func() { memoryScaling = old })
+	for _, tc := range []struct {
+		scale float64
+		mib   int32
+		want  int32
+	}{{1, 16304, 16304}, {1.5, 16304, 24456}, {4, 196608, 786432}, {0.5, 16304, 8152}} {
+		memoryScaling = tc.scale
+		if got := scaledMemory(tc.mib); got != tc.want {
+			t.Errorf("scale %v of %d MiB = %d, want %d", tc.scale, tc.mib, got, tc.want)
+		}
 	}
 }
