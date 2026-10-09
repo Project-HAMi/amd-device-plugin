@@ -43,6 +43,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
@@ -51,6 +52,31 @@ import (
 // splitCount is how many workloads may share one GPU. Set once at startup
 // from AMDGPULister.SplitCount; 0 picks it per GPU, see splitCountFor.
 var splitCount = 0
+
+// reportNodeCapacity makes RegisterInAnnotation also publish the healthy GPUs'
+// memory and compute units as node capacity. Set once at startup from
+// AMDGPULister.ReportNodeCapacity.
+var reportNodeCapacity = false
+
+const (
+	gpuMemResource   = "amd.com/gpumem"
+	gpuCoresResource = "amd.com/gpucores"
+)
+
+// healthyCapacity sums the memory (MiB) and compute units of the healthy GPUs.
+func healthyCapacity(devices []*utils.DeviceInfo) corev1.ResourceList {
+	var mem, cores int64
+	for _, d := range devices {
+		if d.Health {
+			mem += int64(d.Devmem)
+			cores += int64(d.Devcore)
+		}
+	}
+	return corev1.ResourceList{
+		gpuMemResource:   *resource.NewQuantity(mem, resource.DecimalSI),
+		gpuCoresResource: *resource.NewQuantity(cores, resource.DecimalSI),
+	}
+}
 
 // splitCountFor returns how many workloads may share the GPU at a KFD node.
 // gfx12 has only 2 CP pipes for user compute queues, so more than about 2
@@ -329,6 +355,12 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 	if err != nil {
 		glog.Errorf("get node error: %v", err)
 		return err
+	}
+
+	if reportNodeCapacity {
+		if err := utils.PatchNodeStatusCapacity(node, healthyCapacity(devices)); err != nil {
+			glog.Errorf("patch node capacity error: %v", err)
+		}
 	}
 
 	annos[registerAnnosKey] = marshalNodeDevices(devices)
@@ -1659,6 +1691,8 @@ type AMDGPULister struct {
 	AllocatorPolicy string
 	// SplitCount overrides how many workloads may share one GPU when > 0.
 	SplitCount int
+	// ReportNodeCapacity publishes the healthy GPUs' memory and compute units as node capacity.
+	ReportNodeCapacity bool
 	// CDISpecDir enables CDI device injection with specs written there.
 	CDISpecDir string
 	// DmemBackend additionally caps sliced allocations through the kernel
@@ -1704,6 +1738,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 	if l.SplitCount > 0 {
 		splitCount = l.SplitCount
 	}
+	reportNodeCapacity = l.ReportNodeCapacity
 	policy, err := allocator.NewPolicy(l.AllocatorPolicy)
 	if err != nil {
 		glog.Errorf("%v; using besteffort", err)
