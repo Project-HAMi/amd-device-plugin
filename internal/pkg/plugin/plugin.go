@@ -164,6 +164,8 @@ type AMDGPUPlugin struct {
 	// A failure to set it is logged and never fails Allocate; libamvgpu's
 	// HIP_DEVICE_MEMORY_LIMIT_<i> remains the enforcement path either way.
 	dmemEnabled bool
+	// hipLogLevel is LIBHIP_LOG_LEVEL for the pods that load libamvgpu (1 error to 4 debug); 0 leaves its default.
+	hipLogLevel int
 	// dmemCgroupRoot overrides dmem.DefaultCgroupRoot; tests point it at a
 	// fake hierarchy.
 	dmemCgroupRoot string
@@ -254,6 +256,13 @@ func dmemUsable() bool {
 func WithDmemBackend(enabled bool) AMDGPUPluginOption {
 	return func(p *AMDGPUPlugin) {
 		p.dmemEnabled = enabled
+	}
+}
+
+// WithHipLogLevel sets LIBHIP_LOG_LEVEL in the pods that load libamvgpu.
+func WithHipLogLevel(level int) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		p.hipLogLevel = level
 	}
 }
 
@@ -1218,6 +1227,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						car.Envs[fmt.Sprintf("HIP_DEVICE_MEMORY_LIMIT_%d", i)] = fmt.Sprintf("%vm", d.Usedmem)
 					}
 					car.Envs["LD_AUDIT"] = "/usr/local/vgpu/libamvgpu.so"
+					if p.hipLogLevel > 0 {
+						car.Envs["LIBHIP_LOG_LEVEL"] = strconv.Itoa(p.hipLogLevel)
+					}
 					// Mount the hook only where it is loaded, so whole-GPU
 					// pods start even when no hook is installed on the node.
 					car.Mounts = append(car.Mounts, &pluginapi.Mount{
@@ -1698,6 +1710,8 @@ type AMDGPULister struct {
 	// DmemBackend additionally caps sliced allocations through the kernel
 	// dmem cgroup controller when available.
 	DmemBackend bool
+	// HipLogLevel is LIBHIP_LOG_LEVEL for the pods that load libamvgpu; 0 leaves its default.
+	HipLogLevel int
 	// MuslFailClosed refuses a sliced allocation whose image is not
 	// LD_AUDIT-compatible, instead of silently running it unprotected.
 	MuslFailClosed bool
@@ -1750,6 +1764,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithAllocator(policy),
 		WithCDISpecDir(l.CDISpecDir),
 		WithDmemBackend(l.DmemBackend && dmemUsable()),
+		WithHipLogLevel(l.HipLogLevel),
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)
@@ -1766,4 +1781,23 @@ func (p *AMDGPUPlugin) reportHealthChanges(node *corev1.Node, devices []*utils.D
 		glog.Warningf("%s: %s", ev.Reason, ev.Message)
 		emitNodeEvent(node, ev)
 	}
+}
+
+// ClearRegistration empties the GPU registration a previous run left on the
+// node, for the case where no GPU is served any more (all excluded, or gone):
+// without it the scheduler keeps placing pods on GPUs that kubelet no longer
+// offers. A node that was never registered is left alone.
+func ClearRegistration() error {
+	if utils.GetClient() == nil {
+		utils.InitGlobalClient()
+	}
+	node, err := utils.GetNode(os.Getenv(utils.NodeNameEnvName))
+	if err != nil {
+		return err
+	}
+	if _, registered := node.Annotations[registerAnnosKey]; !registered {
+		return nil
+	}
+	glog.Infof("no GPU left to serve: clearing the stale %s registration", registerAnnosKey)
+	return utils.PatchNodeAnnotations(node, map[string]string{registerAnnosKey: marshalNodeDevices([]*utils.DeviceInfo{})})
 }

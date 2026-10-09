@@ -74,6 +74,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -249,7 +250,36 @@ func GetAMDGPUs(sysfsRoot ...string) map[string]map[string]interface{} {
 	}
 
 	kfd := filepath.Join(root, "class/kfd/kfd")
-	return discoverGPUs(root, GetDevIdsFromTopology(kfd), GetNodeIdsFromTopology(kfd))
+	return withoutExcluded(discoverGPUs(root, GetDevIdsFromTopology(kfd), GetNodeIdsFromTopology(kfd)), excluded)
+}
+
+// excluded lists GPUs the plugin leaves out: PCI BDFs ("0000:06:00.0") or DRM cards ("card1").
+var excluded []string
+
+// SetExcluded sets the GPUs that GetAMDGPUs leaves out, so a node can keep one for the host.
+func SetExcluded(ids []string) {
+	excluded = excluded[:0]
+	for _, id := range ids {
+		if id = strings.ToLower(strings.TrimSpace(id)); id != "" {
+			excluded = append(excluded, id)
+		}
+	}
+}
+
+func withoutExcluded(gpus map[string]map[string]interface{}, ids []string) map[string]map[string]interface{} {
+	if len(ids) == 0 {
+		return gpus
+	}
+	kept := make(map[string]map[string]interface{}, len(gpus))
+	for key, data := range gpus {
+		card, _ := data["card"].(int)
+		if slices.Contains(ids, strings.ToLower(key)) || slices.Contains(ids, fmt.Sprintf("card%d", card)) {
+			glog.Infof("GPU %s (card%d) is excluded and not registered", key, card)
+			continue
+		}
+		kept[key] = data
+	}
+	return kept
 }
 
 // drmNodes returns the card and render minors under a device's drm directory;

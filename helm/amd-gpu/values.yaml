@@ -29,6 +29,10 @@ dp:
   # <hostHookPath>/vgpu/libamvgpu.so on the host.
   # Workload container path is fixed in plugin code: /usr/local/vgpu/libamvgpu.so
   hostHookPath: "/usr/local"
+  # GPUs the node keeps for itself and the plugin does not register: PCI BDFs or DRM cards.
+  excludeGPUs: []
+  # LIBHIP_LOG_LEVEL of the pods that load libamvgpu: 1 error, 2 warn, 3 info, 4 debug; 0 keeps its default.
+  hipLogLevel: 0
   # glog verbosity (-v). 4 adds topology parsing, 5 adds annotation decoding.
   logVerbosity: 2
   # Seconds between per-GPU health checks; 0 disables them.

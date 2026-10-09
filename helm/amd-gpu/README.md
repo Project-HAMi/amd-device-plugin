@@ -39,6 +39,8 @@ helm install amd-gpu ./helm/amd-gpu -n kube-system
 | dp.muslFailClosed.containerdSocketDir | string | `"/run/k3s/containerd"` | Host directory of the containerd socket. |
 | dp.muslFailClosed.containerdSocket | string | `"/run/k3s/containerd/containerd.sock"` | containerd socket path. |
 | dp.muslFailClosed.containerdDataDir | string | `"/var/lib/rancher/rke2/agent/containerd"` | containerd data directory. |
+| dp.excludeGPUs | list | `[]` | GPUs this node keeps for itself and does not register, as PCI BDFs (`0000:06:00.0`) or DRM cards (`card1`). |
+| dp.hipLogLevel | int | `0` | `LIBHIP_LOG_LEVEL` of the pods that load `libamvgpu` (1 error, 2 warn, 3 info, 4 debug); 0 keeps the library default. |
 | dp.cdi.enabled | bool | `false` | Inject GPUs through CDI instead of device nodes. |
 | dp.cdi.specDir | string | `"/var/run/cdi"` | Host directory the CDI spec is written to; the runtime must read it. |
 | dp.resources | object | `{}` | Plugin container resources. |
