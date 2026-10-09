@@ -84,9 +84,10 @@ func TestServeAMDServesTheRegisteredCard(t *testing.T) {
 	card := filepath.Join(drm, "card1", "device")
 	require.NoError(t, os.MkdirAll(card, 0o755))
 	for name, content := range map[string]string{
-		"uevent":             "DRIVER=amdgpu\nPCI_SLOT_NAME=" + bdf + "\n",
-		"mem_info_vram_used": "1024\n",
-		"gpu_busy_percent":   "5\n",
+		"uevent":              "DRIVER=amdgpu\nPCI_SLOT_NAME=" + bdf + "\n",
+		"mem_info_vram_used":  "1024\n",
+		"mem_info_vram_total": "4096\n",
+		"gpu_busy_percent":    "5\n",
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(card, name), []byte(content), 0o644))
 	}

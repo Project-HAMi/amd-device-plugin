@@ -54,9 +54,11 @@ var (
 
 	hostLabels         = []string{"node", "device_index", "device_uuid", "device_type"}
 	hostMemoryUsedDesc = prometheus.NewDesc("hami_host_gpu_memory_used_bytes", "GPU device memory usage in bytes", hostLabels, nil)
-	hostUtilDesc       = prometheus.NewDesc("hami_host_gpu_utilization_ratio", "GPU core utilization ratio (0-100)", hostLabels, nil)
-	hostTempDesc       = prometheus.NewDesc("hami_host_gpu_temperature_celsius", "GPU temperature in degrees Celsius", hostLabels, nil)
-	hostPowerDesc      = prometheus.NewDesc("hami_host_gpu_power_usage_watts", "GPU power draw in watts", hostLabels, nil)
+	// The NVIDIA monitor has no total, its dashboards read it from DCGM; AMD has no other source.
+	hostMemoryTotalDesc = prometheus.NewDesc("hami_host_gpu_memory_total_bytes", "GPU device memory capacity in bytes", hostLabels, nil)
+	hostUtilDesc        = prometheus.NewDesc("hami_host_gpu_utilization_ratio", "GPU core utilization ratio (0-100)", hostLabels, nil)
+	hostTempDesc        = prometheus.NewDesc("hami_host_gpu_temperature_celsius", "GPU temperature in degrees Celsius", hostLabels, nil)
+	hostPowerDesc       = prometheus.NewDesc("hami_host_gpu_power_usage_watts", "GPU power draw in watts", hostLabels, nil)
 
 	ctrLabels         = []string{"namespace", "pod", "container", "vdevice_index", "device_uuid"}
 	ctrMemoryUsedDesc = prometheus.NewDesc("hami_vgpu_memory_used_bytes", "vGPU device memory usage in bytes", ctrLabels, nil)
@@ -79,7 +81,7 @@ type Collector struct {
 var _ prometheus.Collector = (*Collector)(nil)
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{collectSuccessDesc, hostMemoryUsedDesc, hostUtilDesc, hostTempDesc, hostPowerDesc, ctrMemoryUsedDesc, ctrMemoryLimitDsc} {
+	for _, d := range []*prometheus.Desc{collectSuccessDesc, hostMemoryUsedDesc, hostMemoryTotalDesc, hostUtilDesc, hostTempDesc, hostPowerDesc, ctrMemoryUsedDesc, ctrMemoryLimitDsc} {
 		ch <- d
 	}
 }
@@ -157,6 +159,7 @@ func (c *Collector) collectHost(ch chan<- prometheus.Metric, devices map[string]
 			ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, v*scale, append([]string{}, labels...)...)
 		}
 		emit(hostMemoryUsedDesc, "mem_info_vram_used", 1, false)
+		emit(hostMemoryTotalDesc, "mem_info_vram_total", 1, false)
 		emit(hostUtilDesc, "gpu_busy_percent", 1, false)
 		// hwmon reports millidegrees and microwatts, and a card may lack either sensor.
 		if hw, _ := filepath.Glob(filepath.Join(dir, "hwmon", "hwmon*")); len(hw) > 0 {
