@@ -11,7 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-FROM registry.access.redhat.com/ubi9/ubi:latest as builder
+FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:5858f9ace07316e3b12caab62f6c2481a5030bb6bafdca5a9ea324c321ef36df AS builder
 USER root
 RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ && \
@@ -20,6 +20,7 @@ RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf install git pkgconfig gcc gcc-c++ make glibc-devel binutils libdrm-devel hwloc-devel wget tar gzip -y && \
     dnf clean all
 RUN wget https://golang.org/dl/go1.26.8.linux-amd64.tar.gz && \
+    echo "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b  go1.26.8.linux-amd64.tar.gz" | sha256sum -c - && \
     tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz && \
     rm go1.26.8.linux-amd64.tar.gz
 # AMD SMI SDK at the same ROCm release as the main image.
@@ -34,7 +35,7 @@ WORKDIR /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-device-plugin
 RUN go install \
     -ldflags="-X main.gitDescribe=$(git -C /go/src/github.com/Project-HAMi/amd-device-plugin/ describe --always --long --dirty)"
 
-FROM rocm/dev-ubuntu-22.04:7.2.4 AS hami-core
+FROM rocm/dev-ubuntu-22.04:7.2.4@sha256:a50a8547101ac9e7c35848ff609a56335214b789b468c9eb05dcd006a4a38c25 AS hami-core
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -42,13 +43,13 @@ COPY amd-hami-core/ /build/amd-hami-core/
 RUN cd /build/amd-hami-core && make -f Makefile.hip clean all
 
 
-FROM registry.access.redhat.com/ubi9/ubi-init:9.8
+FROM registry.access.redhat.com/ubi9/ubi-init:9.8@sha256:189fdd4803f9522b50f209fa352723265dad4493627286ce6cf47e3b88d16120
 LABEL \
-    name="amd-k8s-device-plugin" \ 
+    name="amd-k8s-device-plugin" \
     maintainer="Project-HAMi maintainers" \
     vendor="Project-HAMi" \
-    version="0.0.1" \
-    release="0.0.1" \
+    version="0.0.3" \
+    release="0.0.3" \
     summary="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads." \
     description="The AMD K8s Device Plugin enables the registration of AMD GPUs in your Kubernetes cluster for compute workloads. With the appropriate hardware and this plugin deployed in your Kubernetes cluster, you will be able to run jobs that require AMD GPU."
 RUN mkdir -p /licenses && \

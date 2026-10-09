@@ -15,7 +15,6 @@ import (
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdgpu"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/amdsmi"
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -71,14 +70,14 @@ func TestResolveUpstreamAMDGPUIndex(t *testing.T) {
 		rocrUUIDToTopology:   map[string]string{"GPU-gone": "amdgpu_xcp_9"},
 	}
 	second := fmt.Sprintf("node-AMDGPU-%d", splitCount+1)
-	if d, err := p.deviceDataFromAllocationUUID(second, ""); err != nil || d["card"] != 2 {
+	if d, err := p.deviceDataFromAllocationUUID(second); err != nil || d["card"] != 2 {
 		t.Fatalf("device for %s = %v, %v; want card 2", second, d, err)
 	}
 	if r, err := p.rocrUUIDFromAllocationUUID(second); err != nil || r != "GPU-b" {
 		t.Fatalf("ROCr UUID for %s = %q, %v; want GPU-b", second, r, err)
 	}
 	for _, id := range []string{fmt.Sprintf("node-AMDGPU-%d", 2*splitCount), fmt.Sprintf("node-AMDGPU-%d", 3*splitCount), "node-AMDGPU-x", "GPU-gone", "plain"} {
-		if _, err := p.deviceDataFromAllocationUUID(id, ""); err == nil {
+		if _, err := p.deviceDataFromAllocationUUID(id); err == nil {
 			t.Errorf("deviceDataFromAllocationUUID(%q) resolved, want an error", id)
 		}
 	}
@@ -156,6 +155,7 @@ func TestXCPRegistrationReplacesParent(t *testing.T) {
 		return p
 	}
 
+	stubCapacity(t)
 	devices := newPlugin("partition").getAPIDevices()
 	if len(devices) != 8 {
 		t.Fatalf("partition mode registered %d devices, want 7 GPUs + 1 XCP: %+v", len(devices), devices)
@@ -187,16 +187,6 @@ func TestXCPRegistrationReplacesParent(t *testing.T) {
 	}
 }
 
-type fakeListAndWatch struct {
-	grpc.ServerStream
-	sent []*pluginapi.ListAndWatchResponse
-}
-
-func (f *fakeListAndWatch) Send(r *pluginapi.ListAndWatchResponse) error {
-	f.sent = append(f.sent, r)
-	return nil
-}
-
 func wholeGPUCount() int {
 	n := 0
 	for key := range amdgpu.GetAMDGPUs() {
@@ -207,8 +197,26 @@ func wholeGPUCount() int {
 	return n
 }
 
-// GPUs without a compute partition type stay soft in both modes, so kubelet
-// sees splitCount slots per GPU either way.
+// hardwareSlots is what kubelet should see on this host: splitCount slots
+// per GPU, except one hard device per partition-capable GPU in partition
+// mode (no XCP partitions exposed in KFD on the test hosts).
+func hardwareSlots(mode string) int {
+	n := 0
+	for key, d := range amdgpu.GetAMDGPUs() {
+		if strings.HasPrefix(key, "amdgpu_xcp_") {
+			continue
+		}
+		if t, _ := d["computePartitionType"].(string); mode == "partition" && t != "" {
+			n++
+		} else {
+			n += splitCount
+		}
+	}
+	return n
+}
+
+// GPUs without a compute partition type stay soft in both modes; partition
+// capable GPUs register as one hard device in partition mode.
 func TestListAndWatchOnHardware(t *testing.T) {
 	defer func(n int) { splitCount = n }(splitCount)
 	splitCount = 10 // these tests pin one slot count for every GPU
@@ -217,7 +225,7 @@ func TestListAndWatchOnHardware(t *testing.T) {
 	}
 	for _, mode := range []string{"cu", "partition"} {
 		p := &AMDGPUPlugin{operatingMode: mode, Heartbeat: make(chan bool), signal: make(chan os.Signal, 1)}
-		s := &fakeListAndWatch{}
+		s := &fakeListAndWatch{ctx: context.Background(), okSends: 1 << 30}
 		done := make(chan error)
 		go func() { done <- p.ListAndWatch(&pluginapi.Empty{}, s) }()
 		p.Heartbeat <- true
@@ -228,7 +236,7 @@ func TestListAndWatchOnHardware(t *testing.T) {
 		if len(s.sent) != 2 {
 			t.Fatalf("%s: %d sends, want initial + heartbeat", mode, len(s.sent))
 		}
-		want := wholeGPUCount() * splitCount
+		want := hardwareSlots(mode)
 		for _, r := range s.sent {
 			if len(r.Devices) != want {
 				t.Fatalf("%s: published %d devices, want %d", mode, len(r.Devices), want)
@@ -259,15 +267,10 @@ func TestStartOnHardware(t *testing.T) {
 		utils.KubeClient = cs
 		t.Setenv(utils.NodeNameEnvName, "gpu-node")
 
-		disable := make(chan bool, 1)
-		disable <- true // keep WatchAndRegister from re-registering concurrently
 		p := NewAMDGPUPlugin(WithAllocator(allocator.NewBestEffortPolicy()))
-		p.disableWatchAndRegister = disable
-		p.ackDisableWatchAndRegister = make(chan bool, 1)
 		if err := p.Start(); err != nil {
 			t.Fatal(err)
 		}
-		<-p.ackDisableWatchAndRegister
 		utils.KubeClient = old
 
 		if p.operatingMode != wantMode || p.computePartition != "qpx" {
@@ -285,8 +288,10 @@ func TestStartOnHardware(t *testing.T) {
 			t.Fatalf("registered %d devices, want %d", len(registered), wholeGPUCount())
 		}
 		for _, d := range registered {
-			if d.Mode != "" || d.Count != int32(splitCount) || strings.Count(d.CustomInfo["pciBDF"].(string), ":") != 2 {
-				t.Errorf("registered %+v, want a soft GPU with a standard pciBDF", d)
+			hard := d.Mode != ""
+			if hard != (wantMode == "partition" && d.CustomInfo["partitionProfiles"] != nil) || (hard && (d.Count != 1 || !strings.HasSuffix(d.ID, "#"+d.Mode))) ||
+				(!hard && d.Count != int32(splitCount)) || strings.Count(d.CustomInfo["pciBDF"].(string), ":") != 2 {
+				t.Errorf("mode %s registered %+v, want soft GPUs (hard partitions in partition mode) with a standard pciBDF", wantMode, d)
 			}
 		}
 	}
@@ -336,15 +341,10 @@ func TestStartWithoutNode(t *testing.T) {
 	utils.KubeClient = fake.NewSimpleClientset()
 	defer func() { utils.KubeClient = old }()
 	t.Setenv(utils.NodeNameEnvName, "missing")
-	disable := make(chan bool, 1)
-	disable <- true
 	p := NewAMDGPUPlugin(WithAllocator(allocator.NewBestEffortPolicy()))
-	p.disableWatchAndRegister = disable
-	p.ackDisableWatchAndRegister = make(chan bool, 1)
 	if err := p.Start(); err == nil {
 		t.Fatal("Start without a node object succeeded, want the register error")
 	}
-	<-p.ackDisableWatchAndRegister
 	if p.operatingMode != "cu" {
 		t.Fatalf("mode = %q, want the cu default", p.operatingMode)
 	}
@@ -373,4 +373,14 @@ func TestGPUIndexOfSlotMixedCounts(t *testing.T) {
 			t.Errorf("gpuIndexOfSlot(%d) = %d, want %d", slot, got, want)
 		}
 	}
+}
+
+// stubCapacity serves a fixed MI355X capacity for fixture cards that have no
+// DRM node on the test host.
+func stubCapacity(t *testing.T) {
+	old := getDeviceCapacity
+	getDeviceCapacity = func(string) (amdgpu.DeviceCapacity, error) {
+		return amdgpu.DeviceCapacity{VRAMMiB: 287984, CUCount: 304}, nil
+	}
+	t.Cleanup(func() { getDeviceCapacity = old })
 }

@@ -46,7 +46,7 @@ func (ti *testInfo) getTestDevices() []*Device {
 	for i := 0; i < ti.devCount; i++ {
 		numa := ti.devCount / ti.numanodeCount
 		for j := 0; j < ti.partitionCountPerDev; j++ {
-			//partitioned gpus have id starting with amdgpu_xcp
+			// partitioned gpus have id starting with amdgpu_xcp
 			id := fmt.Sprintf("amdgpu_xcp_%d", (i*8)+j)
 			if j == 0 {
 				id = fmt.Sprintf("test%d", i+1)
@@ -60,7 +60,7 @@ func (ti *testInfo) getTestDevices() []*Device {
 				NumaNode: i / numa,
 				DevId:    strconv.Itoa(i),
 			})
-			nodeId = nodeId + 1
+			nodeId++
 		}
 	}
 	return res
@@ -154,7 +154,7 @@ func TestGetSubsetsMethod(t *testing.T) {
 	for _, tcase := range testcases {
 		t.Logf("Starting testcase %s", tcase.description)
 		tcase.result = "PASS"
-		subsets, err := getCandidateDeviceSubsets(devIdMap, devices, devices, nil, tcase.size, p2pWeights)
+		subsets, err := getCandidateDeviceSubsets(devIdMap, devices, nil, tcase.size, p2pWeights)
 		if err != nil {
 			t.Errorf("expected getAllDeviceSubsets to pass. But got error %v", err)
 			tcase.result = "FAIL"
@@ -165,5 +165,44 @@ func TestGetSubsetsMethod(t *testing.T) {
 		}
 		t.Logf("Result: %v", tcase.result)
 		t.Logf("Ending Testcase %s", tcase.description)
+	}
+}
+
+// GPUs without io/p2p links get the host-path weight for every pair,
+// whatever order the devices are listed in
+func TestFetchAllPairWeightsFillsUnlinkedPairs(t *testing.T) {
+	devs := []*Device{{Id: "a", NodeId: 3}, {Id: "b", NodeId: 1}, {Id: "c", NodeId: 2}}
+	p2pWeights := make(map[int]map[int]int)
+	if err := fetchAllPairWeights(devs, p2pWeights, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]int{{1, 2}, {1, 3}, {2, 3}} {
+		if p2pWeights[pair[0]][pair[1]] == 0 {
+			t.Errorf("pair %v has no weight", pair)
+		}
+	}
+}
+
+// every distinct set of whole GPUs is generated once, not once per ordering
+func TestGetSubsetsGeneratesCombinations(t *testing.T) {
+	var devs []*Device
+	for i := 0; i < 6; i++ {
+		devs = append(devs, &Device{Id: strconv.Itoa(i), NodeId: i + 1, DevId: strconv.Itoa(i)})
+	}
+	tests := []struct {
+		size, want int
+	}{
+		{size: 1, want: 6},
+		{size: 3, want: 20},
+		{size: 6, want: 1},
+	}
+	for _, tc := range tests {
+		subsets, err := getCandidateDeviceSubsets(groupPartitionsByDevId(devs), devs, nil, tc.size, map[int]map[int]int{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(subsets) != tc.want {
+			t.Errorf("size %d: got %d subsets, want %d", tc.size, len(subsets), tc.want)
+		}
 	}
 }

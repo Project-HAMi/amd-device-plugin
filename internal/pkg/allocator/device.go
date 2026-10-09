@@ -43,8 +43,7 @@ const (
 	xgmiLinkWeight = 10
 	// weight if GPU pair belongs to same numa node
 	sameNumaNodeWeight = 10
-	// weight if GPUs/partitions belong to different GPU.
-	// In case of full GPUs, the weight is 3
+	// weight if GPUs/partitions belong to different GPU
 	differentDevIdWeight = 20
 	// weight if GPU pair belongs to different numa node
 	differentNumaNodeWeight = 20
@@ -80,12 +79,6 @@ type DevicePartitions struct {
 	Devs     []string
 }
 
-type DevicePartitionSet struct {
-	Ids              []int
-	TotalWeight      int
-	LastPartitionIdx int
-}
-
 func setContainsAll[K int | string](set, subset []K) bool {
 	if len(subset) > len(set) {
 		return false
@@ -109,9 +102,9 @@ func fetchTopoProperties(path string, re []*regexp.Regexp) ([]int, error) {
 	f, e := os.Open(path)
 	if e != nil {
 		glog.Errorf("Unable to open properties file. Error:%v", e)
-		return []int{0}, e
+		return nil, e
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	res := make([]int, len(re))
 	scanner := bufio.NewScanner(f)
@@ -134,39 +127,33 @@ func fetchTopoProperties(path string, re []*regexp.Regexp) ([]int, error) {
 }
 
 func calculatePairWeight(from, to *Device, linkType int) int {
-	weight := 0
+	weight := differentDevIdWeight
 	if from.DevId == to.DevId {
-		weight = weight + sameDevIdWeight
-	} else {
-		weight = weight + differentDevIdWeight
+		weight = sameDevIdWeight
 	}
 
-	if linkType == 11 { // link type 11 is xgmi
-		weight = weight + xgmiLinkWeight
-	} else if linkType == 2 { //link type 2 is PCIE
-		weight = weight + pcieLinkWeight
-	} else { // other link types are given higher weight
-		weight = weight + otherLinkWeight
+	switch linkType {
+	case 11: // xgmi
+		weight += xgmiLinkWeight
+	case 2: // PCIE
+		weight += pcieLinkWeight
+	default: // other link types are given higher weight
+		weight += otherLinkWeight
 	}
 
 	if from.NumaNode == to.NumaNode {
-		weight = weight + sameNumaNodeWeight
+		weight += sameNumaNodeWeight
 	} else {
-		weight = weight + differentNumaNodeWeight
+		weight += differentNumaNodeWeight
 	}
 	return weight
 }
 
-func scanAndPopulatePeerWeights(fromPath string, devices []*Device, lookupNodes map[int]struct{}, p2pWeights map[int]map[int]int) error {
-	paths, err1 := filepath.Glob(filepath.Join(fromPath, "io_links", "[0-9]*"))
-	p2pPaths, err2 := filepath.Glob(filepath.Join(fromPath, "p2p_links", "[0-9]*"))
-	if err1 != nil && err2 != nil {
-		glog.Errorf("unable to fetch io_links and p2p_links folders. Error1:%v Error2:%v", err1, err2)
-		return errors.New("unable to glob io_links and p2p_links paths")
-	}
-	if len(p2pPaths) > 0 {
-		paths = append(paths, p2pPaths...)
-	}
+func scanAndPopulatePeerWeights(fromPath string, devices []*Device, lookupNodes map[int]struct{}, p2pWeights map[int]map[int]int) {
+	// Glob only fails on a malformed pattern, and these are constant
+	paths, _ := filepath.Glob(filepath.Join(fromPath, "io_links", "[0-9]*"))
+	p2pPaths, _ := filepath.Glob(filepath.Join(fromPath, "p2p_links", "[0-9]*"))
+	paths = append(paths, p2pPaths...)
 	re := []*regexp.Regexp{
 		regexp.MustCompile(`node_from\s(\d+)`),
 		regexp.MustCompile(`node_to\s(\d+)`),
@@ -212,10 +199,9 @@ func scanAndPopulatePeerWeights(fromPath string, devices []*Device, lookupNodes 
 			if _, ok := p2pWeights[from]; !ok {
 				p2pWeights[from] = make(map[int]int)
 			}
-			p2pWeights[from][to] = calculatePairWeight(fromDev, toDev, int(vals[2]))
+			p2pWeights[from][to] = calculatePairWeight(fromDev, toDev, vals[2])
 		}
 	}
-	return nil
 }
 
 func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, folderPath string) error {
@@ -227,10 +213,7 @@ func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, fold
 	if folderPath == "" {
 		folderPath = topoRootPath
 	}
-	paths, err := filepath.Glob(filepath.Join(folderPath, "[0-9]*"))
-	if err != nil {
-		return fmt.Errorf("unable to find gpu nodes under topo directory")
-	}
+	paths, _ := filepath.Glob(filepath.Join(folderPath, "[0-9]*"))
 	nodeIds := make(map[int]struct{})
 	for idx := range devices {
 		nodeIds[devices[idx].NodeId] = struct{}{}
@@ -243,16 +226,13 @@ func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, fold
 		if err != nil || vals[0] <= 0 {
 			continue
 		}
-		err = scanAndPopulatePeerWeights(path, devices, nodeIds, p2pWeights)
-		if err != nil {
-
-			return err
-		}
+		scanAndPopulatePeerWeights(path, devices, nodeIds, p2pWeights)
 	}
 	// GPUs with no direct io/p2p link (consumer cards, passthrough VMs) only
 	// reach each other through the host, the costliest path.
-	for i, from := range devices {
-		for _, to := range devices[i+1:] {
+	for i, a := range devices {
+		for _, b := range devices[i+1:] {
+			from, to := a, b
 			if from.NodeId > to.NodeId {
 				from, to = to, from
 			}
@@ -274,7 +254,7 @@ func fetchAllPairWeights(devices []*Device, p2pWeights map[int]map[int]int, fold
 func addDeviceToSubsetAndUpdateWeight(subset *DeviceSet, devId, devIdx int, p2pWeights map[int]map[int]int) *DeviceSet {
 	currentWeight := subset.TotalWeight
 	var from, to int
-	ids := make([]int, 0)
+	ids := make([]int, 0, len(subset.Ids)+1)
 	for _, d := range subset.Ids {
 		if d < devId {
 			from = d
@@ -283,7 +263,7 @@ func addDeviceToSubsetAndUpdateWeight(subset *DeviceSet, devId, devIdx int, p2pW
 			from = devId
 			to = d
 		}
-		currentWeight = currentWeight + p2pWeights[from][to]
+		currentWeight += p2pWeights[from][to]
 	}
 	ids = append(ids, subset.Ids...)
 	ids = append(ids, devId)
@@ -327,23 +307,21 @@ func groupPartitionsByDevId(devs []*Device) map[string]*DevicePartitions {
 // available represents the available/unallocated devices when the allocate request is called
 // required represents the devices that are required to be allocated
 // we filter out required ones as they are included in output set by default. removing them saves us computation time
+// split devices of one GPU share a NodeId, so ids are counted rather than deduplicated
 func filterPartitions(partitions map[string]*DevicePartitions, available, required []*Device) []*DevicePartitions {
-	availableIdMap := make(map[int]struct{})
-	requiredIdMap := make(map[int]struct{})
+	remaining := make(map[int]int)
 	outset := make([]*DevicePartitions, 0)
 	for _, av := range available {
-		availableIdMap[av.NodeId] = struct{}{}
+		remaining[av.NodeId]++
 	}
 	for _, req := range required {
-		requiredIdMap[req.NodeId] = struct{}{}
+		remaining[req.NodeId]--
 	}
 	for _, partitionSet := range partitions {
 		filteredIds := make([]int, 0)
 		for _, id := range partitionSet.Ids {
-			if _, ok := requiredIdMap[id]; ok {
-				continue
-			}
-			if _, ok := availableIdMap[id]; ok {
+			if remaining[id] > 0 {
+				remaining[id]--
 				filteredIds = append(filteredIds, id)
 			}
 		}
@@ -370,7 +348,7 @@ func filterPartitions(partitions map[string]*DevicePartitions, available, requir
 	return outset
 }
 
-func getCandidateDeviceSubsets(allDevPartitions map[string]*DevicePartitions, total, available, required []*Device, size int, p2pWeights map[int]map[int]int) ([]*DeviceSet, error) {
+func getCandidateDeviceSubsets(allDevPartitions map[string]*DevicePartitions, available, required []*Device, size int, p2pWeights map[int]map[int]int) ([]*DeviceSet, error) {
 	if size <= 0 {
 		return []*DeviceSet{}, fmt.Errorf("subset size should be positive integer")
 	}
@@ -422,16 +400,13 @@ func getCandidateDeviceSubsets(allDevPartitions map[string]*DevicePartitions, to
 	}
 	// for each subsetsTemp, we loop over all the devPartitions
 	// pick partitions from other gpu until the subsetsTemp has requested number of gpus/partitions
-	for {
-		if len(subsetsTemp) == 0 {
-			break
-		}
+	for len(subsetsTemp) > 0 {
 		currentSubset := subsetsTemp[0]
 		subsetsTemp = subsetsTemp[1:]
 		if len(currentSubset.ParentIds) == len(devPartitions) {
 			continue
 		}
-		// devPartitions is sorted in ascending order of avilable partitions.
+		// devPartitions is sorted in ascending order of available partitions.
 		// when we loop over to pick a candidate set, preference is given to gpus with lesser partitions available.
 		// this way we can avoid fragmentation of gpus
 		for idx := 0; idx < len(devPartitions); idx++ {
@@ -439,7 +414,12 @@ func getCandidateDeviceSubsets(allDevPartitions map[string]*DevicePartitions, to
 			if slices.Contains(currentSubset.ParentIds, idx) {
 				continue
 			}
-			var parentIds []int
+			// gpus taken whole are added in increasing index order so every set is built once;
+			// only a gpu that is taken partially to finish the set may come from a lower index
+			if idx < currentSubset.LastIdx && len(devPartitions[idx].Ids) <= newSize-currentSubset.Size {
+				continue
+			}
+			parentIds := make([]int, 0, len(currentSubset.ParentIds)+1)
 			parentIds = append(parentIds, currentSubset.ParentIds...)
 			parentIds = append(parentIds, idx)
 			devset := NewDeviceSet(currentSubset.Ids, parentIds, currentSubset.TotalWeight, currentSubset.LastIdx)

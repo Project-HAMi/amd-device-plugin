@@ -18,7 +18,9 @@ package allocator
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"testing"
 )
 
@@ -167,7 +169,9 @@ func TestBestPolicyAllocator(t *testing.T) {
 			allAvailableIds = append(allAvailableIds, d.Id)
 		}
 		a := NewBestEffortPolicy()
-		a.Init(devices, topo.topoFolderPath)
+		if err := a.Init(devices, topo.topoFolderPath); err != nil {
+			t.Fatal(err)
+		}
 		t.Logf("-------BEGIN tests for Topology %d-------", idx+1)
 		for _, tc := range testcases[idx] {
 			t.Logf("-----Starting testcase: %s", tc.description)
@@ -302,5 +306,50 @@ func TestNewPolicy(t *testing.T) {
 	}
 	if _, err := NewPolicy("random"); err == nil {
 		t.Error("NewPolicy(random) should fail")
+	}
+}
+
+// the plugin registers several "<bdf>#<slot>" split devices per GPU that all
+// share the GPU's KFD node id
+func TestBestPolicyAllocateSplitDevices(t *testing.T) {
+	tests := []struct {
+		name         string
+		gpus, splits int
+		required     []string
+		size         int
+		want         []string
+	}{
+		{name: "two splits of one gpu are distinct", gpus: 2, splits: 2, size: 2, want: []string{"gpu0#0", "gpu0#1"}},
+		{name: "must_include picks its sibling split", gpus: 2, splits: 2, required: []string{"gpu1#1"}, size: 2, want: []string{"gpu1#0", "gpu1#1"}},
+		// gpu1#1 and gpu2#1 tie, so only distinctness and must_include are checked
+		{name: "must_include on several gpus", gpus: 3, splits: 2, required: []string{"gpu0#0", "gpu1#0"}, size: 5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var devs []*Device
+			var ids []string
+			for g := 0; g < tc.gpus; g++ {
+				for s := 0; s < tc.splits; s++ {
+					id := fmt.Sprintf("gpu%d#%d", g, s)
+					devs = append(devs, &Device{Id: id, NodeId: g + 1, DevId: strconv.Itoa(g)})
+					ids = append(ids, id)
+				}
+			}
+			a := NewBestEffortPolicy()
+			if err := a.Init(devs, t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := a.Allocate(ids, tc.required, tc.size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(got)
+			if len(slices.Compact(slices.Clone(got))) != tc.size || !setContainsAll(got, tc.required) {
+				t.Errorf("Allocate = %v, want %d distinct ids including %v", got, tc.size, tc.required)
+			}
+			if tc.want != nil && !slices.Equal(got, tc.want) {
+				t.Errorf("Allocate = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

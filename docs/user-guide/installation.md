@@ -1,240 +1,53 @@
-# Installation Guide
-
-This guide walks through the process of installing the AMD GPU device plugin on a Kubernetes cluster.
-
-> For HAMi fractional GPU deployments, use the Helm instructions in the top-level [README](https://github.com/Project-HAMi/amd-device-plugin/blob/main/README.md). The raw DaemonSet variants below are inherited upstream examples and do not install the HAMi RBAC or host memory hook.
+# Installation
 
 ## Prerequisites
 
-Before installing the AMD GPU device plugin, ensure your environment meets the following requirements:
+- Linux amd64 nodes with ROCm-supported AMD GPUs, the `amdgpu` kernel driver, `/dev/kfd` and `/dev/dri`. See the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for drivers.
+- Kubernetes with the [HAMi scheduler](https://github.com/Project-HAMi/HAMi) installed. HAMi schedules `amd.com/gpu`, `amd.com/gpucores` and `amd.com/gpumem` out of the box. Install it with its own device plugin disabled if the cluster has no NVIDIA GPUs:
 
-### System Requirements
+  ```bash
+  helm repo add hami-charts https://project-hami.github.io/HAMi/
+  helm install hami hami-charts/hami -n kube-system --set devicePlugin.enabled=false
+  ```
 
-- **Kubernetes**: v1.18 or higher
-- **AMD GPUs**: ROCm-capable AMD GPU hardware
-- **GPU Drivers**: AMD GPU drivers or ROCm stack installed on worker nodes
-- **Helm**: v3.2.0 or later (if using the health check feature or GPU Operator)
+- Remove any other plugin that registers `amd.com/gpu` on the same nodes, such as the upstream ROCm device plugin. Kubelet cannot serve one resource from two plugins.
 
-### Driver Installation
-
-If you haven't installed the AMD GPU drivers yet, follow the official [ROCm Installation Guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/tutorial/quick-start.html)
-
-## Installation Steps
-
-Choose one of the following options based on your requirements.
-
-### Option 1: Standard Device Plugin
-
-Use this option if you only need basic GPU allocation without health monitoring.
-
-**Using Pre-defined YAML File**: You can use the pre-defined YAML file provided in this repository. Run the following command:
+## Install the device plugin
 
 ```bash
-kubectl create -f k8s-ds-amdgpu-dp.yaml
+helm upgrade --install amd-gpu ./helm/amd-gpu --namespace kube-system --create-namespace
 ```
 
-**Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
+The chart creates the DaemonSet, the ServiceAccount and RBAC the plugin needs to write node and pod annotations, and a `postStart` hook that copies the `libamvgpu.so` memory hook to `/usr/local/vgpu` on each node. See [Configuration](configuration.md) for the values.
+
+## Verify
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp.yaml
+kubectl -n kube-system get pods -l name=amd-gpu-dp-ds
+kubectl get node <node> -o jsonpath='{.status.allocatable.amd\.com/gpu}'
+kubectl get node <node> -o jsonpath='{.metadata.annotations.hami\.io/node-amd-register}'
 ```
 
-### Option 1.a: Standard Device Plugin with Init Container
+`amd.com/gpu` is the number of GPUs times their share count: by default 2 per gfx12 GPU and 10 per other GPU. The annotation lists each GPU's UUID, product name, VRAM and CU count, plus `custominfo` with the PCI BDF, compute-queue count and `cuPerWGP`.
 
-Use this option when deploying the Device Plugin in environments where the amdgpu driver may not be loaded before the plugin starts. This deployment has an init container that waits for amdgpu driver to load before launching the main plugin container.
+## Optional components
 
-**Using Pre-defined YAML File**: You can use the pre-defined YAML file provided in this repository. Run the following command:
+- **GPU health from the AMD Device Metrics Exporter.** Install the [exporter](https://github.com/ROCm/device-metrics-exporter) with its gRPC socket enabled at `/var/lib/amd-metrics-exporter/`. The plugin then also uses the per-GPU health the exporter reports, for example after ECC errors. Without it, the plugin still checks that each GPU's device node can be opened.
+- **GPU metrics.** Set `monitor.enabled=true` in the Helm chart to run `k8s-vgpu-monitor` on each GPU node. It serves Prometheus metrics on `:9394` under the metric names of the HAMi NVIDIA vGPUmonitor: `hami_vgpu_memory_used_bytes` and `hami_vgpu_memory_limit_bytes` per container, and `hami_host_gpu_memory_used_bytes`, `hami_host_gpu_utilization_ratio`, `hami_host_gpu_temperature_celsius` and `hami_host_gpu_power_usage_watts` per GPU. Container memory comes from the dmem cgroup controller, so it needs the systemd cgroup driver and a kernel with the controller. Per-container utilization is not reported, because the kernel does not account compute time per process.
+- **Node labeller.** `k8s-ds-amdgpu-labeller.yaml` deploys the upstream labeller, which adds `amd.com/gpu.*` node labels such as VRAM, CU count, device ID and family:
 
-```bash
-kubectl create -f k8s-ds-amdgpu-dp-with-init-container.yaml
-```
-
-**Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
-
-```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-with-init-container.yaml
-```
-
-### Option 2: Device Plugin with Health Checks
-
-Use this option if you need GPU health monitoring capabilities in addition to GPU allocation.
-
-#### Step 1: Install AMD Device Metrics Exporter
-
-The health check feature requires the [AMD Device Metrics Exporter](https://instinct.docs.amd.com/projects/device-metrics-exporter/en/latest/index.html) to be installed. This service provides GPU metrics and health information that the device plugin connects to.
-
-Create a `metrics-exporter-values.yaml` file with the following content:
-
-```yaml
-platform: k8s
-nodeSelector: {} # Optional: Add custom nodeSelector
-image:
-  repository: docker.io/rocm/device-metrics-exporter
-  tag: v1.2.0
-  pullPolicy: Always
-service:
-  type: ClusterIP
-  ClusterIP:
-    port: 5000
-# Enable GRPC socket for device plugin health monitoring
-socket:
-  enable: true
-  path: /var/lib/amd-metrics-exporter/amdgpu_device_metrics_exporter_grpc.socket
-  permissions: 0777
-volumeMounts:
-  - name: socket-dir
-    mountPath: /var/lib/amd-metrics-exporter
-volumes:
-  - name: socket-dir
-    hostPath:
-      path: /var/lib/amd-metrics-exporter
-      type: DirectoryOrCreate
-```
-
-Install the metrics exporter with Helm:
-
-```bash
-helm install metrics-exporter \
-  https://github.com/ROCm/device-metrics-exporter/releases/download/v1.2.0/device-metrics-exporter-charts-v1.2.0.tgz \
-  -n kube-system -f metrics-exporter-values.yaml
-```
-
-#### Step 2: Install Device Plugin with Health Checks
-
-After successfully installing the metrics exporter, deploy the device plugin with health check capability:
-
-**Using Pre-defined YAML File**: You can use the pre-defined YAML file provided in this repository. Run the following command:
-
-```bash
-kubectl create -f k8s-ds-amdgpu-dp-health.yaml
-```
-
-**Pulling from the Web**: Alternatively, you can directly pull the YAML file from the repository:
-
-```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-health.yaml
-```
-
-### Option 3: Using AMD GPU Operator
-
-The AMD GPU Operator provides a comprehensive solution that installs and manages:
-
-- AMD GPU device plugin
-- Node labeler
-- Device metrics exporter
-- Driver installation and updates
-
-See the [GPU Operator Documentation](https://instinct.docs.amd.com/projects/gpu-operator/en/latest/) for installation instructions and additional information.
-
-### Install Node Labeler (Optional)
-
-The AMD GPU Node Labeler automatically detects and labels nodes with detailed GPU properties, enabling more precise workload scheduling.
-
-The node labeler requires:
-
-- A service account with permissions to modify node labels
-- Privileged container access for GPU discovery
-
-Deploy the node labeler using the provided DaemonSet manifest:
-
-```bash
-kubectl create -f k8s-ds-amdgpu-labeller.yaml
-```
-
-After deployment, nodes with AMD GPUs will be automatically labeled with properties including:
-
-- Device ID
-- Product Name
-- Driver Version
-- VRAM Size
-- SIMD Count
-- Compute Unit count
-- GPU Family information
-- Firmware and Feature Versions
-
-The labels are added with two prefixes:
-
-- `amd.com/gpu.*` - Current prefix
-- `beta.amd.com/gpu.*` - Legacy prefix (maintained for backwards compatibility)
-
-Verify the labels on your nodes using one of these commands:
-
-```bash
-# View all GPU-related labels
-kubectl get nodes -o custom-columns=NAME:.metadata.name,LABELS:.metadata.labels
-
-# Filter for current GPU labels
-kubectl get nodes --show-labels | grep "amd.com/gpu"
-
-# Filter for legacy GPU labels
-kubectl get nodes --show-labels | grep "beta.amd.com/gpu"
-```
-
-Example labels for an AMD MI300X GPU:
-
-```text
-amd.com/gpu.cu-count=304
-amd.com/gpu.device-id=74a1
-amd.com/gpu.family=AI
-amd.com/gpu.product-name=AMD_Instinct_MI300X_OAM
-amd.com/gpu.simd-count=1216
-amd.com/gpu.vram=192G
-```
-
-### Verify the Device Plugin Installation
-
-Check the status of the pods:
-
-```bash
-kubectl get pods -n kube-system
-```
-
-Describe the device plugin pod to see logs and events:
-
-```bash
-kubectl describe pod <device-plugin-pod-name> -n kube-system
-```
-
-After deploying the device plugin, verify that your AMD GPUs are properly recognized as schedulable resources:
-
-```bash
-# List all nodes with their AMD GPU capacity
-kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:"status.capacity.amd\.com/gpu"
-
-NAME             GPU
-k8s-node-01      8
-```
+  ```bash
+  kubectl apply -f k8s-ds-amdgpu-labeller.yaml
+  ```
 
 ## Troubleshooting
 
-If the device plugin pods are not running, check the logs:
+- **No `amd.com/gpu` on the node.** Read the plugin log with `kubectl -n kube-system logs ds/amd-gpu-device-plugin-daemonset`. Check that `/dev/kfd` and `/dev/dri` exist on the host and that no other plugin owns `amd.com/gpu`.
+- **A sliced pod fails with `UnexpectedAdmissionError`.** The GPU has no free CUs for the request, often because of slices rounded up to whole WGPs on RDNA. A HAMi scheduler that reads `cuPerWGP` keeps such pods `Pending` instead.
+- **A sliced pod ignores its memory limit or fails to start.** The hook needs glibc 2.34 or newer: musl and static images ignore it, and older glibc images fail with `GLIBC_2.34 not found`. Use a newer image. dmem is on by default and caps VRAM without the hook where the node supports it; for older glibc images also enable `dp.muslFailClosed` so the plugin leaves the hook out (see [Configuration](configuration.md)).
+
+## Uninstall
 
 ```bash
-kubectl logs -n kube-system <amdgpu-device-plugin-pod-name>
-```
-
-Common issues include:
-
-- GPU drivers not installed correctly
-- ROCm stack not installed or misconfigured
-- Insufficient permissions for the device plugin to access GPU devices
-
-## Uninstalling the Device Plugin
-
-To uninstall the device plugin, delete the DaemonSet using the same manifest file you used for installation:
-
-If you installed the standard device plugin (Option 1):
-
-```bash
-kubectl delete -f k8s-ds-amdgpu-dp.yaml
-# Or using the web URL
-kubectl delete -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp.yaml
-```
-
-If you installed the device plugin with health checks (Option 2):
-
-```bash
-kubectl delete -f k8s-ds-amdgpu-dp-health.yaml
-# Or using the web URL
-kubectl delete -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/k8s-ds-amdgpu-dp-health.yaml
+helm uninstall amd-gpu -n kube-system
 ```

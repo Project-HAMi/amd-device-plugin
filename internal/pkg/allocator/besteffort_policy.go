@@ -38,7 +38,7 @@ const (
 	invalidSize         = "allocation size can not be negative"
 	invalidAvailable    = "available devices count less than allocation size"
 	invalidRequired     = "must_include devices size is more than allocation size"
-	invalidReqAvailable = "must_include length should be less than or equal to avilable device size"
+	invalidReqAvailable = "must_include length should be less than or equal to available device size"
 	invalidInit         = "init method must be called before Allocate"
 	noCandidateFound    = "no candidate subset found with matching criteria"
 )
@@ -148,7 +148,7 @@ func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int
 
 	available := b.getDevicesFromIds(availableIds)
 	required := b.getDevicesFromIds(requiredIds)
-	allSubsets, err := getCandidateDeviceSubsets(b.devicePartitions, b.devices, available, required, size, b.p2pWeights)
+	allSubsets, err := getCandidateDeviceSubsets(b.devicePartitions, available, required, size, b.p2pWeights)
 	if err != nil {
 		return outset, err
 	}
@@ -164,12 +164,23 @@ func (b *BestEffortPolicy) Allocate(availableIds, requiredIds []string, size int
 			bestScore = subset.TotalWeight
 		}
 	}
+	if candidate == nil {
+		return outset, errors.New(noCandidateFound)
+	}
+	// split devices of one GPU share a NodeId: take as many distinct
+	// non-required devices per NodeId as the candidate holds beyond must_include
+	need := make(map[int]int)
 	for _, id := range candidate.Ids {
-		for _, d := range available {
-			if d.NodeId == id {
-				outset = append(outset, d.Id)
-				break
-			}
+		need[id]++
+	}
+	for _, d := range required {
+		need[d.NodeId]--
+	}
+	outset = append(outset, requiredIds...)
+	for _, d := range available {
+		if need[d.NodeId] > 0 && !slices.Contains(requiredIds, d.Id) {
+			need[d.NodeId]--
+			outset = append(outset, d.Id)
 		}
 	}
 	glog.Infof("best device subset:%v best score:%v", outset, candidate.TotalWeight)

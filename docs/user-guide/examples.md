@@ -1,180 +1,50 @@
-# Example Workloads
+# Examples
 
-This document provides example workloads and configurations for using the AMD GPU device plugin in Kubernetes.
+The files are in [example/](https://github.com/Project-HAMi/amd-device-plugin/tree/main/example). HAMi's admission webhook routes any pod that requests `amd.com/*` resources to the HAMi scheduler.
 
-## Basic GPU Pod Example
+## A slice of one GPU
 
-This example demonstrates how to run a basic PyTorch workload on an AMD GPU. The pod creates simple tensors on the GPU and performs basic addition operations to verify GPU functionality. Since this is a job-like workload that runs once and completes, we set `restartPolicy: Never` to prevent the pod from restarting after completion.
-
-Here's a simple example of a pod requesting an AMD GPU:
+25% of one GPU's compute units and 4 GiB of its VRAM ([pytorch-slice.yaml](https://github.com/Project-HAMi/amd-device-plugin/blob/main/example/pod/pytorch-slice.yaml)):
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: pytorch-gpu-pod-example
-spec:
-  restartPolicy: Never
-  containers:
-  - name: gpu-container
-    image: rocm/pytorch:latest
-    command:
-    - python3
-    - "-c"
-    - |
-      import torch
-      if torch.cuda.is_available():
-        print(f"GPU is available. Device count: {torch.cuda.device_count()}")
-        print(f"Device name: {torch.cuda.get_device_name(0)}")
-        x = torch.ones(3, 3, device='cuda')
-        y = torch.ones(3, 3, device='cuda') * 2
-        z = x + y
-        print(f"Result of tensor addition on GPU: {z}")
-      else:
-        print("No GPU available.")
-    resources:
-      limits:
-        amd.com/gpu: 1  # Request 1 AMD GPU
+resources:
+  limits:
+    amd.com/gpu: 1
+    amd.com/gpucores: 25
+    amd.com/gpumem: 4096
 ```
 
-To run the example:
+Inside the container, `HSA_CU_MASK` holds the CU slice and `HIP_DEVICE_MEMORY_LIMIT_0` the VRAM limit. The `libamvgpu.so` hook enforces the memory limit and pins `HSA_CU_MASK`, which ROCm enforces:
 
 ```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml
+kubectl exec <pod> -- sh -c 'echo $HSA_CU_MASK $HIP_DEVICE_MEMORY_LIMIT_0'
+# for example, on a 64-CU GPU: 0:0-15 4096m
 ```
 
-Check the output with:
+## One whole GPU
 
-```bash
-kubectl logs pytorch-gpu-pod-example
-```
-
-This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/pytorch.yaml)
-
-## Multiple GPU Example
-
-This example shows how to utilize multiple GPUs in a JAX application. It performs parallel matrix multiplications across both GPUs using JAX's pmap functionality for distributed computation.
+Leave out `amd.com/gpucores` and `amd.com/gpumem` ([pytorch.yaml](https://github.com/Project-HAMi/amd-device-plugin/blob/main/example/pod/pytorch.yaml)). A whole-GPU pod gets no hook, so any image works:
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: jax-multi-gpu-pod
-spec:
-  restartPolicy: Never
-  containers:
-  - name: multi-gpu-container
-    image: rocm/jax:latest
-    command:
-    - /bin/bash
-    - "-c"
-    - |
-      python3 -c "
-      import jax
-      import jax.numpy as jnp
-      print('Available JAX devices:', jax.devices())
-
-      # Create data to process in parallel
-      n_devices = jax.device_count()
-      print(f'Number of devices: {n_devices}')
-
-      # Create matrices for each device
-      x = jnp.ones((n_devices, 1000, 1000))
-      y = jnp.ones((n_devices, 1000, 1000))
-
-      # Define computation to run in parallel
-      @jax.pmap
-      def parallel_matmul(a, b):
-          return jnp.matmul(a, b)
-
-      # Run computation in parallel across GPUs
-      result = parallel_matmul(x, y)
-
-      print(f'Parallel computation complete across {n_devices} devices')
-      print('Result shape:', result.shape)
-      print('Device mapping:', jax.devices())
-      "
-    resources:
-      limits:
-        amd.com/gpu: 2  # Request 2 AMD GPUs
+resources:
+  limits:
+    amd.com/gpu: 1
 ```
 
-To run the example:
+## Several GPUs
 
-```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml
-```
+`amd.com/gpu: 2` gives two GPUs ([jax-multi-gpu.yaml](https://github.com/Project-HAMi/amd-device-plugin/blob/main/example/pod/jax-multi-gpu.yaml)). With `amd.com/gpucores` and `amd.com/gpumem` each GPU gets the same share. `ROCR_VISIBLE_DEVICES`, `HSA_CU_MASK` and `HIP_DEVICE_MEMORY_LIMIT_<i>` follow the same container-local order, so index `i` is the same GPU in all three.
 
-Check the output with:
+## Non-privileged containers
 
-```bash
-kubectl logs jax-multigpu-pod
-```
-
-This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-mult-gpu.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-mult-gpu.yaml)
-
-## Non-privileged Pod with GPU Access Example
-
-This example demonstrates the same JAX example as above, running as a non-privileged container configuration for enhanced security.
+[pytorch-non-privileged.yaml](https://github.com/Project-HAMi/amd-device-plugin/blob/main/example/pod/pytorch-non-privileged.yaml) runs without `privileged`. The device plugin hands the container its GPU device nodes; this ROCm workload also sets `hostIPC: true` and an `Unconfined` seccomp profile:
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: jax-non-privileged-multi-gpu-pod
-spec:
-  restartPolicy: Never
-  hostIPC: true
-  containers:
-  - name: jax-multi-gpu-container
-    image: rocm/jax:latest
-    command:
-    - python3
-    - "-c"
-    - |
-      import jax
-      import jax.numpy as jnp
-      print('Available JAX devices:', jax.devices())
-
-      # Create data to process in parallel
-      n_devices = jax.device_count()
-      print(f'Number of devices: {n_devices}')
-
-      # Create matrices for each device
-      x = jnp.ones((n_devices, 1000, 1000))
-      y = jnp.ones((n_devices, 1000, 1000))
-
-      # Define computation to run in parallel
-      @jax.pmap
-      def parallel_matmul(a, b):
-          return jnp.matmul(a, b)
-
-      # Run computation in parallel across GPUs
-      result = parallel_matmul(x, y)
-
-      print(f'Parallel computation complete across {n_devices} devices')
-      print('Result shape:', result.shape)
-      print('Device mapping:', jax.devices())
-    resources:
-      limits:
-        amd.com/gpu: 2  # Request 2 AMD GPUs
-    securityContext:
-      privileged: false
-      allowPrivilegeEscalation: false
-      seccompProfile:
-        type: Unconfined
+hostIPC: true
+containers:
+- securityContext:
+    privileged: false
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: Unconfined
 ```
-
-To run the example:
-
-```bash
-kubectl create -f https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml
-```
-
-Check the output with:
-
-```bash
-kubectl logs jax-non-privileged-multi-gpu-pod
-```
-
-This example manifest is available for download here: [https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml](https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/example/pod/jax-non-privileged.yaml)

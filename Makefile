@@ -6,7 +6,7 @@ SHELL := /bin/bash
 
 # Image repository and version
 IMAGE_REPO ?= ghcr.io/project-hami/amd-device-plugin
-IMAGE_VERSION ?= 0.0.1
+IMAGE_VERSION ?= 0.0.3
 
 # Image tags based on the repository's tagging scheme.
 # Device plugin: <version>
@@ -38,9 +38,9 @@ build-all: build-device-plugin build-labeller build-ubi-device-plugin build-ubi-
 save-all: save-device-plugin save-labeller save-ubi-device-plugin save-ubi-labeller
 	@echo "All images saved to $(TAR_DIR)/"
 
-# Build Alpine-based device plugin image
+# Build the ROCm (Ubuntu) based device plugin image
 build-device-plugin:
-	@echo "Building Alpine-based device plugin image..."
+	@echo "Building device plugin image..."
 	docker build -t $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG) -f Dockerfile .
 	@echo "Built: $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG)"
 
@@ -62,7 +62,7 @@ build-ubi-labeller:
 	docker build -t $(IMAGE_REPO):$(UBI_LABELLER_TAG) -f ubi-labeller.Dockerfile .
 	@echo "Built: $(IMAGE_REPO):$(UBI_LABELLER_TAG)"
 
-# Save Alpine device plugin image to tar.gz
+# Save ROCm Ubuntu 24.04 device plugin image to tar.gz
 save-device-plugin: build-device-plugin
 	@echo "Saving $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG) to tar.gz..."
 	@mkdir -p $(TAR_DIR)
@@ -112,13 +112,13 @@ help:
 	@echo "  save-all               - Save all Docker images to tar.gz"
 	@echo ""
 	@echo "Individual build targets:"
-	@echo "  build-device-plugin    - Build Alpine device plugin (tag: $(DEVICE_PLUGIN_TAG))"
+	@echo "  build-device-plugin    - Build ROCm Ubuntu device plugin (tag: $(DEVICE_PLUGIN_TAG))"
 	@echo "  build-labeller         - Build Alpine node labeller (tag: $(LABELLER_TAG))"
 	@echo "  build-ubi-device-plugin - Build UBI device plugin (tag: $(UBI_DEVICE_PLUGIN_TAG))"
 	@echo "  build-ubi-labeller     - Build UBI node labeller (tag: $(UBI_LABELLER_TAG))"
 	@echo ""
 	@echo "Individual save targets:"
-	@echo "  save-device-plugin     - Build and save Alpine device plugin to tar.gz"
+	@echo "  save-device-plugin     - Build and save ROCm Ubuntu device plugin to tar.gz"
 	@echo "  save-labeller          - Build and save Alpine node labeller to tar.gz"
 	@echo "  save-ubi-device-plugin - Build and save UBI device plugin to tar.gz"
 	@echo "  save-ubi-labeller      - Build and save UBI node labeller to tar.gz"
@@ -128,18 +128,18 @@ help:
 	@echo "  help                   - Show this help message"
 	@echo ""
 	@echo "Variables:"
-	@echo "  IMAGE_VERSION          - Version suffix for tags (default: 0.0.1)"
+	@echo "  IMAGE_VERSION          - Version suffix for tags (default: 0.0.3)"
 	@echo "  OUTPUT_DIR             - Base output directory (default: ./dist)"
 	@echo "  TAR_DIR                - Directory for tarball output (default: ./dist/tarballs)"
 	@echo ""
 	@echo "Tag mapping (using IMAGE_VERSION=$(IMAGE_VERSION)):"
-	@echo "  Alpine device plugin:  $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG)"
+	@echo "  ROCm device plugin:    $(IMAGE_REPO):$(DEVICE_PLUGIN_TAG)"
 	@echo "  Alpine labeller:       $(IMAGE_REPO):$(LABELLER_TAG)"
 	@echo "  UBI device plugin:     $(IMAGE_REPO):$(UBI_DEVICE_PLUGIN_TAG)"
 	@echo "  UBI labeller:          $(IMAGE_REPO):$(UBI_LABELLER_TAG)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make all                                # Builds all with version 0.0.1"
-	@echo "  make build-all IMAGE_VERSION=0.0.1      # Build all with an explicit version"
+	@echo "  make all                                # Builds all with version 0.0.3"
+	@echo "  make build-all IMAGE_VERSION=0.0.3      # Build all with an explicit version"
 	@echo "  make save-device-plugin                 # Build and save device plugin only"
 	@echo "  make clean                              # Clean up images and tar files"

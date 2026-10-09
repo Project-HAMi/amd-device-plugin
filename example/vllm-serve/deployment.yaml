@@ -21,11 +21,11 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: "8Gi"
-      hostNetwork: true
       hostIPC: true
       containers:
       - name: mistral-7b
-        image: rocm/vllm:rocm7.13.0_gfx950-dcgpu_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1
+        # pick a tag built for your GPU, for example a *_rdna_* or *_cdna_* one
+        image: rocm/vllm:latest
         securityContext:
           seccompProfile:
             type: Unconfined
@@ -34,6 +34,8 @@ spec:
             add:
             - SYS_PTRACE
         command: ["/bin/sh", "-c"]
+        # Mistral-7B in bf16 needs a GPU with more than 16 GB of VRAM; on a
+        # 16 GB card serve a smaller model, such as Qwen/Qwen2.5-0.5B-Instruct
         args: [
           "vllm serve mistralai/Mistral-7B-v0.3 --port 8888 --trust-remote-code --enable-chunked-prefill --max_num_batched_tokens 1024"
         ]
@@ -43,6 +45,8 @@ spec:
             secretKeyRef:
               name: hf-token-secret
               key: token
+              # only gated models need the token
+              optional: true
         ports:
         - containerPort: 8888
         resources:

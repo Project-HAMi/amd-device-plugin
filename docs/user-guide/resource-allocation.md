@@ -1,23 +1,32 @@
 # Resource Allocation
 
-## Overview
+## Who decides what
 
-[Device Plugin](https://github.com/Project-HAMi/amd-device-plugin) daemon set discovers and makes the AMD GPUs available to Kubernetes cluster. Allocation logic determines which set of GPUs/resources are allocated when a Job/Pod requests for them. The allocation logic can run an alogrithm to determine which GPUs should be picked out of the available ones.
+1. **The HAMi scheduler** picks the node and the GPUs. It uses the shares (`count`), VRAM and CUs that each GPU publishes in `hami.io/node-amd-register`, and writes its choice to the pod's annotations.
+2. **The device plugin**, in kubelet's `Allocate` call, turns that choice into the container's device nodes and environment: `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, `HSA_CU_MASK` and `HIP_DEVICE_MEMORY_LIMIT_<i>`. It records which CUs each pod holds in the pod's `hami.io/amd-cu-allocated` annotation, so it can rebuild them after a plugin restart.
+3. **The `libamvgpu.so` hook** and, where available, the dmem cgroup enforce the VRAM limit inside the container. ROCm enforces the CU mask.
 
-### Allocator package
+## Shares per GPU
 
-Device Plugin has allocator package where we can define multiple policies on how the allocation should be done. Each policy can follow a different algorithm to decide the allocation strategy based on system needs. Actual allocation of AMD GPUs is done by Kubernetes and Kubelet. The allocation policy only decides the GPUs to be picked from the available GPUs for any given request.
+Each GPU is published `count` times; that count is how many pods may share it. By default it is 2 on gfx12 GPUs and 10 on others; `dp.splitCount` overrides it for every GPU. gfx12 has only 2 hardware pipes for user compute queues, so more than about 2 processes on one GPU can lose most of their throughput, independent of their CU and memory slices. How much depends on the model and firmware: an Ollama qwen2.5:3b pair lost about 83%, while a plain kernel loop split the card evenly across 6 processes with no loss in total.
 
-### Best-effort Allocation Policy
+## Compute units
 
-Currently we use ```best-effort``` policy as the default allocation policy. This policy choses GPUs based on topology of the GPUs to ensure optimal affinity and better performance. During initialization phase, Device Plugin calculates a score for every pair of GPUs and stores it in memory. This score is calculated based on below criteria:
-- Type of connectivity link between the pair. Most common AMD GPU deployments use either XGMI or PCIE links to connect the GPUs. ```XGMI``` connectivity offers better performance than PCIE connectivity. The score assigned for a pair connected using XGMI is lower than that of a pair connected using PCIE(lower score is better)
-- [NUMA affinity](https://rocm.blogs.amd.com/software-tools-optimization/affinity/part-1/README.html) of the GPU pair. GPU pair that is part of same NUMA domain get lower score than pair from different NUMA domains.
-- For scenarios that involve partitioned GPUs, partitions from same GPU are assigned better score than partitions from different GPUs.
+`amd.com/gpucores: N` asks for N% of a GPU's CUs. The plugin hands out free CUs from the lowest index up, and remembers them so slices never overlap.
 
-When an allocation request for size S comes, the allocator calculates all subsets of size S out of available GPUs. For each set, the score is maintained(based on above criteria). Set with lowest score is picked for allocation. At any given time, best-effort policy tries to provide best possible combination of GPUs out of the avilable GPU pool.
+On RDNA (gfx10 and later) the CU mask is applied per WGP, a pair of CUs, and a mask that enables only one CU of a pair is ignored, which would run the pod on the whole GPU. So on RDNA the plugin allocates whole WGPs and rounds the request up. For example, 3 CUs become 4 (`0:0-3`), and the next slice starts at `0:4`. The plugin publishes the pair size as `custominfo.cuPerWGP`, so a HAMi scheduler that reads it accounts the same count. A single-WGP GPU, such as a small iGPU, can only be given out whole.
 
-Below are few rules followed for allocation requests for X GPU partitions:
-- We try to allocate all partitions from the same GPU if possible.
-- In case there is a GPU with fewer available partitions that can accomodate the request, that GPU is preferred. This maximizes the utilization of GPUs already in use for other workloads and helps avoid fragmentation of unused GPUs.
-- If more than one GPU is needed to accomodate the request, we consider the topology(link type and NUMA affinity) as described above and generate all possible subsets. The subset with the lowest weight among the possible candidates is allocated.
+The mask is cooperative. The hook pins `HSA_CU_MASK` to the pod spec so the process cannot widen it, but a process that re-executes itself without the hook runs outside the slice.
+
+## Memory
+
+`amd.com/gpumem: M` limits VRAM to M MiB per GPU, through `HIP_DEVICE_MEMORY_LIMIT_<i>` for the hook and `dmem.max` for the kernel cap. See [Configuration](configuration.md) for when dmem applies.
+
+## Picking GPUs inside a node
+
+When kubelet itself chooses among a node's devices (`GetPreferredAllocation`), the plugin ranks GPU combinations with `dp.allocatorPolicy`:
+
+- **`besteffort`** (default) and **`binpack`** (the same policy): prefer the closest GPUs, meaning the same NUMA node and the fastest links (XGMI, then PCIe), and keep partitions of one GPU together.
+- **`spread`**: prefers the farthest GPUs, spreading across NUMA nodes and links.
+
+GPUs with no direct GPU-to-GPU link, as on most consumer cards and passthrough VMs, are treated as connected through the host.

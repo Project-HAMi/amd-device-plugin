@@ -31,17 +31,12 @@ import (
 type Client struct {
 	// Embedded kubernetes.Interface to avoid name conflicts.
 	kubernetes.Interface
-	config *rest.Config
 }
 
 var (
 	KubeClient kubernetes.Interface
 	once       sync.Once
 )
-
-func init() {
-	KubeClient = nil
-}
 
 // GetClient returns the global Kubernetes client.
 func GetClient() kubernetes.Interface {
@@ -70,7 +65,6 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	return &Client{
 		Interface: clientset,
-		config:    restConfig,
 	}, nil
 }
 

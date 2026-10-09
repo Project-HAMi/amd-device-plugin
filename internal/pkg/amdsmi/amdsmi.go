@@ -145,61 +145,39 @@ var (
 	amdSMIPartitions = newAMDSCache(fetchAMDGPUPartitionProfiles)
 )
 
-// GetAMDSMIUUIDs resolves AMD SMI UUIDs by PCI BDF, cached after the first
-// call. AMD SMI initialization is process-global, so calls are serialized and
-// always balanced with shut_down. An individual BDF failure does not discard
-// UUIDs obtained for other devices.
+// GetAMDSMIUUIDs resolves AMD SMI UUIDs by PCI BDF. AMD SMI initialization is
+// process-global, so calls are serialized and always balanced with shut_down.
+// An individual BDF failure does not discard UUIDs obtained for other devices.
 func GetAMDSMIUUIDs(bdfs []string) (map[string]string, error) {
 	return amdSMICUUIDs.Get(bdfs)
 }
 
 func fetchAMDSUUIDs(bdfs []string) (map[string]string, error) {
-	amdSMIMu.Lock()
-	defer amdSMIMu.Unlock()
-
-	if status := C.amdsmi_init(C.AMDSMI_INIT_AMD_GPUS); status != C.AMDSMI_STATUS_SUCCESS {
-		return nil, fmt.Errorf("amdsmi_init: status %d", status)
-	}
-	defer C.amdsmi_shut_down()
-
-	uuidByBDF := make(map[string]string, len(bdfs))
-	var failures []string
-	for _, rawBDF := range bdfs {
-		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
-		bdf := normalizeBDF(rawBDF)
-		if bdf == "" {
-			continue
-		}
-		cBDF := C.CString(bdf)
+	return queryByBDF(bdfs, "UUID", func(cBDF *C.char) (string, C.amdsmi_status_t) {
 		var uuid [C.AMDSMI_GPU_UUID_SIZE]C.char
 		length := C.uint(C.AMDSMI_GPU_UUID_SIZE)
 		status := C.amdsmi_uuid_for_bdf(cBDF, &uuid[0], &length)
-		C.free(unsafe.Pointer(cBDF))
-		if status != C.AMDSMI_STATUS_SUCCESS {
-			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
-			continue
-		}
-		if value := strings.TrimSpace(C.GoString(&uuid[0])); value != "" {
-			uuidByBDF[bdf] = value
-			// Keep the source spelling too: KFD topology represents the
-			// function as a fourth colon-separated component.
-			uuidByBDF[rawBDF] = value
-		}
-	}
-	if len(failures) > 0 {
-		return uuidByBDF, fmt.Errorf("AMD SMI UUID lookup failed for %s", strings.Join(failures, ", "))
-	}
-	return uuidByBDF, nil
+		return C.GoString(&uuid[0]), status
+	})
 }
 
-// GetAMDSMIProductNames resolves the AMD SMI ASIC market_name by PCI BDF,
-// cached after the first call. This is the user-facing product name reported
-// in DeviceInfo.Type.
+// GetAMDSMIProductNames resolves the AMD SMI ASIC market_name by PCI BDF.
+// This is the user-facing product name reported in DeviceInfo.Type.
 func GetAMDSMIProductNames(bdfs []string) (map[string]string, error) {
 	return amdSMIProduct.Get(bdfs)
 }
 
 func fetchAMDSMIProductNames(bdfs []string) (map[string]string, error) {
+	return queryByBDF(bdfs, "product-name", func(cBDF *C.char) (string, C.amdsmi_status_t) {
+		var marketName [C.AMDSMI_MAX_STRING_LENGTH]C.char
+		status := C.amdsmi_product_name_for_bdf(cBDF, &marketName[0])
+		return C.GoString(&marketName[0]), status
+	})
+}
+
+// queryByBDF runs query for every BDF inside one balanced AMD SMI session.
+// Results are keyed by both the normalized and the source BDF spelling.
+func queryByBDF(bdfs []string, what string, query func(*C.char) (string, C.amdsmi_status_t)) (map[string]string, error) {
 	amdSMIMu.Lock()
 	defer amdSMIMu.Unlock()
 
@@ -208,7 +186,7 @@ func fetchAMDSMIProductNames(bdfs []string) (map[string]string, error) {
 	}
 	defer C.amdsmi_shut_down()
 
-	namesByBDF := make(map[string]string, len(bdfs))
+	byBDF := make(map[string]string, len(bdfs))
 	var failures []string
 	for _, rawBDF := range bdfs {
 		rawBDF = strings.ToLower(strings.TrimSpace(rawBDF))
@@ -217,22 +195,23 @@ func fetchAMDSMIProductNames(bdfs []string) (map[string]string, error) {
 			continue
 		}
 		cBDF := C.CString(bdf)
-		var marketName [C.AMDSMI_MAX_STRING_LENGTH]C.char
-		status := C.amdsmi_product_name_for_bdf(cBDF, &marketName[0])
+		value, status := query(cBDF)
 		C.free(unsafe.Pointer(cBDF))
 		if status != C.AMDSMI_STATUS_SUCCESS {
 			failures = append(failures, fmt.Sprintf("%s (status %d)", bdf, status))
 			continue
 		}
-		if value := strings.TrimSpace(C.GoString(&marketName[0])); value != "" {
-			namesByBDF[bdf] = value
-			namesByBDF[rawBDF] = value
+		if value = strings.TrimSpace(value); value != "" {
+			byBDF[bdf] = value
+			// Keep the source spelling too: KFD topology represents the
+			// function as a fourth colon-separated component.
+			byBDF[rawBDF] = value
 		}
 	}
 	if len(failures) > 0 {
-		return namesByBDF, fmt.Errorf("AMD SMI product-name lookup failed for %s", strings.Join(failures, ", "))
+		return byBDF, fmt.Errorf("AMD SMI %s lookup failed for %s", what, strings.Join(failures, ", "))
 	}
-	return namesByBDF, nil
+	return byBDF, nil
 }
 
 // GetAMDSCurrentMemoryPartitions resolves the current memory partition (NPS1,
@@ -446,8 +425,8 @@ func npsCapsString(mask C.uint) string {
 	return strings.Join(caps, ",")
 }
 
+// normalizeBDF expects a trimmed, lowercased BDF.
 func normalizeBDF(bdf string) string {
-	bdf = strings.ToLower(strings.TrimSpace(bdf))
 	// KFD topology uses domain:bus:device:function, while AMD SMI expects
 	// the conventional PCI domain:bus:device.function form.
 	parts := strings.Split(bdf, ":")

@@ -9,15 +9,16 @@ on:
       - "helm/**"
       - ".github/workflows/helm-chart-release.yml"
 
-permissions:
-  contents: write
+permissions: read-all
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # chart-releaser pushes the gh-pages index and creates releases
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -27,7 +28,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           version: v3.20.2
 
@@ -44,11 +45,12 @@ jobs:
           fi
 
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.7.0
+        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         with:
           # The charts directory
           charts_dir: helm
-          # The GitHub Pages URL to the charts repo (default: https://<owner>.github.io/<repo>)
+          # Chart changes without a version bump must not fail on the existing release.
+          skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
           CR_RELEASE_NAME_TEMPLATE: "{{ .Name }}-helm-{{ .Version }}"

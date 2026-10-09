@@ -174,7 +174,7 @@ func main() {
 		if _, err := os.Stat(path); err == nil {
 			resources, err := getResourceList(strategy)
 			if err != nil {
-				glog.Errorf("Error occured: %v", err)
+				glog.Errorf("Error occurred: %v", err)
 				os.Exit(1)
 			}
 			if len(resources) > 0 {

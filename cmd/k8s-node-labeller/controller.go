@@ -21,11 +21,11 @@ type reconcileNodeLabels struct {
 var _ reconcile.Reconciler = &reconcileNodeLabels{}
 
 func (r *reconcileNodeLabels) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	// set up a convinient log object so we don't have to type request over and over again
+	// set up a convenient log object so we don't have to type request over and over again
 	log := r.log.WithValues("request", request)
 
 	node := &corev1.Node{}
-	err := r.client.Get(context.TODO(), request.NamespacedName, node)
+	err := r.client.Get(ctx, request.NamespacedName, node)
 	if errors.IsNotFound(err) {
 		log.Error(nil, "Could not find Node")
 		return reconcile.Result{}, nil
@@ -48,7 +48,7 @@ func (r *reconcileNodeLabels) Reconcile(ctx context.Context, request reconcile.R
 		node.Labels[k] = v
 	}
 
-	err = r.client.Update(context.TODO(), node)
+	err = r.client.Update(ctx, node)
 	if err != nil {
 		log.Error(err, "Could not write Node")
 		return reconcile.Result{}, err

@@ -2,7 +2,7 @@ dp:
   image:
     repository: ghcr.io/project-hami/amd-device-plugin
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "0.0.1"
+    tag: ""
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
@@ -29,6 +29,8 @@ dp:
   # <hostHookPath>/vgpu/libamvgpu.so on the host.
   # Workload container path is fixed in plugin code: /usr/local/vgpu/libamvgpu.so
   hostHookPath: "/usr/local"
+  # glog verbosity (-v). 4 adds topology parsing, 5 adds annotation decoding.
+  logVerbosity: 2
   # Seconds between per-GPU health checks; 0 disables them.
   healthPulse: 10
   # How many workloads may share one GPU. 0 picks it per GPU: 2 on gfx12
@@ -43,8 +45,8 @@ dp:
   # skipped with one log line. See Project-HAMi/amd-hami-core#10.
   dmemBackend: true
   # Experimental: refuse a sliced allocation whose container image is not
-  # LD_AUDIT-compatible (musl/Alpine, or statically linked) instead of
-  # silently running it unprotected. See Project-HAMi/amd-hami-core#3.
+  # LD_AUDIT-compatible (musl/Alpine, statically linked, or glibc older than
+  # 2.34) unless dmem caps it. See Project-HAMi/amd-hami-core#3.
   # Requires the containerd socket and its snapshotter data directory
   # mounted with mountPropagation: HostToContainer, so this pod's mount
   # namespace can see the read-only image mount "ctr images mount" makes;
@@ -72,6 +74,15 @@ dp:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
+
+# Per-container VRAM and host GPU metrics of the node, as Prometheus metrics
+# under the metric names of the HAMi NVIDIA vGPUmonitor. It reads the dmem
+# cgroup controller and sysfs, so it needs the systemd cgroup driver on a
+# kernel with the dmem controller, and no ROCm tooling.
+monitor:
+  enabled: false
+  metricsBindAddress: ":9394"
+  resources: {}
 
 imagePullSecrets: []
 

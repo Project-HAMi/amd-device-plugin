@@ -17,7 +17,9 @@
 package amdgpu
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,9 +51,12 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 		card := fmt.Sprintf("card%d", dev["card"])
 		t.Logf("%s, %s", pci, card)
 
-		//debugfs path/interface may not be stable
+		// debugfs path/interface may not be stable
 		debugFSfeatVersion, debugFSfwVersion :=
 			parseDebugFSFirmwareInfo("/sys/kernel/debug/dri/" + card[4:] + "/amdgpu_firmware_info")
+		if len(debugFSfeatVersion) == 0 && len(debugFSfwVersion) == 0 {
+			t.Skipf("debugfs amdgpu_firmware_info unavailable for %s; skipping ioctl/debugfs consistency check", card)
+		}
 		featVersion, fwVersion, err := GetFirmwareVersions(card)
 		if err != nil {
 			// Device exists but the DRM node is not usable (e.g. accel not
@@ -102,12 +107,6 @@ func TestAMDGPUcountConsistent(t *testing.T) {
 
 }
 
-func TestHasAMDGPU(t *testing.T) {
-	if !hasAMDGPU() {
-		t.Skip("Skipping test, no AMD GPU found.")
-	}
-}
-
 func TestDevFunctional(t *testing.T) {
 	if !hasAMDGPU() {
 		t.Skip("Skipping test, no AMD GPU found.")
@@ -118,8 +117,9 @@ func TestDevFunctional(t *testing.T) {
 	for _, dev := range devices {
 		card := fmt.Sprintf("card%d", dev["card"])
 
-		ret := DevFunctional(card)
-		t.Logf("%s functional: %t", card, ret)
+		if !DevFunctional(card) {
+			t.Errorf("%s: a discovered GPU must open", card)
+		}
 	}
 }
 
@@ -435,5 +435,124 @@ func TestPartitionCapacity(t *testing.T) {
 					tt.partitions, got.VRAMMiB, got.CUCount, tt.wantVRAMMiB, tt.wantCUCount)
 			}
 		})
+	}
+}
+
+func TestDiscoverGPUsResetsPerGPU(t *testing.T) {
+	root := t.TempDir()
+	mk := func(dir string, files ...string) {
+		t.Helper()
+		for _, f := range files {
+			p := filepath.Join(root, dir, f)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pci := "module/amdgpu/drivers/pci:amdgpu/"
+	mk(pci+"0000:03:00.0", "numa_node", "current_compute_partition", "current_memory_partition", "drm/card0/x", "drm/renderD128/x", "drm/ttm/x")
+	mk(pci+"0000:83:00.0", "numa_node", "drm/card1/x") // no render node
+	mk(pci+"0000:c3:00.0", "numa_node", "drm/card2/x", "drm/renderD130/x")
+	mk("devices/platform/amdgpu_xcp_1", "x") // partition without drm entries
+	mk("devices/platform/amdgpu_xcp_2", "drm/renderD129/x")
+
+	devs := discoverGPUs(root,
+		map[int]string{128: "0000:03:00:0", 129: "0000:03:00:0"},
+		map[int]int{128: 1, 129: 2})
+
+	if len(devs) != 3 {
+		t.Fatalf("got %d devices, want 3: %v", len(devs), devs)
+	}
+	if _, ok := devs["0000:83:00.0"]; ok {
+		t.Error("GPU without render node must be skipped")
+	}
+	if d := devs["0000:c3:00.0"]; d["devID"] != "" || d["nodeId"] != 0 || d["card"] != 2 || d["renderD"] != 130 {
+		t.Errorf("GPU without KFD node inherited values: %v", d)
+	}
+	if d := devs["amdgpu_xcp_2"]; d["devID"] != "0000:03:00:0" || d["nodeId"] != 2 || d["card"] != 0 {
+		t.Errorf("partition: %v", d)
+	}
+}
+
+func TestNewDeviceCapacityRejectsZeroCUs(t *testing.T) {
+	if _, err := newDeviceCapacity("card0", 16<<30, 0); err == nil {
+		t.Error("0 CUs: want an error")
+	}
+	if c, err := newDeviceCapacity("card0", 16<<30, 32); err != nil || c != (DeviceCapacity{VRAMMiB: 16384, CUCount: 32}) {
+		t.Errorf("got %v, %v", c, err)
+	}
+}
+
+func TestCollectFirmwareSkipsFailedQueries(t *testing.T) {
+	feat, fw := collectFirmware(func(fwType uint32) (uint32, uint32, error) {
+		if fwType == firmwareTypes[1].fwType {
+			return 0, 0, fmt.Errorf("rc -22")
+		}
+		return fwType + 100, fwType, nil
+	})
+	if _, ok := fw["UVD"]; ok {
+		t.Errorf("failed UVD query reported: %v", fw)
+	}
+	if _, ok := feat["UVD"]; ok {
+		t.Errorf("failed UVD query reported: %v", feat)
+	}
+	if len(fw) != len(firmwareTypes)-1 || fw["ME"] != firmwareTypes[3].fwType+100 || feat["ME"] != firmwareTypes[3].fwType {
+		t.Errorf("fw %v feat %v", fw, feat)
+	}
+}
+
+func TestParseTopologyPropertiesReportsScanError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "properties")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 1<<17)+"\nsimd_count 4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseTopologyProperties(path, regexp.MustCompile(`simd_count\s(\d+)`)); !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("err = %v, want bufio.ErrTooLong", err)
+	}
+}
+
+func TestParseDebugFSFirmwareInfoFullUint32(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "amdgpu_firmware_info")
+	if err := os.WriteFile(path, []byte("SOS feature version: 4294967295, firmware version: 0x80000001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	feat, fw := parseDebugFSFirmwareInfo(path)
+	if feat["SOS"] != 0xffffffff || fw["SOS"] != 0x80000001 {
+		t.Errorf("feat %#x fw %#x", feat["SOS"], fw["SOS"])
+	}
+}
+
+// The newer families must resolve by their kernel UAPI ids even when the
+// libdrm headers the image builds against predate them.
+func TestFamilyIDtoStringUsesKernelIDs(t *testing.T) {
+	for id, want := range map[uint32]string{
+		145: "GC_11_0_0", 146: "YC", 148: "GC_11_0_1", 149: "GC_10_3_6",
+		150: "GC_11_5_0", 151: "GC_10_3_7", 152: "GC_12_0_0",
+	} {
+		if got, err := FamilyIDtoString(id); err != nil || got != want {
+			t.Errorf("FamilyIDtoString(%d) = %q, %v, want %q", id, got, err, want)
+		}
+	}
+}
+
+// IsHomogeneous judges the GPUs it is given instead of rescanning the node.
+func TestIsHomogeneousUsesGivenGPUs(t *testing.T) {
+	gpu := func(c, m string) map[string]interface{} {
+		return map[string]interface{}{"computePartitionType": c, "memoryPartitionType": m}
+	}
+	for name, tc := range map[string]struct {
+		gpus map[string]map[string]interface{}
+		want bool
+	}{
+		"rdna":  {map[string]map[string]interface{}{"a": gpu("", ""), "b": gpu("", "")}, true},
+		"same":  {map[string]map[string]interface{}{"a": gpu("spx", "nps1"), "b": gpu("spx", "nps1")}, true},
+		"mixed": {map[string]map[string]interface{}{"a": gpu("spx", "nps1"), "b": gpu("cpx", "nps1")}, false},
+	} {
+		if got := IsHomogeneous(tc.gpus); got != tc.want {
+			t.Errorf("%s: IsHomogeneous = %v, want %v", name, got, tc.want)
+		}
 	}
 }
