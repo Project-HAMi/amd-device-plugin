@@ -52,19 +52,21 @@ func ParseStrategy(s string) (ResourceNamingStrategy, error) {
 }
 
 func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, error) {
-	var resources []string
+	return resourceNames(resourceNamingStrategy, amdgpu.GetAMDGPUs()), nil
+}
 
-	gpus := amdgpu.GetAMDGPUs()
-	if len(gpus) == 0 {
-		return resources, nil
-	}
+func resourceNames(resourceNamingStrategy ResourceNamingStrategy, gpus map[string]map[string]interface{}) []string {
+	var resources []string
 	partitionCountMap := amdgpu.UniquePartitionConfigCount(gpus)
-	if amdgpu.IsHomogeneous(gpus) {
+	isHomogeneous := len(partitionCountMap) <= 1
+	if len(gpus) == 0 {
+		return resources
+	}
+	if isHomogeneous {
 		// Homogeneous node will report only "gpu" resource if strategy is single. If strategy is mixed, it will report resources under the partition type name
-		switch resourceNamingStrategy {
-		case StrategySingle:
+		if resourceNamingStrategy == StrategySingle {
 			resources = []string{"gpu"}
-		case StrategyMixed:
+		} else if resourceNamingStrategy == StrategyMixed {
 			if len(partitionCountMap) == 0 {
 				// If partitioning is not supported on the node, we should report resources under "gpu" regardless of the strategy
 				resources = []string{"gpu"}
@@ -77,11 +79,13 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 			}
 		}
 	} else {
-		// Heterogeneous node reports resources based on partition types if strategy is mixed. Heterogeneous is not allowed if Strategy is single
-		switch resourceNamingStrategy {
-		case StrategySingle:
-			return resources, fmt.Errorf("partitions of different styles across GPUs in a node are not supported with the single strategy, start the device plugin with the mixed strategy")
-		case StrategyMixed:
+		// Heterogeneous node reports resources based on partition types if strategy is mixed. With the single
+		// strategy the kubelet list still carries every device, so mixed styles (e.g. one busy GPU stuck in spx
+		// while the rest flipped to qpx) must not abort the plugin; the devices register under "gpu" as-is.
+		if resourceNamingStrategy == StrategySingle {
+			glog.Warningf("Partitions of different styles across GPUs in a node; reporting all devices under %q", "gpu")
+			resources = []string{"gpu"}
+		} else if resourceNamingStrategy == StrategyMixed {
 			for partitionType, count := range partitionCountMap {
 				if count > 0 {
 					resources = append(resources, partitionType)
@@ -89,7 +93,7 @@ func getResourceList(resourceNamingStrategy ResourceNamingStrategy) ([]string, e
 			}
 		}
 	}
-	return resources, nil
+	return resources
 }
 
 func main() {

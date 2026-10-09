@@ -16,7 +16,37 @@ The chart passes its values to the plugin as flags. The [chart README](https://g
 | | `-resource_naming_strategy` | `single` | `single` or `mixed`; see below. |
 | `dp.hookInstaller.enabled` | | `true` | Copy `libamvgpu.so` from the image to `<dp.hostHookPath>/vgpu` on each node. |
 | `dp.hostHookPath` | | `/usr/local` | Host directory for the hook. Workloads always see it at `/usr/local/vgpu/libamvgpu.so`. |
+| `dp.operatingMode` | `OPERATING_MODE` env | `cu` | `cu` (whole GPUs sliced by CU) or `partition` (hard compute partitions). The `hami.io/amd-operating-mode` node annotation overrides it. |
+| `dp.computePartition` | `COMPUTE_PARTITION` env | empty | In partition mode, the compute partition (`spx`/`dpx`/`qpx`/`cpx`) idle GPUs are switched to at startup. The `hami.io/amd-compute-partition` node annotation overrides it. |
 
+## Operating Modes
+
+The plugin registers AMD GPUs in one of two modes:
+
+- **cu mode (default)**: each whole GPU registers as a soft device (default
+  split count, `Mode` empty) and is sliced by CU and memory. This is the
+  historical HAMi behavior.
+- **partition mode**: devices register as hard compute partitions with a
+  `#<compute-type>` suffix (`GPU-xxx#spx`, `GPU-xxx#qpx`), `Mode` set to the
+  partition type and `Count: 1`. The kubelet-facing device list publishes
+  only the hard entries (no soft splits). Whole GPUs with `amdgpu_xcp_*`
+  partitions in KFD topology are replaced by them; any other partitioned GPU
+  registers as one hard device. GPUs without a compute partition type stay
+  soft.
+
+Mode resolution, lowest to highest precedence:
+
+1. Default `cu` when nothing is set.
+2. `OPERATING_MODE` environment variable (chart value `dp.operatingMode`).
+3. The `hami.io/amd-operating-mode` node annotation, which overrides the env
+   per node (the NVIDIA `nvidia.com/mig.config` pattern).
+
+The annotation is read once at plugin start; changing it requires a plugin
+pod restart. The plugin logs the resolved mode as `operating mode: <mode>`.
+
+Partition counts are per GPU: `amd-smi set -g <id> --compute-partition qpx`
+flips a single GPU; mix spx and qpx GPUs on one node. See
+[MI355X Partitioning](mi355x-partitioning.md) for kernel caveats.
 ## dmem VRAM cap
 
 The memory hook limits VRAM inside the process, so it needs glibc 2.34 or newer and can be bypassed. The dmem cap is enforced by the kernel. It is on by default, and the plugin turns it off at startup, with one log line, unless the node has all of:

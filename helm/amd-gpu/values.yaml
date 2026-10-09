@@ -9,6 +9,16 @@ dp:
     name: ""
     annotations: {}
   # The plugin queries host GPU devices and passes them to workloads.
+  # "cu" registers whole GPUs as soft devices sliced by CU (default);
+  # "partition" registers hard compute partitions (id#mode, Count 1).
+  # A node annotation hami.io/amd-operating-mode: cu|partition overrides
+  # this per node.
+  operatingMode: "cu"
+  # Target compute partition type (spx/dpx/qpx/cpx) the plugin applies to
+  # every GPU via the AMD SMI API at startup, only when operatingMode is
+  # "partition". Empty leaves the hardware mode untouched. A node annotation
+  # hami.io/amd-compute-partition overrides this per node.
+  computePartition: ""
   securityContext:
     privileged: true
     capabilities:

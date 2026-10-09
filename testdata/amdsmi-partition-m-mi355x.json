@@ -1,0 +1,44 @@
+{
+    "memory_partition": [
+        {
+            "gpu_id": 0,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 1,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 2,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 3,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 4,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 5,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 6,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 7,
+            "memory_partition_caps": "NPS1,NPS2",
+            "current_memory_partition": "NPS1"
+        }
+    ]
+}
