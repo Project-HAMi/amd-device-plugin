@@ -306,6 +306,7 @@ func TestNumPartitionsForUnknownType(t *testing.T) {
 // A GPU whose KFD unique_id is 0 (APU without a Device Serial Number) is
 // still registered; Allocate names it by its container-local index.
 func TestRegistrationByROCrIndex(t *testing.T) {
+	stubCapacity(t)
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS(mi355xRoot)); err != nil {
 		t.Fatal(err)
