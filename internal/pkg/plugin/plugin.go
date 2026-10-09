@@ -91,11 +91,13 @@ type AMDGPUPlugin struct {
 	// discovery replaces the maps wholesale every 30s while Allocate,
 	// ListAndWatch and the dmem goroutines read them; published maps are
 	// never mutated, so readers may keep a reference after unlocking.
-	mu           sync.RWMutex
-	AMDGPUs      map[string]map[string]interface{}
-	Heartbeat    chan bool
-	signal       chan os.Signal
-	deviceCache  []*utils.DeviceInfo
+	mu          sync.RWMutex
+	AMDGPUs     map[string]map[string]interface{}
+	Heartbeat   chan bool
+	signal      chan os.Signal
+	deviceCache []*utils.DeviceInfo
+	// gpuStates is what the last registration saw of each GPU, for the node Events.
+	gpuStates    map[string]gpuState
 	Resource     string
 	devAllocator allocator.Policy
 	// sysfsRoot overrides the /sys mount root used by device discovery; tests
@@ -334,8 +336,10 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 	err = utils.PatchNodeAnnotations(node, annos)
 	if err != nil {
 		glog.Errorf("patch node error: %v", err)
+		return err
 	}
-	return err
+	p.reportHealthChanges(node, devices)
+	return nil
 }
 
 // sysRoot is the sysfs mount root device discovery reads.
@@ -1714,4 +1718,17 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)
+}
+
+// reportHealthChanges records a node Event for each GPU that turned unhealthy,
+// left the registration or came back since the last registration.
+func (p *AMDGPUPlugin) reportHealthChanges(node *corev1.Node, devices []*utils.DeviceInfo) {
+	p.mu.Lock()
+	events, next := healthTransitions(p.gpuStates, devices)
+	p.gpuStates = next
+	p.mu.Unlock()
+	for _, ev := range events {
+		glog.Warningf("%s: %s", ev.Reason, ev.Message)
+		emitNodeEvent(node, ev)
+	}
 }

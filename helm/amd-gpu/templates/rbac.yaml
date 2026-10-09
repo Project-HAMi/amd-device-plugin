@@ -11,6 +11,9 @@ rules:
     resources: ["nodes"]
     verbs: ["get", "patch"]
   - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+  - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "patch"{{ if .Values.monitor.enabled }}, "watch"{{ end }}]
 ---
