@@ -978,6 +978,10 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - Sliced Pods on alpine, ubuntu 18.04 (the loader refuses the hook, the Pod still starts), fedora and ubi9; whole-GPU Pods get no hook.
   - Two sliced containers in one Pod, a first container without a GPU, and a Pod without `gpumem` (it gets the whole memory).
   - The UBI plugin image and both labeller images run as the DaemonSets; `govulncheck` on the built binary is clean.
+- amd-hami-core re-run on the same host:
+  - The build and test commands of CONTRIBUTING.md ran as written (they need CMake); unit tests pass, the threaded ones also under ThreadSanitizer, and the glibc check reports 2.34.
+  - Three PyTorch Pods at once, each in its own 2 GiB, and a vLLM engine in a 25 percent slice with 16384 MiB visible.
+  - The hook reports the limit as the total memory under ROCm 6.2 and 7.2.
 - Second round on the same host:
   - The real Device Metrics Exporter (v1.4.1) runs on the VF. The plugin reads its health over the new gRPC client, a killed exporter leaves a stale socket and logs one warning, and one message when it is back. A removed socket (no exporter) is silent.
   - The upstream ROCm plugin as a second DaemonSet: kubelet refuses the second registration and the first plugin keeps serving.
