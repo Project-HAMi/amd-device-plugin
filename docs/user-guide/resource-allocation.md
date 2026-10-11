@@ -16,6 +16,8 @@ Each GPU is published `count` times; that count is how many pods may share it. B
 
 On RDNA (gfx10 and later) the CU mask is applied per WGP, a pair of CUs, and a mask that enables only one CU of a pair is ignored, which would run the pod on the whole GPU. So on RDNA the plugin allocates whole WGPs and rounds the request up. For example, 3 CUs become 4 (`0:0-3`), and the next slice starts at `0:4`. The plugin publishes the pair size as `custominfo.cuPerWGP`, so a HAMi scheduler that reads it accounts the same count. A single-WGP GPU, such as a small iGPU, can only be given out whole.
 
+A request without `amd.com/gpucores` gets all of the GPU's CUs, so the HAMi scheduler books the whole card's compute for it: a pod that sets only `amd.com/gpumem` takes the full CU range and the next such pod waits until it ends. Set `amd.com/gpucores` on every pod that should share a GPU.
+
 The mask is cooperative. The hook pins `HSA_CU_MASK` to the pod spec so the process cannot widen it, but a process that re-executes itself without the hook runs outside the slice.
 
 ## Memory

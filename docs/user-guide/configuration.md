@@ -11,6 +11,10 @@ The chart passes its values to the plugin as flags. The [chart README](https://g
 | `dp.logVerbosity` | `-v` | `2` | Log verbosity; 4 adds topology parsing, 5 adds annotation decoding. |
 | `dp.healthPulse` | `-pulse` | `10` (chart), `0` (flag) | Seconds between GPU health checks. `0` disables them. |
 | `dp.dmemBackend` | `-dmem_backend` | `true` | Also cap a slice's VRAM with the kernel dmem cgroup controller. |
+| `dp.reportNodeCapacity` | `-report_node_capacity` | `false` | Publish the healthy GPUs' memory (`amd.com/gpumem`, MiB) and compute units (`amd.com/gpucores`) as node capacity and allocatable. Turning it off removes the entries again. |
+| `dp.deviceMemoryScaling` | `-device_memory_scaling` | `1` | Multiplies the VRAM each GPU registers. Above `1`, pods get `HIP_OVERSUBSCRIBE=true` and `hipMalloc` is served from managed memory (needs XNACK on CDNA). |
+| `dp.excludeGPUs` | `-exclude_gpus` | empty | GPUs this node keeps for itself, as PCI BDFs (`0000:06:00.0`) or DRM cards (`card1`). With none left, the stale registration is cleared. |
+| `dp.hipLogLevel` | `LIBHIP_LOG_LEVEL` in pods | `0` | Log level of the memory hook in pods (1 error, 2 warn, 3 info, 4 debug); `0` keeps the library default. |
 | `dp.cdi.enabled`, `dp.cdi.specDir` | `-cdi_spec_dir` | off, `/var/run/cdi` | Inject GPUs through CDI. |
 | `dp.muslFailClosed.*` | `-musl_fail_closed`, `-ctr_path`, `-containerd_socket` | off | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34). |
 | | `-resource_naming_strategy` | `single` | `single` or `mixed`; see below. |
@@ -77,7 +81,7 @@ flips a single GPU; mix spx and qpx GPUs on one node. See
 
 The memory hook limits VRAM inside the process, so it needs glibc 2.34 or newer and can be bypassed. The dmem cap is enforced by the kernel. It is on by default, and the plugin turns it off at startup, with one log line, unless the node has all of:
 
-- cgroup v2 with the `dmem` controller (a recent kernel, listed in `/sys/fs/cgroup/cgroup.controllers`),
+- cgroup v2 with the `dmem` controller (kernel 6.14 or newer, listed in `/sys/fs/cgroup/cgroup.controllers`; kernel 6.8 has none and the plugin logs that the cap is skipped),
 - the systemd cgroup driver (`/sys/fs/cgroup/kubepods.slice` exists).
 
 For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgroup's `dmem.max`. The cap is written in the background shortly after the container starts, because the pod cgroup can take a few seconds to appear, and lowering `dmem.max` below current usage does not reclaim VRAM, so memory a workload allocates before the cap lands stays allocated. A whole-GPU pod gets no dmem cap. Do not put whole-GPU pods and slices on the same card if VRAM isolation matters.
@@ -85,6 +89,10 @@ For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgrou
 ## musl fail-closed
 
 `dp.muslFailClosed.enabled=true` makes the plugin inspect a sliced pod's image with `ctr` before it starts. If the image is musl-based, statically linked, or uses glibc older than 2.34, the memory hook would not load, so the pod is refused, unless dmem caps its VRAM anyway, in which case the plugin leaves the hook out. The containerd socket and data directory must be mounted with `mountPropagation: HostToContainer`. The chart's defaults are RKE2 paths; override `dp.muslFailClosed.ctrPath`, `containerdSocketDir`, `containerdSocket` and `containerdDataDir` for other distributions. This is experimental.
+
+The chart defaults for `dp.muslFailClosed.ctrPath` and `dp.muslFailClosed.containerdDataDir` are RKE2 paths. On k3s set `ctrPath` to `/var/lib/rancher/k3s/data/current/bin/ctr` and `containerdDataDir` to `/var/lib/rancher/k3s/agent/containerd`.
+
+The kubelet calls the plugin when it admits the pod, before it pulls the image. If the image is not on the node yet, the plugin starts pulling it in the background and refuses that first pod with `image is not on the node yet`; a retry (a Deployment recreates the pod) finds the image and starts.
 
 ## CDI
 
