@@ -833,6 +833,9 @@ func (p *AMDGPUPlugin) kubeletDevices(gpus map[string]map[string]interface{}, ho
 		glog.Infof("Watching GPU with bus ID: %s NUMA Node: %d", id, numa)
 		topology := &pluginapi.TopologyInfo{Nodes: []*pluginapi.NUMANode{{ID: numa}}}
 		partitionType := device["computePartitionType"].(string) + "_" + device["memoryPartitionType"].(string)
+		if fixed, _ := device["computePartitionFixed"].(bool); fixed {
+			partitionType = "" // same grouping as UniquePartitionConfigCount: not a partitioned GPU
+		}
 		for _, kid := range p.kubeletIDs(id, device) {
 			byType[partitionType] = append(byType[partitionType], &pluginapi.Device{ID: kid, Health: pluginapi.Healthy, Topology: topology})
 		}

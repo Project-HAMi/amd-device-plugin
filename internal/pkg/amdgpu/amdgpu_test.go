@@ -236,6 +236,17 @@ func TestParseDebugFSFirmwareInfoSMCProgram(t *testing.T) {
 	}
 }
 
+func TestUniquePartitionConfigCountSkipsFixedPartitions(t *testing.T) {
+	gpus := map[string]map[string]interface{}{
+		"vf":   {"computePartitionType": "spx", "memoryPartitionType": "nps1", "computePartitionFixed": true},
+		"real": {"computePartitionType": "qpx", "memoryPartitionType": "nps1"},
+	}
+	got := UniquePartitionConfigCount(gpus)
+	if len(got) != 1 || got["qpx_nps1"] != 1 {
+		t.Fatalf("counts = %v, want only qpx_nps1 (a VF cannot change its partition)", got)
+	}
+}
+
 func TestRenderDevIdsFromTopology(t *testing.T) {
 	renderDevIds := GetDevIdsFromTopology("../../../testdata/topology-parsing-mi308")
 

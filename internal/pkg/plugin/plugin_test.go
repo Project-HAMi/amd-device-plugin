@@ -1131,6 +1131,22 @@ func TestKubeletDevices(t *testing.T) {
 	}
 }
 
+// A GPU whose partition cannot change (an SR-IOV VF) groups with the plain
+// "gpu" resource, so the mixed naming strategy still lists its devices.
+func TestKubeletDevicesFixedPartition(t *testing.T) {
+	defer func(n int) { splitCount = n }(splitCount)
+	splitCount = 3
+	gpus := map[string]map[string]interface{}{
+		"a": {"numaNode": 0, "nodeId": 1, "computePartitionType": "spx", "memoryPartitionType": "nps1", "computePartitionFixed": true},
+	}
+	if !amdgpu.IsHomogeneous(gpus) || len(amdgpu.UniquePartitionConfigCount(gpus)) != 0 {
+		t.Fatal("a fixed-partition GPU must not count as a partition type")
+	}
+	if got := len((&AMDGPUPlugin{operatingMode: "cu"}).kubeletDevices(gpus, true, "")); got != 3 {
+		t.Errorf("VF lists %d devices under the gpu resource, want 3", got)
+	}
+}
+
 // fakeListAndWatch fails every send after the first okSends.
 type fakeListAndWatch struct {
 	grpc.ServerStream
