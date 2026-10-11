@@ -11,7 +11,7 @@ By participating you are expected to uphold it.
 
 ## Getting Started
 
-- Read the [README](README.md) for what the plugin does and how it is deployed.
+- Read [ONBOARDING.md](ONBOARDING.md) for what the plugin does and how it is deployed, and [STATUS.md](STATUS.md) for what is done and what is left.
 - The plugin is written in Go and uses cgo against libdrm, hwloc and AMD SMI.
   The supported build is the container image:
 
