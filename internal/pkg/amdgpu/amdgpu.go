@@ -384,6 +384,11 @@ func UniquePartitionConfigCount(devices map[string]map[string]interface{}) map[s
 		computePartitionType := device["computePartitionType"].(string)
 		memoryPartitionType := device["memoryPartitionType"].(string)
 
+		// A GPU whose partition cannot change (an SR-IOV VF) is not a
+		// partitioned GPU: it keeps the plain "gpu" resource name.
+		if fixed, _ := device["computePartitionFixed"].(bool); fixed {
+			continue
+		}
 		if computePartitionType != "" && memoryPartitionType != "" {
 			overallPartition := computePartitionType + "_" + memoryPartitionType
 			partitionCountMap[overallPartition]++
