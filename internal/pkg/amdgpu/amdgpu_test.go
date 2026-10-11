@@ -47,6 +47,9 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 
 	devices := GetAMDGPUs()
 
+	// a card without debugfs or without a usable DRM node is left out; the
+	// others on the node are still compared
+	compared := 0
 	for pci, dev := range devices {
 		card := fmt.Sprintf("card%d", dev["card"])
 		t.Logf("%s, %s", pci, card)
@@ -55,14 +58,17 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 		debugFSfeatVersion, debugFSfwVersion :=
 			parseDebugFSFirmwareInfo("/sys/kernel/debug/dri/" + card[4:] + "/amdgpu_firmware_info")
 		if len(debugFSfeatVersion) == 0 && len(debugFSfwVersion) == 0 {
-			t.Skipf("debugfs amdgpu_firmware_info unavailable for %s; skipping ioctl/debugfs consistency check", card)
+			t.Logf("debugfs amdgpu_firmware_info unavailable for %s; not compared", card)
+			continue
 		}
 		featVersion, fwVersion, err := GetFirmwareVersions(card)
 		if err != nil {
 			// Device exists but the DRM node is not usable (e.g. accel not
 			// working on handheld/APU kernels); nothing to compare.
-			t.Skipf("Skipping, DRM device %s not usable: %s", card, err.Error())
+			t.Logf("DRM device %s not usable: %s; not compared", card, err.Error())
+			continue
 		}
+		compared++
 
 		for k := range featVersion {
 			if featVersion[k] != debugFSfeatVersion[k] {
@@ -74,6 +80,9 @@ func TestFirmwareVersionConsistent(t *testing.T) {
 					k, fwVersion[k], debugFSfwVersion[k])
 			}
 		}
+	}
+	if compared == 0 {
+		t.Skip("no GPU with debugfs amdgpu_firmware_info and a usable DRM node; nothing to compare")
 	}
 }
 
