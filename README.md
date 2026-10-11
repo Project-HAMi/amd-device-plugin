@@ -77,7 +77,7 @@ The mode is chosen per node (`OPERATING_MODE`, or the
   `splitCount`) and the scheduler allocates CU slices via the amd-hami-core hook
   library (`HSA_CU_MASK`, `HIP_DEVICE_MEMORY_LIMIT`, `LD_AUDIT`).
 - `partition`: every compute partition is published as a whole device (Count 1,
-  ID suffixed `#<type>`) and allocated exclusively without a CU mask. XCP
+  `Mode` set to the partition type) and allocated exclusively without a CU mask. XCP
   partitions replace their parent GPU. With `COMPUTE_PARTITION` set, the plugin
   switches idle GPUs to that type through AMD SMI at startup. GPUs without a
   compute partition type (RDNA, SR-IOV VFs, embedded APUs) stay CU-maskable.
@@ -86,8 +86,7 @@ In the register annotation (`hami.io/node-amd-register`) soft entries have
 `Mode` empty and hard entries carry the compute partition type, the way HAMi
 branches on the NVIDIA `MigMode`.
 Allocated devices must be written back as the published `DeviceInfo.ID`
-(`amd-smi` UUID for whole GPUs, `GPU-<unique_id>` or `<rocr-uuid>#<mode>` for
-partitions); the plugin resolves all of them.
+(`amd-smi` UUID for whole GPUs, `GPU-<unique_id>` for partitions); the plugin resolves all of them.
 
 Whole-GPU devices whose KFD `unique_id` is 0 (embedded APUs without a PCI
 Device Serial Number) cannot be addressed by `GPU-<unique_id>`; ROCr addresses

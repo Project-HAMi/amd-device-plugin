@@ -26,9 +26,10 @@ The plugin registers AMD GPUs in one of two modes:
 - **cu mode (default)**: each whole GPU registers as a soft device (default
   split count, `Mode` empty) and is sliced by CU and memory. This is the
   historical HAMi behavior.
-- **partition mode**: devices register as hard compute partitions with a
-  `#<compute-type>` suffix (`GPU-xxx#spx`, `GPU-xxx#qpx`), `Mode` set to the
-  partition type and `Count: 1`. The kubelet-facing device list publishes
+- **partition mode**: devices register as hard compute partitions with
+  `Mode` set to the partition type (`spx`, `qpx`) and `Count: 1`. The device
+  ID is the same as in cu mode, so Pods allocated before a mode switch keep
+  their accounting. The kubelet-facing device list publishes
   only the hard entries (no soft splits). Whole GPUs with `amdgpu_xcp_*`
   partitions in KFD topology are replaced by them; any other partitioned GPU
   registers as one hard device. GPUs without a compute partition type stay

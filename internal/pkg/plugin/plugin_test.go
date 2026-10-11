@@ -369,7 +369,7 @@ func TestKubeletAndSchedulerViewsAgree(t *testing.T) {
 			if hard != wantHard {
 				t.Errorf("%s %s: hard=%v, want %v", mode, key, hard, wantHard)
 			}
-			if hard && (ids[0] != key+"#"+info.Mode || info.ID != "uuid#"+info.Mode) {
+			if hard && (ids[0] != key+"#"+info.Mode || info.ID != "uuid") {
 				t.Errorf("%s %s: hard ids kubelet=%v scheduler=%s", mode, key, ids, info.ID)
 			}
 		}
@@ -639,9 +639,10 @@ func TestRegistrationFromFixture(t *testing.T) {
 	if len(partitionDevices) != 8 {
 		t.Fatalf("partition mode: registered %d devices, want 8: %+v", len(partitionDevices), partitionDevices)
 	}
-	for _, d := range partitionDevices {
-		if d.Count != 1 || d.Mode != "spx" || !strings.HasSuffix(d.ID, "#spx") {
-			t.Fatalf("partition mode device = %+v, want Count=1, Mode=spx, #spx ID", d)
+	for i, d := range partitionDevices {
+		// Same ID as cu mode, so Pods allocated before a mode switch still match.
+		if d.Count != 1 || d.Mode != "spx" || d.ID != cuDevices[i].ID {
+			t.Fatalf("partition mode device = %+v, want Count=1, Mode=spx, ID %s", d, cuDevices[i].ID)
 		}
 	}
 

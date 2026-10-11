@@ -30,7 +30,7 @@ the full per-partition memory and core count:
 2. HAMi scheduler device config with the `amd` section (see
    device-config.yaml). On kernels whose KFD topology does not expose
    amdgpu_xcp_ nodes (e.g. 6.8.0-136), each GPU registers one hard
-   `#qpx` device instead of 4 XCP partitions; requesting a full
+   `qpx` device instead of 4 XCP partitions; requesting a full
    partition still pins one GPU and limits memory and CUs correctly.
 
 ## Deploy
