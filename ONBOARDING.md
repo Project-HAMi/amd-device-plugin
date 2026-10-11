@@ -979,6 +979,8 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - `healthy` restores it.
   - An outage is logged once.
 
+The full list of what is left, per pull request, is in STATUS.md under "Remaining work".
+
 Not checked:
 
 - Real XGMI hardware and several real GPUs. The multi-GPU scheduler logic of HAMi #3187 and #3191 (link-bind, topology-aware, numa-bind) was run with the real scheduler on this machine, but with extra GPUs and XGMI links written into the node registration, so only the scheduling decision is covered.

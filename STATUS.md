@@ -56,6 +56,45 @@ Short answer: **the real partition flip (DPX, QPX, CPX) is not verified on any h
 - A `hipMalloc` larger than the VRAM, served from host memory. It needs XNACK, which is off on the virtual function.
 - A real hardware fault reported by the AMD Device Metrics Exporter. A stand-in with the same gRPC protocol was used.
 
+## Remaining work
+
+To be closed one by one. Each item says what is missing and what it needs.
+
+### HAMi pull requests waiting for a review
+
+- #3212 (empty registered type), #3213 (AMD guide and examples), #3190, #3192, #3187, #3191. After each merge, re-run its checks on HAMi master.
+
+### Checks still open per HAMi pull request
+
+| PR | Missing check | Needs |
+|---|---|---|
+| #1975 | Whether the AMD support claim in the roadmap matches what is built. | Reading, no hardware. |
+| #2011 | Mutex with an idle and a used GPU side by side. | Two or more GPUs. |
+| #2621 | Other policy orders and three or more policies. | This machine. |
+| #3050 | Website links after the docs move. | Reading, no hardware. |
+| #3174 | Scheduler core count against a real RDNA CU mask. | An RDNA card. |
+| #3178 | Used bytes under a real allocation, power and temperature metrics. | This machine. |
+| #3179 | Helm output of the percentage resource name. | This machine. |
+| #3180 | ResourceQuota with init containers. | This machine. |
+| #3182 | Excluding only the bad card when one of several fails. | Two or more GPUs. |
+| #3186, #3187, #3191 | Real multi-NUMA and XGMI nodes (only a scheduler run with fake registration was done). | A multi-GPU Instinct node. |
+| #3190 | Effect of the priority under HAMi slices. | This machine. |
+| #3192 | A Pod created right after a cordon can still be placed. | A design decision. |
+| #3193 | The two skipped e2e specs and the workflow run. | This machine and CI. |
+| #3194 | Helm rendering and a missing RuntimeClass. | This machine. |
+
+### Plugin and core checks that need other hardware
+
+- Several GPUs with real XGMI links, mask order across GPUs, spread and binpack order.
+- A real compute-partition flip (bare metal, not a virtual function).
+- RDNA cards.
+- XNACK, for a `hipMalloc` served from host memory.
+- A real fault from the AMD Device Metrics Exporter.
+
+### Decisions
+
+- Cores default, OWNERS files, Dependabot dev tags, k3s paths for `muslFailClosed`, cordon cache lag (see "Open questions").
+
 ## amd-hami-core pull requests
 
 The memory library lives in [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core). What the library was measured to do on the real GPU:
