@@ -45,6 +45,31 @@ Mode resolution, lowest to highest precedence:
 The annotation is read once at plugin start; changing it requires a plugin
 pod restart. The plugin logs the resolved mode as `operating mode: <mode>`.
 
+### Changing the operating mode
+
+Drain the node first. Pods placed under one mode keep that mode's slot count
+and CU layout, so switching while GPU Pods run can leave the scheduler and the
+node disagreeing about what is free. If a GPU switches while Pods still use
+it, the plugin logs a warning and records a node Warning event,
+`AMDGPUModeChangedInUse`, naming the Pods. It does not stop them.
+
+1. Cordon and drain the node (`kubectl cordon <node>`,
+   `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`), or
+   delete every Pod that requests `amd.com/gpu`.
+2. Change the mode: set `hami.io/amd-operating-mode` on the node, or the
+   `dp.operatingMode` chart value.
+3. Restart the plugin Pod (`kubectl -n kube-system rollout restart
+   ds/amd-gpu-device-plugin-daemonset`).
+4. Check the log for `operating mode: <mode>`, and that
+   `amd.com/gpu` under `kubectl get node <node> -o jsonpath='{.status.allocatable}'`
+   matches the new mode (the split count in `cu`, one per GPU in `partition`).
+5. `kubectl uncordon <node>`.
+
+The same applies when upgrading from a build older than the device ID fix
+(#159) that was running in `partition` mode: Pods allocated by that build are
+recorded under a `<uuid>#<type>` ID the new build does not recognise. Drain
+the node before upgrading.
+
 Partition counts are per GPU: `amd-smi set -g <id> --compute-partition qpx`
 flips a single GPU; mix spx and qpx GPUs on one node. See
 [MI355X Partitioning](mi355x-partitioning.md) for kernel caveats.
