@@ -31,6 +31,7 @@ helm install amd-gpu ./helm/amd-gpu -n kube-system
 | dp.logVerbosity | int | `2` | glog verbosity; 4 adds topology parsing, 5 adds annotation decoding. |
 | dp.healthPulse | int | `10` | Seconds between per-GPU health checks; 0 disables them. |
 | dp.reportNodeCapacity | bool | `false` | Publish the healthy GPUs' memory (`amd.com/gpumem`, MiB) and compute units (`amd.com/gpucores`) as node capacity and allocatable. |
+| dp.deviceMemoryScaling | float | `1` | Multiplies the VRAM each GPU registers. Above `1` oversubscribes: pods get `HIP_OVERSUBSCRIBE=true` and `hipMalloc` is served from managed memory that spills to host RAM. Slower than VRAM; needs XNACK on CDNA. |
 | dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
 | dp.allocatorPolicy | string | `"besteffort"` | Multi-GPU preferred allocation: `besteffort` (same as `binpack`) or `spread`. |
 | dp.dmemBackend | bool | `true` | Also cap sliced VRAM with the kernel dmem cgroup; skipped on nodes without dmem or the systemd cgroup driver. |

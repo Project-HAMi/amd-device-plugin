@@ -43,6 +43,8 @@ dp:
   splitCount: 0
   # Publish the healthy GPUs' memory (amd.com/gpumem) and compute units (amd.com/gpucores) as node capacity.
   reportNodeCapacity: false
+  # Multiplies the VRAM each GPU registers. Above 1 oversubscribes through managed memory (host RAM spill).
+  deviceMemoryScaling: 1
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
   # Also cap sliced allocations through the kernel dmem cgroup controller, a

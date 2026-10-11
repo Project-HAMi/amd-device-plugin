@@ -114,6 +114,7 @@ func main() {
 	var pulse int
 	var resourceNamingStrategy, allocatorPolicy, cdiSpecDir string
 	var splitCount int
+	var deviceMemoryScaling float64
 	var dmemBackend, muslFailClosed, reportNodeCapacity bool
 	var ctrPath, containerdSocket string
 	flag.IntVar(&pulse, "pulse", 0, "time between health check polling in seconds.  Set to 0 to disable.")
@@ -124,6 +125,7 @@ func main() {
 	var hipLogLevel int
 	flag.IntVar(&hipLogLevel, "hip_log_level", 0, "LIBHIP_LOG_LEVEL for pods that load libamvgpu: 1 error, 2 warn, 3 info, 4 debug. 0 keeps the library default.")
 	flag.StringVar(&excludeGPUs, "exclude_gpus", "", "Comma-separated GPUs this node keeps for itself and does not register: PCI BDFs (0000:06:00.0) or DRM cards (card1).")
+	flag.Float64Var(&deviceMemoryScaling, "device_memory_scaling", 1, "Multiplies the VRAM each GPU registers with HAMi. Above 1 oversubscribes: pods get HIP_OVERSUBSCRIBE=true and hipMalloc is served from managed memory that can spill to host RAM (needs amd-hami-core with HIP_OVERSUBSCRIBE).")
 	flag.StringVar(&cdiSpecDir, "cdi_spec_dir", "", "Write a CDI spec for amd.com/gpu here (for example /var/run/cdi) and inject devices through CDI. Empty uses device nodes.")
 	flag.StringVar(&allocatorPolicy, "allocator_policy", "besteffort", "Preferred allocation policy: besteffort, binpack or spread")
 	flag.BoolVar(&dmemBackend, "dmem_backend", true, "Also cap sliced allocations through the kernel dmem cgroup controller. Used only when the node has the dmem controller and the systemd cgroup driver, and the plugin sees the host cgroup hierarchy; see Project-HAMi/amd-hami-core#10.")
@@ -154,17 +156,18 @@ func main() {
 	}
 
 	l := plugin.AMDGPULister{
-		ResUpdateChan:      make(chan dpm.PluginNameList),
-		Heartbeat:          make(chan bool),
-		AllocatorPolicy:    allocatorPolicy,
-		SplitCount:         splitCount,
-		ReportNodeCapacity: reportNodeCapacity,
-		CDISpecDir:         cdiSpecDir,
-		DmemBackend:        dmemBackend,
-		HipLogLevel:        hipLogLevel,
-		MuslFailClosed:     muslFailClosed,
-		CtrPath:            ctrPath,
-		ContainerdSocket:   containerdSocket,
+		ResUpdateChan:       make(chan dpm.PluginNameList),
+		Heartbeat:           make(chan bool),
+		AllocatorPolicy:     allocatorPolicy,
+		SplitCount:          splitCount,
+		ReportNodeCapacity:  reportNodeCapacity,
+		DeviceMemoryScaling: deviceMemoryScaling,
+		CDISpecDir:          cdiSpecDir,
+		DmemBackend:         dmemBackend,
+		HipLogLevel:         hipLogLevel,
+		MuslFailClosed:      muslFailClosed,
+		CtrPath:             ctrPath,
+		ContainerdSocket:    containerdSocket,
 	}
 	manager := dpm.NewManager(&l)
 
