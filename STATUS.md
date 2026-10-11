@@ -4,16 +4,17 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 ## In one minute
 
-- We re-checked **every merged pull request** of this repository (131) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD-related pull requests in [HAMi](https://github.com/Project-HAMi/HAMi) (20). This file and `ONBOARDING.md` cover all three; they live only here.
-- Each one has one line below: the result and the one thing still not verified.
-- We found **twelve real problems** and fixed them (table below). The partition work (#17) was tested again from the start: it also led to #169 (virtual functions stay CU-sliced in partition mode), #171 and #172.
-- What is left: five open design questions, and the checks that need hardware we did not have.
+- We re-ran **every merged pull request** of this repository (131) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (17 closed, 6 open). This file and `ONBOARDING.md` cover all three; they live only here.
+- Each pull request has one line below: the result and what is still not verified. "Nothing" means it ran fully on the real GPU.
+- We found **twelve real problems** and fixed them (table below). The partition work (#17) was tested again from the start and led to #169, #171 and #172.
+- What is left: five open questions and the checks that need hardware this machine did not have (end of this file).
 
 ## How we tested
 
-- A real AMD Instinct MI325X (one GPU, shown to the machine as a virtual function) with k3s, the HAMi scheduler and this plugin built from `main`.
-- First kernel 6.8, then kernel 7.0 (the kernel dmem memory cap needs 6.14 or newer).
-- Tests that need several GPUs, a real compute-partition flip, RDNA cards or managed-memory spill could not run on this machine (see "What we could not check").
+- A real AMD Instinct MI325X (one GPU, shown to the machine as a virtual function) with k3s, the HAMi scheduler and this plugin built from `main`, on kernel 6.8 and then 7.0 (the dmem memory cap needs 6.14 or newer).
+- Also run there: the real AMD Device Metrics Exporter, the upstream ROCm plugin as a second DaemonSet, the published 0.0.2 and 0.0.3 images, UBI, alpine, fedora and old glibc images, ROCm 6.2 and 7.2, and the example Pods (PyTorch, TensorFlow, JAX, vLLM).
+- Several GPUs were simulated for the HAMi scheduler only, with extra GPUs written into the node registration.
+
 
 ## Problems found and fixed
 
@@ -36,81 +37,25 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 ## Open questions
 
-- **Cores default.** A request without `amd.com/gpucores` gets all CUs of the GPU. A Pod that sets only `amd.com/gpumem` therefore blocks the whole GPU's compute, and only one runs at a time. Decide if memory-only Pods should share compute (HAMi pull request #3192 adds settings for this).
-- **OWNERS.** Neither repo has an `OWNERS` file, so the approval bot reports "not approved". Decide who the approvers are.
+- **Cores default.** A request without `amd.com/gpucores` gets all CUs, so a Pod that sets only `amd.com/gpumem` blocks the GPU's compute (HAMi #3192 adds settings for this).
+- **OWNERS.** Neither repo has an `OWNERS` file, so the approval bot reports "not approved".
 - **Dependabot.** It can move a Go module to a development tag again.
-- **k3s paths.** The `muslFailClosed` chart defaults are for RKE2. On k3s two values must be set (see the configuration docs).
-- **Cordon.** `hami.io/device-cordon` works after the scheduler has seen the annotation. A Pod created within about a second can still be placed.
+- **k3s paths.** The `muslFailClosed` chart defaults are RKE2 paths; on k3s two values must be set.
+- **Cordon.** `hami.io/device-cordon` takes effect once the scheduler has seen the annotation; a Pod created within about a second can still be placed.
 
-## Compute partitions: what is verified and what is not
+## What is not verified, and why
 
-Short answer: **the real partition flip (DPX, QPX, CPX) is not verified on any hardware yet.** It needs a bare metal machine with an Instinct GPU (MI300, MI325 or MI355).
+- **Several GPUs, XGMI, NUMA, policy order:** #20, #59, #61, #85, #91, #92, #95, #96, #99, #100, #102, #103, #108, #120, #153, #156, and the HAMi PRs #2011, #3182, #3186, #3187, #3191. Needs a multi-GPU Instinct node.
+- **Compute partitions (DPX, QPX, CPX):** #17, #123, #145, #159, #160. The VF keeps working in both operating modes and a flip is skipped with a log line, but the flip itself, XCP registration and Pods on partitions need a bare metal MI300, MI325 or MI355 (checklist F5 of #17, section 11.0 of ONBOARDING.md).
+- **RDNA cards:** #57, #97, #105, #107, #109, #151, and HAMi #3174.
+- **A real hardware fault** from the Device Metrics Exporter: #123, #152, #155.
+- **XNACK, a `hipMalloc` larger than VRAM served from host memory:** #158 (XNACK is off on the VF).
+- **Examples:** the two-GPU JAX pods (#139) and the vLLM model download (#141, no IPv6 route to Hugging Face).
+- **Release, arm64 and other Kubernetes versions:** #7, #11, #12, #13, #60, #128.
+- **Hosted services:** Read the Docs has no project (#50, #147).
+- **Waiting for a review:** HAMi #3212, #3213, #3190, #3192, #3187, #3191. After each merge, re-run its checks on HAMi master.
+- **HAMi checks still open on this machine:** #2621 (more policy orders), #3178 (used bytes under load), #3179 (Helm output), #3180 (init containers in a quota), #3190 (priority under slices), #3193 (two skipped e2e specs), #3194 (Helm rendering, missing RuntimeClass).
 
-- A cloud virtual machine with an SR-IOV virtual function (VF) cannot use it. The VF reports its partition (SPX) but cannot change it: the `available_compute_partition` file is missing and AMD SMI refuses a change (status 2). It also did not work on the Radeon RX 9060 XT used earlier.
-- What was verified on the VF: the VF keeps working in both operating modes. It stays one CU-sliced GPU with the normal split count, a request to flip is skipped with a clear log line, and switching the mode while Pods run breaks nothing (no errors, no overlapping CUs). Fixed on the way: #169, #171 and #172.
-- What is still open (checklist item F5 of the #17 re-test): flipping to DPX, QPX or CPX, registering the XCP partitions, and placing Pods on partitions of a real partitioned GPU. The code and its unit tests pass, and fixtures captured from an MI355X cover the registration, but nothing ran on a partitioned GPU.
-- What is needed: one bare metal MI300, MI325 or MI355 node, then run the checks in section 11.0 of `ONBOARDING.md` with `OPERATING_MODE=partition` and `COMPUTE_PARTITION` set.
-
-## What we could not check
-
-- Several GPUs: XGMI peers with real links, spread and binpack order, mask order across GPUs, topology-aware scheduling, `amd.com/link-bind`.
-- A real compute-partition flip. On a virtual function AMD SMI refuses it.
-- RDNA cards: whole-WGP slices, the default of 2 sharers on gfx12, the RDNA4 family.
-- A `hipMalloc` larger than the VRAM, served from host memory. It needs XNACK, which is off on the virtual function.
-- A real hardware fault reported by the AMD Device Metrics Exporter. A stand-in with the same gRPC protocol was used.
-
-## Remaining work
-
-To be closed one by one. Each item says what is missing and what it needs.
-
-### HAMi pull requests waiting for a review
-
-- #3212 (empty registered type), #3213 (AMD guide and examples), #3190, #3192, #3187, #3191. After each merge, re-run its checks on HAMi master.
-
-### Checks still open per HAMi pull request
-
-| PR | Missing check | Needs |
-|---|---|---|
-| #1975 | Whether the AMD support claim in the roadmap matches what is built. | Reading, no hardware. |
-| #2011 | Mutex with an idle and a used GPU side by side. | Two or more GPUs. |
-| #2621 | Other policy orders and three or more policies. | This machine. |
-| #3050 | Website links after the docs move. | Reading, no hardware. |
-| #3174 | Scheduler core count against a real RDNA CU mask. | An RDNA card. |
-| #3178 | Used bytes under a real allocation, power and temperature metrics. | This machine. |
-| #3179 | Helm output of the percentage resource name. | This machine. |
-| #3180 | ResourceQuota with init containers. | This machine. |
-| #3182 | Excluding only the bad card when one of several fails. | Two or more GPUs. |
-| #3186, #3187, #3191 | Real multi-NUMA and XGMI nodes (only a scheduler run with fake registration was done). | A multi-GPU Instinct node. |
-| #3190 | Effect of the priority under HAMi slices. | This machine. |
-| #3192 | A Pod created right after a cordon can still be placed. | A design decision. |
-| #3193 | The two skipped e2e specs and the workflow run. | This machine and CI. |
-| #3194 | Helm rendering and a missing RuntimeClass. | This machine. |
-
-### Plugin and core checks that need other hardware
-
-- Several GPUs with real XGMI links, mask order across GPUs, spread and binpack order.
-- A real compute-partition flip (bare metal, not a virtual function).
-- RDNA cards.
-- XNACK, for a `hipMalloc` served from host memory.
-- A real fault from the AMD Device Metrics Exporter.
-
-### Pull requests of this repository, per reason
-
-The "Still open" column of the table above now holds only what could not be run on this machine:
-
-- Several GPUs, XGMI, NUMA across GPUs, policy order: #20, #59, #61, #85, #91, #92, #95, #96, #99, #100, #102, #103, #108, #120, #153, #156.
-- RDNA cards: #57, #97, #105, #107, #109, #151.
-- Bare metal Instinct with real compute partitions: #17, #123, #145, #159, #160.
-- Release publishing, arm64 and other Kubernetes versions: #7, #11, #12, #13, #60, #128.
-- A real hardware fault reported by the Device Metrics Exporter: #123, #152, #155.
-- XNACK spill: #158.
-- Examples that need two GPUs (#139) or a node that reaches Hugging Face (#141).
-- Hosted services: Read the Docs (#50, #147).
-- Dependabot can propose a development tag again (#136).
-
-### Decisions
-
-- Cores default, OWNERS files, Dependabot dev tags, k3s paths for `muslFailClosed`, cordon cache lag (see "Open questions").
 
 ## amd-hami-core pull requests
 
@@ -171,6 +116,8 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #3192 | feat(amd): default the GPU count, memory and cores, and honor device cordon | Open. Unit tests pass. On a real node defaults and cordon worked, four Pods ran with disjoint masks. Two review findings were fixed: a memory request without a limit is read, and an explicit 0 memory is kept as a whole GPU. | A Pod created right after the cordon can still be placed. |
 | #3193 | test(e2e): add an AMD GPU end-to-end suite | Merged. On a real node 9 specs passed, 0 failed, 2 skipped (re-run on current master). | The two skipped specs and the workflow run were not checked. |
 | #3194 | feat(amd): set a configurable runtimeClassName on AMD GPU Pods | Merged. Real Pods: a GPU Pod gets the class, an explicit class is kept, a Pod without a GPU is left alone. | Helm rendering and a missing RuntimeClass are untested. |
+| #3212 | fix(amd): read a registration without a type as the AMD type | Open. Found by re-running #2815: a GPU registered without a type never matched, so its Pods stayed Pending. The new test fails without the change; with it a real Pod is scheduled and runs. | Waits for a review. |
+| #3213 | docs(amd): add the AMD GPU guide and examples | Open. Replaces #3188. All 8 examples were applied on the real GPU and behave as their comments say. | Waits for a review. |
 
 ## Every pull request of this repository
 
