@@ -173,7 +173,7 @@ func TestXCPRegistrationReplacesParent(t *testing.T) {
 		}
 	}
 	if xcp == nil || !strings.HasPrefix(xcp.ID, "GPU-") || xcp.Mode != "spx" || xcp.Count != 1 {
-		t.Fatalf("XCP entry = %+v, want hard GPU-<id>#spx with Count 1", xcp)
+		t.Fatalf("XCP entry = %+v, want hard GPU-<id> with Mode spx and Count 1", xcp)
 	}
 	if xcp.CustomInfo["partitionProfile"] != "spx_nps1" {
 		t.Errorf("XCP partitionProfile = %v, want spx_nps1", xcp.CustomInfo["partitionProfile"])
@@ -289,7 +289,7 @@ func TestStartOnHardware(t *testing.T) {
 		}
 		for _, d := range registered {
 			hard := d.Mode != ""
-			if hard != (wantMode == "partition" && d.CustomInfo["partitionProfiles"] != nil) || (hard && (d.Count != 1 || !strings.HasSuffix(d.ID, "#"+d.Mode))) ||
+			if hard != (wantMode == "partition" && d.CustomInfo["partitionProfiles"] != nil) || (hard && (d.Count != 1 || strings.Contains(d.ID, "#"))) ||
 				(!hard && d.Count != int32(splitCount)) || strings.Count(d.CustomInfo["pciBDF"].(string), ":") != 2 {
 				t.Errorf("mode %s registered %+v, want soft GPUs (hard partitions in partition mode) with a standard pciBDF", wantMode, d)
 			}

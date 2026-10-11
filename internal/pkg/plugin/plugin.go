@@ -481,7 +481,9 @@ func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{})
 }
 
 // registerHardEntry turns a device into its whole-partition form in
-// partition mode; GPUs without a compute partition type stay soft.
+// partition mode; GPUs without a compute partition type stay soft. The ID
+// stays the same as in cu mode: Pods allocated before an operating-mode
+// switch reference it, and the scheduler and CU rebuild must still find them.
 func (p *AMDGPUPlugin) registerHardEntry(deviceData map[string]interface{}, info *utils.DeviceInfo) bool {
 	if p.operatingMode != "partition" {
 		return false
@@ -490,7 +492,6 @@ func (p *AMDGPUPlugin) registerHardEntry(deviceData map[string]interface{}, info
 	if !ok || computePartitionType == "" {
 		return false
 	}
-	info.ID = info.ID + "#" + computePartitionType
 	info.Mode = computePartitionType
 	info.Count = 1
 	return true
