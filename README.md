@@ -215,10 +215,11 @@ See the [chart README](helm/amd-gpu/README.md) for all values and the [configura
 | GPU | Architecture | Validated |
 |---|---|---|
 | AMD Instinct MI300X VF | CDNA3 | Registration (UUID, product, VRAM, CUs) |
+| AMD Instinct MI325X VF | CDNA3, gfx942 | Registration, CU slices (disjoint masks for concurrent pods), memory hook and mask pinning, dmem caps (kernel 7.0), CDI, node events, monitor and labeller, the operating modes (a compute-partition flip fails on a VF and the GPU stays registered), exporter health paths |
 | Radeon RX 9060 XT | RDNA4, gfx1200 | Registration, health, CU and memory slices, CU-mask pinning, plugin restart |
 | Radeon RX 9070 XT + Radeon iGPU | RDNA4 gfx1201 + RDNA2 gfx1036 | Multi-GPU ordering, per-GPU memory and dmem caps, WGP slices, CDI, GPU removal |
 
-RDNA3 (gfx11) and CDNA compute or memory slicing have not been validated yet.
+RDNA3 (gfx11) has not been validated yet. Several-GPU behavior on Instinct (XGMI peers, spread and binpack ordering), a real compute-partition flip and managed-memory oversubscription past the VRAM size (it needs XNACK) have not been checked on hardware either; see [Hardware verification](docs/contributing/development.md#hardware-verification).
 
 ## Development
 

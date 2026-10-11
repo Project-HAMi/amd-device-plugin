@@ -50,3 +50,15 @@ Make sure to name your branch descriptively to reflect the changes you are makin
 ## Code Review Process
 
 All contributions will undergo a code review process. Reviewers will assess the quality of the code, adherence to coding standards, and the completeness of tests. Be open to feedback and ready to make adjustments as needed.
+
+## Hardware verification
+
+Changes to discovery, AMD SMI, ROCr visibility, CU masks, the memory hook or the dmem cap need a run on a real GPU node. On an Instinct MI325X (one GPU, as a virtual function) with k3s and the HAMi scheduler these checks are the useful ones:
+
+- `go vet ./...` and `go test -race ./...` in the builder image with `--privileged --device /dev/kfd --device /dev/dri -v /sys:/sys -v /sys/kernel/debug:/sys/kernel/debug`, so the GPU-gated tests run instead of skipping.
+- A whole-GPU pod and a sliced pod (`amd.com/gpucores`, `amd.com/gpumem`): check `HSA_CU_MASK`, `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, `LD_AUDIT` and `HIP_DEVICE_MEMORY_LIMIT_0`, then a `hipMalloc` over the limit.
+- Several sliced pods at once: the masks must not overlap and the node lock annotation `hami.io/mutex.lock` must be empty afterwards.
+- The dmem cap needs kernel 6.14 or newer: `dmem.capacity` must list `drm/<bdf>/vram` and a slice's pod cgroup must show it in `dmem.max`.
+- `govulncheck ./...` should report no vulnerabilities.
+
+Not covered by that node: several GPUs (XGMI peers, spread and binpack ordering, `amd.com/link-bind`), a real compute-partition flip (AMD SMI returns status 2 on a VF), RDNA behavior, and a `hipMalloc` larger than the VRAM (it needs XNACK).

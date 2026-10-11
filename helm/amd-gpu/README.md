@@ -24,22 +24,24 @@ helm install amd-gpu ./helm/amd-gpu -n kube-system
 | dp.serviceAccount.create | bool | `true` | Create the service account and RBAC needed to register devices and persist allocations. |
 | dp.serviceAccount.name | string | `""` | Override the service account name. With `create: false`, RBAC is bound to this existing account, or skipped when it is empty. |
 | dp.serviceAccount.annotations | object | `{}` | Service account annotations. |
+| dp.operatingMode | string | `"cu"` | `cu` registers whole GPUs sliced by CU; `partition` registers each compute partition of an Instinct GPU as a hard device. The `hami.io/amd-operating-mode` node annotation overrides it. |
+| dp.computePartition | string | `""` | In partition mode, the compute partition (`spx`, `dpx`, `qpx`, `cpx`) idle GPUs are switched to at startup. The `hami.io/amd-compute-partition` node annotation overrides it. |
 | dp.securityContext.privileged | bool | `true` | Let the plugin query AMD GPU device nodes on the host. |
 | dp.securityContext.capabilities.drop | list | `["ALL"]` | Capabilities dropped from the plugin container. |
 | dp.hostHookPath | string | `"/usr/local"` | Host path prefix; the hook is installed under `<hostHookPath>/vgpu`. |
 | dp.hookInstaller.enabled | bool | `true` | Install the image-bundled `libamvgpu.so` on the node with a postStart hook. |
 | dp.logVerbosity | int | `2` | glog verbosity; 4 adds topology parsing, 5 adds annotation decoding. |
 | dp.healthPulse | int | `10` | Seconds between per-GPU health checks; 0 disables them. |
-| dp.reportNodeCapacity | bool | `false` | Publish the healthy GPUs' memory (`amd.com/gpumem`, MiB) and compute units (`amd.com/gpucores`) as node capacity and allocatable. |
+| dp.reportNodeCapacity | bool | `false` | Publish the healthy GPUs' memory (`amd.com/gpumem`, MiB) and compute units (`amd.com/gpucores`) as node capacity and allocatable. Turning it off removes the entries again. |
 | dp.deviceMemoryScaling | float | `1` | Multiplies the VRAM each GPU registers. Above `1` oversubscribes: pods get `HIP_OVERSUBSCRIBE=true` and `hipMalloc` is served from managed memory that spills to host RAM. Slower than VRAM; needs XNACK on CDNA. |
 | dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
 | dp.allocatorPolicy | string | `"besteffort"` | Multi-GPU preferred allocation: `besteffort` (same as `binpack`) or `spread`. |
 | dp.dmemBackend | bool | `true` | Also cap sliced VRAM with the kernel dmem cgroup; skipped on nodes without dmem or the systemd cgroup driver. |
 | dp.muslFailClosed.enabled | bool | `false` | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34), unless dmem caps it. Experimental. |
-| dp.muslFailClosed.ctrPath | string | `"/var/lib/rancher/rke2/bin/ctr"` | Host path of `ctr`. |
+| dp.muslFailClosed.ctrPath | string | `"/var/lib/rancher/rke2/bin/ctr"` | Host path of `ctr` (RKE2 default; on k3s `/var/lib/rancher/k3s/data/current/bin/ctr`). |
 | dp.muslFailClosed.containerdSocketDir | string | `"/run/k3s/containerd"` | Host directory of the containerd socket. |
 | dp.muslFailClosed.containerdSocket | string | `"/run/k3s/containerd/containerd.sock"` | containerd socket path. |
-| dp.muslFailClosed.containerdDataDir | string | `"/var/lib/rancher/rke2/agent/containerd"` | containerd data directory. |
+| dp.muslFailClosed.containerdDataDir | string | `"/var/lib/rancher/rke2/agent/containerd"` | containerd data directory (RKE2 default; on k3s `/var/lib/rancher/k3s/agent/containerd`). |
 | dp.excludeGPUs | list | `[]` | GPUs this node keeps for itself and does not register, as PCI BDFs (`0000:06:00.0`) or DRM cards (`card1`). |
 | dp.hipLogLevel | int | `0` | `LIBHIP_LOG_LEVEL` of the pods that load `libamvgpu` (1 error, 2 warn, 3 info, 4 debug); 0 keeps the library default. |
 | dp.cdi.enabled | bool | `false` | Inject GPUs through CDI instead of device nodes. |
