@@ -6,7 +6,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 - We re-checked **every merged pull request** of this repository (131) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD-related pull requests in [HAMi](https://github.com/Project-HAMi/HAMi) (20). This file and `ONBOARDING.md` cover all three; they live only here.
 - Each one has one line below: the result and the one thing still not verified.
-- We found **eight real bugs** and fixed them (table below). The partition work (#17) was tested again from the start: it also led to #169 (virtual functions stay CU-sliced in partition mode), #171 and #172.
+- We found **nine real bugs** and fixed them (table below). The partition work (#17) was tested again from the start: it also led to #169 (virtual functions stay CU-sliced in partition mode), #171 and #172.
 - What is left: five open design questions, and the checks that need hardware we did not have.
 
 ## How we tested
@@ -28,6 +28,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 | No issue or pull request templates in amd-hami-core; some `/kind` labels missing in both repos. | core #2, #15 | core #26 and new labels |
 | With `-resource_naming_strategy=mixed` a virtual function was named `amd.com/spx_nps1` and `amd.com/gpu` went to zero. | #17 | #171 |
 | The registration said 0 XCC per partition for DPX, QPX and CPX, because AMD SMI lists XCC for the current profile only. | #17 | #172 |
+| On HAMi master a GPU registered with an empty type was never picked: the Pod stayed Pending with NodeInsufficientDevice. | HAMi #2815 | HAMi #3212 (open, waits for review) |
 | Docs and README were behind the code. | all | #168 and core #27 |
 
 ## Open questions
@@ -94,25 +95,25 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | PR | Change | Result | Still open |
 |---|---|---|---|
 | #1975 | docs: fix typo and mark AMD and MIG as supported in roadmap | Merged. Docs only. Not run on a GPU. | Whether the AMD support claim matches what is built. |
-| #2011 | feat: new mutex GPU scheduling policy | Merged. Unit test shows a used device is rejected under mutex. Not run on a GPU. | No AMD test shows an idle device still fits under mutex. |
-| #2098 | chore: remove dead script, boilerplate file, and unused ParseConfig stubs | Merged. Only removals, no new tests. Not run on a GPU. | Nothing |
-| #2621 | feat: support comma-separated gpu-scheduler-policy combinations | Merged. Policy helper has a unit test. Not run on a GPU here. | No AMD test for the combined policy path. |
-| #2815 | fix(amd): keep allocation annotations decodable for empty registered types | Merged. Two unit tests cover the empty type fallback and the round trip. Not run on a GPU. | No scheduler level test of device usage for an empty type. |
-| #3050 | chore: remove the docs now hosted on the website | Merged. Docs only, author says all docs moved to the website. Not run on a GPU. | Website links and migration were not checked. |
-| #3174 | fix(amd): round core requests up to whole WGPs | Merged. Table test covers six rounding cases. Not run on a GPU. | Scheduler count was not compared with the real CU mask. |
+| #2011 | feat: new mutex GPU scheduling policy | Merged. Unit test and a real run: a Pod with `mutex` stays Pending (ExclusiveDeviceAllocateConflict) while another Pod holds the GPU, and a normal Pod can still share a GPU a mutex Pod holds. | Several GPUs (one idle, one used) were not available. |
+| #2098 | chore: remove dead script, boilerplate file, and unused ParseConfig stubs | Merged. Only removals. Build and tests pass on the GPU host. | Nothing |
+| #2621 | feat: support comma-separated gpu-scheduler-policy combinations | Merged. Real run: `binpack,mutex` and `mutex,spread` apply mutex (Pod refused), `spread,binpack` does not. | Other orders and three or more policies were not run. |
+| #2815 | fix(amd): keep allocation annotations decodable for empty registered types | Merged. Unit tests and a real scheduler run with an empty registered type. That run found a bug: the Pod stayed Pending because the type match never succeeds for an empty type. Fixed in #3212 (open): the Pod is then scheduled and runs. | #3212 still needs a review before it can merge. |
+| #3050 | chore: remove the docs now hosted on the website | Merged. Docs only, nothing to run. | Website links and migration were not checked. |
+| #3174 | fix(amd): round core requests up to whole WGPs | Merged. Real scheduler: with cuPerWGP 1 a 1 percent request of 304 CUs books 3 CUs, with cuPerWGP 2 it books 4. | Scheduler count was not compared with a real RDNA CU mask. |
 | #3178 | feat(monitor): report AMD GPU memory per container and host metrics | Closed, not merged. Work moved to the device plugin repo. Nothing to test. | Nothing |
-| #3179 | feat(amd): support gpumem-percentage memory requests | Merged. Unit tests cover range checks and memory conversion. Not run on a GPU here. | Helm output and runtime enforcement of the percentage are untested. |
-| #3180 | feat(amd): check the namespace ResourceQuota in Fit | Merged. Six quota cases pass in a unit test. Not run on a GPU here. | No test with init containers or a real ResourceQuota object. |
+| #3179 | feat(amd): support gpumem-percentage memory requests | Merged. Real Pods: 25 percent of the registered memory gave the right limit variable and allocation, a percentage-only Pod got `amd.com/gpu 1`, an explicit gpumem wins, and 101, -1 and 1.5 are rejected. | Helm output of the percentage name was not checked. |
+| #3180 | feat(amd): check the namespace ResourceQuota in Fit | Merged. Real namespace with a ResourceQuota: Pods within the quota run, the next one is refused or stays Pending with ResourceQuotaNotFit, another namespace is not affected. | No test with init containers. |
 | #3181 | feat(amd): turn amd.com/priority into AMD_TASK_PRIORITY | Closed, not merged. Replaced by #3190. Nothing to test here. | Nothing |
-| #3182 | fix(amd): judge node health by allocatable GPUs | Merged. Unit tests pass. On a real GPU node a Pod stayed Pending, then ran after the plugin returned. | Partial failure exclusion of the bad card is untested. |
-| #3186 | feat(amd): support amd.com/numa-bind for multi-GPU requests | Merged. Unit tests cover NUMA grouping. Not run on a GPU here. | Never run on a real multi-GPU, multi-NUMA node. |
+| #3182 | fix(amd): judge node health by allocatable GPUs | Merged. Unit tests pass. Real node with allocatable GPUs at 0: a new Pod stays Pending and runs after recovery. | Partial failure exclusion of the bad card is untested. |
+| #3186 | feat(amd): support amd.com/numa-bind for multi-GPU requests | Merged. Unit tests pass. Real Pod with `amd.com/numa-bind` schedules and runs on the one-GPU node. | Never run on a multi-GPU, multi-NUMA node. |
 | #3187 | feat(amd): add amd.com/link-bind for XGMI-linked multi-GPU requests | Open (draft). Unit tests use synthetic XGMI data. Not run on a GPU. Conflicts with master. | Never run on a real multi-GPU node with XGMI. |
 | #3188 | docs(amd): add the AMD GPU guide and examples | Closed, not merged. Closed without a stated reason. Nothing to test. | Nothing |
 | #3190 | feat(amd): add amd.com/priority as AMD_TASK_PRIORITY | Open. Unit test passes. On a real node the Pod got the variable and a bad value was rejected. | End to end priority effect under HAMi slices is not confirmed. |
 | #3191 | feat(amd): make the topology-aware policy choose the most XGMI-linked GPUs | Open (draft). Unit tests use synthetic data. Not run on a GPU. Conflicts with master. | Never run on a real multi-GPU Instinct node. |
 | #3192 | feat(amd): default the GPU count, memory and cores, and honor device cordon | Open. Unit tests pass. On a real node defaults and cordon worked, four Pods ran with disjoint masks. | A Pod created right after the cordon can still be placed. |
-| #3193 | test(e2e): add an AMD GPU end-to-end suite | Merged. On a real node 9 specs passed, 0 failed, 2 skipped. | The two skipped specs and the workflow run were not checked. |
-| #3194 | feat(amd): set a configurable runtimeClassName on AMD GPU Pods | Merged. Unit tests pass. On a real node the class was set, a user class was kept, a non GPU Pod was left alone. | Helm rendering and a missing RuntimeClass are untested. |
+| #3193 | test(e2e): add an AMD GPU end-to-end suite | Merged. On a real node 9 specs passed, 0 failed, 2 skipped (re-run on current master). | The two skipped specs and the workflow run were not checked. |
+| #3194 | feat(amd): set a configurable runtimeClassName on AMD GPU Pods | Merged. Real Pods: a GPU Pod gets the class, an explicit class is kept, a Pod without a GPU is left alone. | Helm rendering and a missing RuntimeClass are untested. |
 
 ## Every pull request of this repository
 

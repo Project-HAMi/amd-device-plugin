@@ -970,6 +970,10 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - The registered id is the same in `cu` and `partition` mode.
   - A mode change under a running Pod emits `AMDGPUModeChangedInUse`.
   - On the VF a compute-partition request is not attempted: the log says the GPU cannot change its compute partition (it has no `available_compute_partition` file) and it stays registered as a soft device with the normal split count. This holds in both operating modes, so switching the mode with Pods running did not break allocation (the id stays the same, masks stayed disjoint, and the scheduler counted the running Pod).
+- HAMi side (merged pull requests re-run against HAMi master on the same host):
+  - The AMD end-to-end suite passes (9 specs, 2 skipped).
+  - The `gpumem-percentage`, ResourceQuota, `numa-bind`, `runtimeClassName`, mutex and comma-separated policy features all behave as their pull requests describe.
+  - One bug: a GPU registered with an empty type is never picked, so the fallback of HAMi #2815 was unreachable. Fixed in HAMi #3212 (open, waits for review).
 - Exporter health (tested with a stand-in that speaks the same gRPC protocol):
   - `unhealthy` drops allocatable to 0 and emits `AMDGPUUnhealthy`.
   - `healthy` restores it.
@@ -978,6 +982,7 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
 Not checked:
 
 - Several GPUs and real XGMI links.
+- Multi-NUMA `numa-bind` and the open HAMi pull requests that need several GPUs (#3187, #3191).
 - A real partition flip.
 - RDNA behavior.
 - A `hipMalloc` larger than VRAM (XNACK is off on the VF).
