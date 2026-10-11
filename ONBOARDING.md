@@ -970,6 +970,14 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - The registered id is the same in `cu` and `partition` mode.
   - A mode change under a running Pod emits `AMDGPUModeChangedInUse`.
   - On the VF a compute-partition request is not attempted: the log says the GPU cannot change its compute partition (it has no `available_compute_partition` file) and it stays registered as a soft device with the normal split count. This holds in both operating modes, so switching the mode with Pods running did not break allocation (the id stays the same, masks stayed disjoint, and the scheduler counted the running Pod).
+- Re-run of the "still open" items of this repository's pull requests on the same host:
+  - A kubelet restart with a GPU Pod running: allocatable was back in 6 seconds and the Pod kept running.
+  - The published 0.0.2 and 0.0.3 images with their own charts: upgrade, rollback and the move to the main build with a GPU Pod running.
+  - `-split_count=-1` is refused with an error, `-exclude_gpus` by PCI address registers nothing and clearing it brings the GPU back.
+  - CDI on and off: turning it off leaves `amd.com-gpu.json` behind.
+  - Sliced Pods on alpine, ubuntu 18.04 (the loader refuses the hook, the Pod still starts), fedora and ubi9; whole-GPU Pods get no hook.
+  - Two sliced containers in one Pod, a first container without a GPU, and a Pod without `gpumem` (it gets the whole memory).
+  - The UBI plugin image and both labeller images run as the DaemonSets; `govulncheck` on the built binary is clean.
 - HAMi side (merged pull requests re-run against HAMi master on the same host):
   - The AMD end-to-end suite passes (9 specs, 2 skipped).
   - The `gpumem-percentage`, ResourceQuota, `numa-bind`, `runtimeClassName`, mutex and comma-separated policy features all behave as their pull requests describe.

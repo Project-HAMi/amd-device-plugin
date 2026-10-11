@@ -91,6 +91,20 @@ To be closed one by one. Each item says what is missing and what it needs.
 - XNACK, for a `hipMalloc` served from host memory.
 - A real fault from the AMD Device Metrics Exporter.
 
+### Pull requests of this repository, per reason
+
+The "Still open" column of the table above now holds only what could not be run on this machine:
+
+- Several GPUs, XGMI, NUMA across GPUs, policy order: #20, #59, #61, #85, #91, #92, #95, #96, #100, #102, #103, #108, #120, #153, #156.
+- RDNA cards: #57, #97, #105, #107, #109, #151.
+- Bare metal Instinct with real compute partitions: #17, #123, #145, #159, #160.
+- Release publishing, arm64 and other Kubernetes versions: #7, #11, #12, #13, #48, #60, #128, #138.
+- A real Device Metrics Exporter and a real hardware fault: #66, #127, #140, #152, #155.
+- XNACK spill: #158.
+- Large example images that were not pulled: #139, #141.
+- Hosted services: Read the Docs (#50, #147) and the Security Insights validator (#46, #149).
+- Dependabot can propose a development tag again (#136).
+
 ### Decisions
 
 - Cores default, OWNERS files, Dependabot dev tags, k3s paths for `muslFailClosed`, cordon cache lag (see "Open questions").
@@ -160,34 +174,34 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | PR | Change | Result | Still open |
 |---|---|---|---|
 | #1 | Bump rocm-docs-core from 1.21.1 to 1.38.0 in docs/sphinx | Docs build with the new version finished fine. Only two old warnings, unrelated to the bump. | Nothing |
-| #2 | Bump golang from 1.23.6-alpine3.21 to 1.25.5-alpine3.21 | Builder image builds, vet is clean, tests pass on a real GPU except one old debugfs test. A real Pod ran and memory limit worked. | Labeller image run with this exact Go base was not checked |
+| #2 | Bump golang from 1.23.6-alpine3.21 to 1.25.5-alpine3.21 | Builder image builds, vet is clean, tests pass on a real GPU except one old debugfs test. A real Pod ran and memory limit worked. The labeller image built from this Dockerfile ran on the node and set the labels. | Nothing |
 | #3 | Bump go-logr/logr from 1.4.3 to 1.4.4 | Vet and race tests pass on main. The running plugin logs normally. | Nothing |
-| #4 | Bump ubi9/ubi-minimal from 9.4 to 9.8 | Both UBI images build on current main. | Labeller was not run on a GPU node from the UBI base |
-| #5 | Bump alpine from 3.21.3 to 3.24.1 | Labeller image builds on main. Main now uses a newer Alpine than this PR. | Alpine labeller was not run on a GPU node |
+| #4 | Bump ubi9/ubi-minimal from 9.4 to 9.8 | Both UBI images build on current main. The UBI labeller image ran on the node and set the labels. | Nothing |
+| #5 | Bump alpine from 3.21.3 to 3.24.1 | Labeller image builds on main. Main now uses a newer Alpine than this PR. The labeller image ran on the node and set the labels. | Nothing |
 | #6 | Bump actions/checkout from 6 to 7 | CI only change. Main pins checkout v7, so the bump landed. | Nothing |
-| #7 | Bump google.golang.org/grpc from 1.65.0 to 1.84.0 | Plugin registers with kubelet over grpc, tests pass, and a real Pod got a GPU and memory limit. | Kubelet restart and other Kubernetes versions were not tried |
+| #7 | Bump google.golang.org/grpc from 1.65.0 to 1.84.0 | Plugin registers with kubelet over grpc, tests pass, and a real Pod got a GPU and memory limit. Restarting the kubelet with a GPU Pod running: allocatable was back in 6 seconds, the Pod kept running, a new Pod ran. | Other Kubernetes versions were not tried. |
 | #8 | Bump google.golang.org/protobuf from 1.36.8 to 1.36.11 | Covered by working registration and passing tests. A real Pod ran with the memory limit enforced. | Nothing |
 | #9 | Bump rocm/dev-ubuntu-22.04 from 7.0.2 to 7.2.4 | Closed, not merged. Main already has this ROCm version through other changes. | Nothing |
 | #10 | Bump k8s.io/klog/v2 from 2.130.1 to 2.140.0 | Plugin logs look normal, tests pass, and a real Pod ran fine. | Nothing |
 | #11 | Bump helm/chart-releaser-action from 1.6.0 to 1.7.0 | Workflow change only. Main pins the new version. | A real chart release with the new action was not run |
 | #12 | Bump rocm/dev-ubuntu-24.04 from 7.0.2 to 7.2.4 | Image builds and runs on a real GPU, reading GPU state. A real Pod ran with the memory limit enforced. | Other GPU families and drivers were not tried |
 | #13 | Bump controller-runtime from 0.19.0 to 0.25.1 | Labeller runs on the GPU node and sets labels. Vet and tests pass with a newer version. | Older Kubernetes server versions were not tried |
-| #15 | docs: add AMD contribution templates | Template files are valid and labels exist. Four missing kind labels were added directly. | How GitHub shows the templates was not checked by eye |
+| #15 | docs: add AMD contribution templates | Template files are valid and labels exist. Four missing kind labels were added directly. GitHub lists the issue and pull request templates, the contributing guide and the code of conduct (community health 100 percent). | Nothing |
 | #17 | feat(plugin): hardware compute partitions for Instinct GPUs | Tested again item by item on a virtual function: both operating modes, annotations over env, naming strategies, mode switches with Pods running (no errors, no overlap), all its tests. Two bugs found, fixed in #171 and #172. | A real partition flip and XCP registration need a bare metal MI300 or newer |
 | #18 | fix admission error if another device plugin was installed | Helm install fix works. A bug in the no-annotation fallback was found, fixed in #161. | A second real device plugin on one node was not tried |
-| #20 | Inject HIP_VISIBLE_DEVICES for Ray-compatible AMD allocations | Pods now get the variable. The Ray import error reproduced without it and went away with it. | Multi-GPU order such as 0,1 was not tested |
+| #20 | Inject HIP_VISIBLE_DEVICES for Ray-compatible AMD allocations | Pods now get the variable. The Ray import error reproduced without it and went away with it. On one GPU the Pod gets HIP_VISIBLE_DEVICES=0 next to ROCR_VISIBLE_DEVICES. | The order for several GPUs such as 0,1 needs several GPUs. |
 | #37 | Slice AMD GPUs by whole WGPs on RDNA | Closed, not merged. The same fix landed in #105 and #107. | Nothing |
 | #38 | Skip amdgpu firmware test when debugfs is unavailable | The test was failing for another reason on a real GPU, an SMC field not parsed. Fixed in #162. | Skip on a multi-GPU node with mixed debugfs was not tried |
-| #40 | Update docs Python dependencies to patched versions | Main has the patched versions and the docs build succeeds with them. | No vulnerability scan was run on the pins |
-| #42 | Bump go directive to 1.26.8 for standard-library fixes | Go version is set, builder image builds, vet is clean, and tests pass on a real GPU. | The vulnerability scan result was not re-run |
+| #40 | Update docs Python dependencies to patched versions | Main has the patched versions and the docs build succeeds with them. pip-audit finds no known vulnerability in the docs pins. | Nothing |
+| #42 | Bump go directive to 1.26.8 for standard-library fixes | Go version is set, builder image builds, vet is clean, and tests pass on a real GPU. govulncheck on the built plugin binary reports no vulnerability. | Nothing |
 | #46 | Add SECURITY.md and SECURITY-INSIGHTS.yml | Both files exist on main and the issue config links to the private report form. | The insights file was not checked against its schema |
-| #47 | Add OpenSSF Scorecard workflow | Workflow file is on main and its last three runs succeeded. | Results in the Security tab were not checked |
+| #47 | Add OpenSSF Scorecard workflow | Workflow file is on main and its last three runs succeeded. The workflow ran after the protection change and its alerts are in the Security tab. | Nothing |
 | #48 | Pin GitHub Actions to commit SHAs | Every action is pinned to a full commit hash and the workflows pass on main. | The image provenance step was not confirmed on a real push |
-| #49 | Add CodeQL static analysis workflow | Workflow is on main and its recent runs succeeded. | Scan findings were not reviewed |
-| #50 | Bump Read the Docs build image to ubuntu-24.04 | Setting is on main and the docs build with the same requirements. | The hosted Read the Docs build was not checked |
-| #56 | fix(allocator): allow besteffort init on single-GPU nodes | Allocator starts on a single-GPU node and a Pod requesting one GPU is allocated normally. | The multi-device empty weights error case has no test |
+| #49 | Add CodeQL static analysis workflow | Workflow is on main and its recent runs succeeded. CodeQL has no open finding. | Nothing |
+| #50 | Bump Read the Docs build image to ubuntu-24.04 | Setting is on main and the docs build with the same requirements. The docs build locally. | No Read the Docs project is published. |
+| #56 | fix(allocator): allow besteffort init on single-GPU nodes | Allocator starts on a single-GPU node and a Pod requesting one GPU is allocated normally. The error branch no longer exists since #92 and #102; the peerless multi-device case is covered by TestBestEffortInitWithoutPeerLinks. | Nothing |
 | #57 | fix(amdgpu): skip missing partition files on RDNA | Tests pass here, but this node has those files, so the RDNA path was not run. | RDNA log warnings were not checked on an RDNA GPU |
-| #58 | fix(plugin): skip libamvgpu hook for whole-GPU requests | Whole-GPU Pod has no hook or memory limit. A sliced Pod has both. Both ran fine. | An Alpine or old glibc image was not tried |
+| #58 | fix(plugin): skip libamvgpu hook for whole-GPU requests | Whole-GPU Pod has no hook or memory limit. A sliced Pod has both. Both ran fine. Sliced Pods ran on alpine, ubuntu 18.04 (the loader refuses the hook, the Pod still starts), fedora and ubi9; a whole-GPU Pod on alpine has no hook. | Nothing |
 | #59 | chore(allocator): fix staticcheck findings | Staticcheck shows only generated code findings and vet is clean. | Allocation results on a multi-GPU node were not compared |
 | #60 | chore(deps): align k8s.io modules and use released protobuf | Modules are aligned on main, builder image builds, and tests pass. | Mixed Kubernetes versions were not tried on a real cluster |
 | #61 | fix(labeller): compare render minor without narrowing int64 | Unit test passes. Labeller built from main runs on the MI325X node and sets the expected labels. | Several GPUs with different render minors were not tried. |
@@ -198,7 +212,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #66 | chore: replace deprecated io/ioutil and grpc.Dial | No old calls remain in the code. Plugin registers with kubelet and serves Allocate on the node. | Health exporter over the new gRPC client was not tested on a node with the exporter. |
 | #67 | Bump k8s.io/kubelet from 0.31.0 to 0.37.1 | Closed, not merged. The same bump landed in #78, which also fixed the code changes this bump needed. | Nothing |
 | #68 | Bump alpine from 3.24.1 to 3.24.2 | Main uses the new base. The labeller image builds and runs. | Nothing |
-| #69 | Bump ubi9/ubi-init from 9.4 to 9.8 | Main uses the new base and the image builds. | Running the built image as a plugin on a GPU node was not shown here. |
+| #69 | Bump ubi9/ubi-init from 9.4 to 9.8 | Main uses the new base and the image builds. The UBI plugin image ran as the DaemonSet and registered the GPU. | Nothing |
 | #70 | Bump soupsieve from 2.5 to 2.9 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #71 | Bump pygments from 2.18.0 to 2.20.0 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #72 | Bump cryptography from 43.0.1 to 50.0.0 in /docs/sphinx | Closed, not merged. It was replaced by #79, which bumps the same packages together. | Nothing |
@@ -207,11 +221,11 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #75 | chore: fix remaining staticcheck findings in cgo code | Staticcheck reports nothing in the hand written code. go vet is clean. | Nothing |
 | #76 | Bump pynacl from 1.5.0 to 1.6.2 in /docs/sphinx | Closed, not merged. It was replaced by #79, which bumps the same packages together. | Nothing |
 | #77 | Bump jinja2 from 3.1.4 to 3.1.6 in /docs/sphinx | Main pins this version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #78 | chore(deps): bump k8s.io/kubelet to v0.37.1 | Plugin builds and runs against the new kubelet API. It registers and serves Allocate on the node. | Upgrade and rollback with running GPU Pods was not tested. |
+| #78 | chore(deps): bump k8s.io/kubelet to v0.37.1 | Plugin builds and runs against the new kubelet API. It registers and serves Allocate on the node. Upgrade 0.0.2 to 0.0.3 to main and a rollback ran with a GPU Pod running; the Pod was not restarted. | Nothing |
 | #79 | chore(docs): bump cryptography, pynacl, cffi and typing-extensions | Main pins these versions or newer. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #80 | chore(docker): align Go and ROCm versions across Dockerfiles | Dockerfiles use matching Go and ROCm 7.2.4 versions. All four images build on the node. | Nothing |
 | #81 | chore: drop checked-in libamvgpu.so and refresh stale docs | The binary is gone and the image builds the hook from the submodule. Docs build succeeds. Pods load the hook. | Upgrade from a node that holds the old checked in hook was not tested. |
-| #82 | docs: refresh README hook and delivery description | Docs build succeeds. A whole-GPU Pod gets no hook. A sliced Pod gets the hook and the limits, as the README says. | Old glibc and musl images were not run for this PR. |
+| #82 | docs: refresh README hook and delivery description | Docs build succeeds. A whole-GPU Pod gets no hook. A sliced Pod gets the hook and the limits, as the README says. Alpine and glibc 2.27 images ran a sliced Pod. | Nothing |
 | #83 | docs: update CHANGELOG and development guide | Docs build succeeds and both files exist. The Go version in the guide was later corrected in #166. | Nothing |
 | #84 | chore: remove unreferenced internal functions | go vet is clean. Tests pass with real GPU access. The deadcode tool reports nothing unreachable. | Nothing |
 | #85 | feat(allocator): add spread and binpack policies | Each policy was set and a one GPU Pod ran every time. The flag reached the plugin. | The difference between spread and binpack needs a node with several GPUs. |
@@ -219,12 +233,12 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #87 | feat(plugin): per-GPU health from the DRM device | Hiding the GPU device made allocatable GPUs drop to 0 with an event. Restoring it brought them back. | A GPU that is present but unhealthy was not tested. |
 | #88 | feat(plugin): publish compute queue slots in custominfo | The node annotation carries the compute queue count. Tests pass on the real GPU. | The scheduler using this value was not tested. |
 | #89 | docs: document that CU slices are cooperative | Docs build succeeds. A process that sets the mask itself got the whole GPU. With the hook pinning it did not. | Nothing |
-| #90 | feat(plugin): make the GPU split count configurable | Setting the count to 4 gave a count of 4 in the annotation and 4 allocatable GPUs. The default came back after reset. | Zero and negative values on startup were not retested on the node. |
-| #91 | feat(plugin): inject GPUs through CDI | With CDI on, the plugin wrote the spec file. A Pod got the kfd device and a card device. Turning it off restored device nodes. | Several GPUs and a stale spec file after turning CDI off were not tested. |
+| #90 | feat(plugin): make the GPU split count configurable | Setting the count to 4 gave a count of 4 in the annotation and 4 allocatable GPUs. The default came back after reset. -1 is refused with a clear error, 3 and 0 register 3 and 10. | Nothing |
+| #91 | feat(plugin): inject GPUs through CDI | With CDI on, the plugin wrote the spec file. A Pod got the kfd device and a card device. Turning it off restored device nodes. Turning CDI off leaves amd.com-gpu.json behind (documented). | Several GPUs were not tested. |
 | #92 | fix(allocator): treat splits of one GPU as a single-GPU node | The single GPU with 4 slots was allocated normally under all three policies. | Nodes with several GPUs and no peer links were not tested here. |
 | #93 | chore: fix staticcheck findings in cgo files | go vet is clean. Tests pass with real GPU access. Staticcheck reports nothing in hand written code. | Nothing |
-| #94 | fix(docker): make the labeller and UBI images build again | All four images build on the node and the labeller runs. Tests pass. | Running the UBI plugin image as a live DaemonSet was not shown. |
-| #95 | fix(plugin): recognize whole-GPU requests from the HAMi scheduler | A whole-GPU Pod through the scheduler got a full mask, no hook and no mount. Tests pass. | Mixed whole and sliced requests in one Pod were not tried. |
+| #94 | fix(docker): make the labeller and UBI images build again | All four images build on the node and the labeller runs. Tests pass. The UBI plugin and labeller images ran on the node. | Nothing |
+| #95 | fix(plugin): recognize whole-GPU requests from the HAMi scheduler | A whole-GPU Pod through the scheduler got a full mask, no hook and no mount. Tests pass. Two sliced containers in one Pod got different masks and limits, and the lock was released. | A whole-GPU container next to a sliced one needs a second GPU. |
 | #96 | fix(helm): expose the allocator policy | Setting binpack showed up in the DaemonSet args. It was restored to the default afterwards. | Policy results on a node with several GPUs were not observed. |
 | #97 | fix(amdgpu): recognize the RDNA4 GPU family | Unit tests pass. This node is not RDNA4, so it reports its own family. | The RDNA4 label on a real RDNA4 card was not seen here. |
 | #98 | docs: link the README by URL from the Sphinx docs | Docs build succeeds and the README links build without error. | Nothing |
@@ -241,51 +255,51 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #109 | feat(plugin): default to 2 sharers per GPU on gfx12 | This GPU still gets 10 sharers by default. The gfx12 value of 2 is covered only by a unit test. | A real gfx12 card was not available to confirm the value of 2. |
 | #110 | feat(plugin): cap sliced VRAM with dmem by default where supported | With the default settings a sliced Pod got the cap on the new kernel. On the old kernel the plugin fell back and logged it. | Nodes using cgroupfs or cgroup v1 were not tested. |
 | #111 | chore: bump amd-hami-core to pin HSA_CU_MASK | Checked on main with a 25 percent slice. A process that sets the mask itself stays slow with the hook (215 kernels/s) and runs fast without it (1015). | Other GPU families and core percentages are not tested. |
-| #112 | chore(helm): drop the bundled logo.png | Docs build and chart lint pass. The logo file is gone from the chart. | Whether the new icon URL loads in chart listings is not checked. |
+| #112 | chore(helm): drop the bundled logo.png | Docs build and chart lint pass. The logo file is gone from the chart. The icon URL loads (HTTP 200, image/png). | Nothing |
 | #113 | fix(deps): bump grpc past GO-2026-6443 | Vulnerability scan is clean on main. This development version was later replaced by the released one in #167. | Nothing |
-| #114 | chore(security): address OpenSSF Scorecard findings | Scorecard runs pass on the last three runs. Actions are pinned to commit hashes and checkouts keep no credentials. | Pinned image builds and the fuzz test in CI are not shown. |
+| #114 | chore(security): address OpenSSF Scorecard findings | Scorecard runs pass on the last three runs. Actions are pinned to commit hashes and checkouts keep no credentials. The fuzz test runs inside go test in CI and the image builds pass. | Nothing |
 | #115 | fix(ci): skip existing chart releases | Workflow has the skip setting. Chart releases 0.0.1, 0.0.2 and 0.0.3 exist and 0.0.3 installs. | Nothing |
 | #116 | docs: rewrite the README and user guide for the HAMi plugin | Docs build passes. Install, allocatable count, node annotation, memory cap and musl behavior were checked on a real node. | The new slice example pod was not applied to a cluster. |
-| #117 | chore: bring repository files up to date | Docs build passes. Repository files are present and match the chart. Chart lint is clean with every option on. | Changelog entries were not compared one by one with the merged pull requests. |
-| #118 | fix(utils): release node locks reliably and keep device decode aligned | Eight sliced Pods started at once. All finished, ranges never overlapped, and no node lock was left behind. | Multi-container pods with a GPU free first container were not run on a real node. |
-| #119 | fix: harden node labeller, chart RBAC and image CI | Vet and race tests pass on a real GPU node. The labeller runs as a DaemonSet and sets labels. Chart lints cleanly. | Stale label cleanup after a GPU swap is not tested on a real node. |
+| #117 | chore: bring repository files up to date | Docs build passes. Repository files are present and match the chart. Chart lint is clean with every option on. The changelog now lists the 21 missing pull requests (#180). | Nothing |
+| #118 | fix(utils): release node locks reliably and keep device decode aligned | Eight sliced Pods started at once. All finished, ranges never overlapped, and no node lock was left behind. A Pod whose first container has no GPU ran; the node lock was released. | Nothing |
+| #119 | fix: harden node labeller, chart RBAC and image CI | Vet and race tests pass on a real GPU node. The labeller runs as a DaemonSet and sets labels. Chart lints cleanly. Stale labels are removed when the labeller starts. | They are not removed on a live label edit, only at the next start. |
 | #120 | fix(allocator): handle split devices in besteffort and spread | Split devices (4 per GPU) pass through besteffort, spread and binpack. Pods were allocated. | Real multi-GPU nodes with must_include requests were not run. |
-| #121 | fix(libcheck,cuallocation): pick the loader the image uses, keep bitmaps intact on error | The right loader is chosen for alpine (refused), ubuntu and debian (hook on). Eight slices ended with separate CU ranges. | Real Fedora, RHEL and other images were not tested. |
-| #122 | docs: correct hook, dmem, labeller and chart details | Docs build passes. Hook, memory cap, labels and chart values match real behavior. | The chart minimum Kubernetes version change was never rendered or installed. |
+| #121 | fix(libcheck,cuallocation): pick the loader the image uses, keep bitmaps intact on error | The right loader is chosen for alpine (refused), ubuntu and debian (hook on). Eight slices ended with separate CU ranges. Sliced Pods ran on fedora and ubi9. | Nothing |
+| #122 | docs: correct hook, dmem, labeller and chart details | Docs build passes. Hook, memory cap, labels and chart values match real behavior. The chart renders on 1.19 and is refused on 1.18. | Nothing |
 | #123 | fix(amdgpu): reset per-GPU discovery state and map partitions to parent health | Unit tests pass. With one GPU, health turned false when the exporter said unhealthy and true when healthy. | Partitioned GPUs on a real Instinct node were not tested. |
 | #124 | chore: clear remaining lint nits outside the plugin package | Vet is clean and race tests pass. The only lint error came from missing AMD SMI headers in the test container. | Nothing |
 | #125 | fix(plugin): guard discovery maps, free memory-only slices, end stale streams | Tests pass. Restarts run without errors. A memory-only request gets all CUs from the scheduler, so that path is not reached. | The memory-only slice path and a live kubelet run are not verified. |
-| #126 | chore: bump amd-hami-core for exact memory accounting | Submodule has the fix. Three parallel 1.5 GiB allocations under a 4096 MiB limit gave exactly two successes in each of three rounds. | Image build with the new library commit is not shown in CI. |
+| #126 | chore: bump amd-hami-core for exact memory accounting | Submodule has the fix. Three parallel 1.5 GiB allocations under a 4096 MiB limit gave exactly two successes in each of three rounds. CI builds the image with the new library commit. | Nothing |
 | #127 | fix(exporter): log exporter outages once, not every health check | With the exporter gone, one warning appeared over about 10 health checks. The GPU count stayed at 10. | Only a test stand-in exporter was used, not the real one. |
 | #128 | chore: tidy root files and record recent changes | Docs build passes. Root files exist and the changelog lists 0.0.2 and 0.0.3. There is no OWNERS file. | UBI image build on arm64 is not tested. |
 | #129 | fix(labeller): require the node name, share topology lookup, use kernel family ids | Labeller starts with a node name and labels the node. Without a cluster it fails at the kube config. Family label shows AI. | Older setups that gave the node name another way are not tested. |
 | #130 | fix: guard device requests, read image libc inside the image, scan once | Tests pass. Alpine, ubuntu and debian images are handled. A gap for images not yet pulled was fixed in #163. | A failed first registration and a retry have no test. |
-| #131 | fix(helm): label the DaemonSet, make log verbosity a value, default the tag | Template renders verbosity and labels. The default tag follows the chart version. Chart lints cleanly. | Install on a cluster with the default tag pulling a published image is not shown. |
-| #132 | docs: note the image tag for main, document log verbosity, fix a typo | Docs build passes. Verbosity and image tag text match the chart. The main tag note was not found. | The main tag note and the typo fix are missing or unchecked. |
+| #131 | fix(helm): label the DaemonSet, make log verbosity a value, default the tag | Template renders verbosity and labels. The default tag follows the chart version. Chart lints cleanly. | Nothing. The default tag pulls the published image, which only works with the chart of the same release (documented in the installation guide). |
+| #132 | docs: note the image tag for main, document log verbosity, fix a typo | Docs build passes. Verbosity and image tag text match the chart. The note that chart and image must match was missing and is now in the installation guide. | Nothing |
 | #133 | chore: bump amd-hami-core for security/CI hardening and pthread_once fix | Submodule has the fix. Init test passes under sanitizers and the hook loads in real Pods. | Instinct cards and partition modes are not covered. |
 | #134 | ci: vet and race-test, render optional chart branches, drop checkout tokens | CI runs vet and race tests, renders chart options and keeps no checkout tokens. CI is green and the same commands pass on a GPU node. | CI has no GPU, so hardware paths are not run there. |
-| #135 | chore(deps): bump ubi9/ubi-init digest | Base image is pinned by digest and the UBI plugin image builds. | The built image was not started on a node. |
+| #135 | chore(deps): bump ubi9/ubi-init digest | Base image is pinned by digest and the UBI plugin image builds. The built UBI image ran on the node. | Nothing |
 | #136 | chore(deps): bump grpc to 1.86.0-dev | Bug found: a development tag was pulled in. Fixed in #167 with the release. Scan is clean and a hooked Pod runs. | Dependabot may propose a development tag again. |
 | #137 | chore(deps): bump golang to 1.27-alpine | Labeller image builds with the new Go version and labels the node. | Nothing |
 | #138 | chore(deps): bump actions/attest-build-provenance to 4.2.2 | Workflow uses the new version pinned by hash. CI is green on main. | The attestation itself is made only on a publish build and was not inspected. |
 | #139 | fix(examples): make the JAX pods run, stop the TensorFlow pod looping | All example manifests pass a server side dry run. The Pods were not run because the images are large. | No example Pod was run on a GPU. |
 | #140 | fix(exporter): count only the query result as the exporter coming back | After the exporter returned, one "reachable again" message appeared after the next good query, not when the stale file existed. | The real exporter was not used, only a test stand-in. |
 | #141 | docs(examples): note the GPU size the vLLM example needs | Docs build passes. The note is text only. | The vLLM example was never run on a 16 GB or larger card. |
-| #142 | chore: release v0.0.2 | GitHub has release v0.0.2 and chart release 0.0.2. Version 0.0.3 replaces it. | The published 0.0.2 image was not run. |
+| #142 | chore: release v0.0.2 | GitHub has release v0.0.2 and chart release 0.0.2. Version 0.0.3 replaces it. The published 0.0.2 image ran with its chart and registered the GPU. | Nothing |
 | #143 | chore: bump amd-hami-core for the init guard race fix | Submodule has the fix. Init test passes under the thread checker. | The fix was not shown to change behavior on a real node. |
-| #144 | chore: release v0.0.3 | Release is marked Latest. The published chart installs, registers 10 GPUs and a sliced Pod gets the right settings. It lacks later fixes (#161 to #164). | Upgrade from 0.0.2 and rollback were not run. |
+| #144 | chore: release v0.0.3 | Release is marked Latest. The published chart installs, registers 10 GPUs and a sliced Pod gets the right settings. It lacks later fixes (#161 to #164). Upgrade from 0.0.2 and a rollback ran. | Nothing |
 | #145 | test: make GPU tests assert, drop an unused lister field | GPU tests now assert and pass on a real GPU instead of skipping. Vet and race tests pass. | Partitioned Instinct GPUs were not tested. |
-| #146 | chore: bump amd-hami-core for the limit retry race fix | Submodule has the fix. Retry test passes under memory and thread checkers. | A Pod with no memory limit through HAMi was not run. |
-| #147 | chore: update docs dependencies, build docs on Python 3.12 | Docs build passes with the new dependencies. | The hosted docs build on Python 3.12 was not linked. |
-| #148 | ci: read the CodeQL ROCm image from the Dockerfile | Workflow reads the image from the Dockerfile and ran successfully on main. | Other forms of the Dockerfile line and Dependabot bumps are not tried. |
-| #149 | chore: point security insights at the raw file, ignore secret files | Docs build passes. The file points at the raw link and secret files are ignored. | The link was not checked with a validator. |
-| #150 | feat(monitor): report per-container VRAM and host GPU metrics | Host metrics are served. Per container memory could not be checked because the kernel has no dmem controller. | Per container memory on a kernel 6.14 or newer is not verified. |
+| #146 | chore: bump amd-hami-core for the limit retry race fix | Submodule has the fix. Retry test passes under memory and thread checkers. A Pod without gpumem gets the whole memory as its limit (261824m). | Nothing |
+| #147 | chore: update docs dependencies, build docs on Python 3.12 | Docs build passes with the new dependencies. The docs build on Python 3.12 without errors. | No Read the Docs project is published yet. |
+| #148 | ci: read the CodeQL ROCm image from the Dockerfile | Workflow reads the image from the Dockerfile and ran successfully on main. Digest pins and the digest-less line both give the image name. | Nothing |
+| #149 | chore: point security insights at the raw file, ignore secret files | Docs build passes. The file points at the raw link and secret files are ignored. The raw URL answers 200. | The file was not run through the Security Insights validator. |
+| #150 | feat(monitor): report per-container VRAM and host GPU metrics | Host metrics are served. Per-container used and limit bytes were read on kernel 7.0. | Nothing |
 | #151 | docs: say the gfx12 sharing loss depends on the workload | Docs build passes. Wording matches the code (10 sharers by default, 2 on gfx12). | The loss on RDNA4 cards cannot be measured on this GPU. |
 | #152 | feat: mark GPUs the exporter reports unhealthy in the node annotation | With a test exporter, unhealthy moved the count from 10 to 0, set health false and sent a node event. | The real exporter was not used. |
 | #153 | feat: publish the XGMI peers of each GPU in the node annotation | Single GPU node correctly shows no peers. Unit tests pass, including the partition fix. | Real multi-GPU XGMI links need an 8 GPU node and were not run. |
 | #154 | feat(monitor): report the host GPU memory capacity | Total memory metric equals the value in sysfs. Used memory, utilization and collect success are served too. | Cards without the memory file and iGPUs were not checked. |
 | #155 | feat: record node events when a GPU turns unhealthy, leaves or recovers | Hiding the GPU sent a missing event and restoring it sent a recovered event. | The unhealthy event was not triggered. |
-| #156 | feat(plugin): add -exclude_gpus and -hip_log_level options | Log level reached a sliced Pod. Excluding a GPU cleared it and removing the setting brought it back. | Excluding by PCI address or one GPU of several was not run. |
+| #156 | feat(plugin): add -exclude_gpus and -hip_log_level options | Log level reached a sliced Pod. Excluding a GPU cleared it and removing the setting brought it back. Excluding the only GPU by PCI address registers nothing, and clearing the list brings it back. | One GPU of several was not excluded. |
 | #157 | feat(plugin): report healthy GPU memory and compute units as node capacity | Capacity showed up when on. Bug found: it stayed after switching off. Fixed in #164. | Nothing |
 | #158 | feat(plugin): add -device_memory_scaling for memory oversubscription | Scaling 1.5 registered 1.5 times the memory and Pods got the oversubscribe setting. Resetting restored it. | A real allocation larger than VRAM spilling to host memory is not verified. |
 | #159 | fix(plugin): keep the device ID stable across operating modes | The registered GPU ID is the same in cu mode and partition mode. | Real partitionable Instinct GPUs and XCP partition IDs were not tested. |

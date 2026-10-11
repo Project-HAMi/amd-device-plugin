@@ -20,6 +20,8 @@ helm upgrade --install amd-gpu ./helm/amd-gpu --namespace kube-system --create-n
 
 The chart creates the DaemonSet, the ServiceAccount and RBAC the plugin needs to write node and pod annotations, and a `postStart` hook that copies the `libamvgpu.so` memory hook to `/usr/local/vgpu` on each node. See [Configuration](configuration.md) for the values.
 
+The chart and the image have to come from the same commit or release. The image tag defaults to the chart `appVersion`, which is a published release; a chart from `main` passes flags that a published image does not know, and its Pod stops with a usage message. To run `main`, build the image from the same checkout and set `dp.image.repository` and `dp.image.tag`. Checked on the MI325X host: the published 0.0.2 and 0.0.3 images work with their own charts, with a GPU Pod kept running through upgrade and rollback.
+
 ## Verify
 
 ```bash
