@@ -46,7 +46,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 ## What is not verified, and why
 
 - **Several GPUs, XGMI, NUMA, policy order:** #20, #59, #61, #85, #91, #92, #95, #96, #99, #100, #102, #103, #108, #120, #153, #156, and the HAMi PRs #2011, #3182, #3186, #3187, #3191. Needs a multi-GPU Instinct node.
-- **Compute partitions (DPX, QPX, CPX):** #17, #123, #145, #159, #160. The VF keeps working in both operating modes and a flip is skipped with a log line, but the flip itself, XCP registration and Pods on partitions need a bare metal MI300, MI325 or MI355 (checklist F5 of #17, section 11.0 of ONBOARDING.md).
+- **Compute partitions (DPX, QPX, CPX):** #17, #123, #145, #159, #160. The VF keeps working in both operating modes and a flip is skipped with a log line, but the flip itself, XCP registration and Pods on partitions need a bare metal MI300, MI325 or MI355 (run the plugin with `OPERATING_MODE=partition` and `COMPUTE_PARTITION` set, checklist F5 of #17).
 - **RDNA cards:** #57, #97, #105, #107, #109, #151, and HAMi #3174.
 - **A real hardware fault** from the Device Metrics Exporter: #123, #152, #155.
 - **XNACK, a `hipMalloc` larger than VRAM served from host memory:** #158 (XNACK is off on the VF).
