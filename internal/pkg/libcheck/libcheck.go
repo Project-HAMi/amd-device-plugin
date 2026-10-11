@@ -36,6 +36,7 @@ package libcheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -45,6 +46,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang/glog"
 )
 
 // Libc identifies the C library (or absence of one) an image's entrypoint
@@ -124,13 +129,44 @@ type Inspector struct {
 	CtrPath          string
 	ContainerdSocket string
 	Namespace        string // containerd namespace images were pulled into, usually "k8s.io"
+
+	pulling sync.Map // image refs with a background pull in flight
+}
+
+// ErrImageNotPresent is returned when the image is not in containerd yet. The
+// kubelet device manager calls Allocate at pod admission, before it pulls the
+// image, so the first Pod to use an image sees this; the pull is started in
+// the background and a retry finds the image.
+var ErrImageNotPresent = errors.New("image is not on the node yet")
+
+// pullTimeout bounds one background pull.
+const pullTimeout = 30 * time.Minute
+
+// pullInBackground starts one "ctr images pull" per image ref at a time.
+// Allocate must not wait for it: images are large and admission is blocking.
+func (ins *Inspector) pullInBackground(imageRef string) {
+	if _, running := ins.pulling.LoadOrStore(imageRef, struct{}{}); running {
+		return
+	}
+	go func() {
+		defer ins.pulling.Delete(imageRef)
+		ctx, cancel := context.WithTimeout(context.Background(), pullTimeout)
+		defer cancel()
+		args := []string{"--namespace", ins.Namespace, "--address", ins.ContainerdSocket, "images", "pull", "--", imageRef}
+		if out, err := exec.CommandContext(ctx, ins.CtrPath, args...).CombinedOutput(); err != nil {
+			glog.Warningf("libcheck: ctr images pull %s: %v (%s)", imageRef, err, strings.TrimSpace(string(out)))
+			return
+		}
+		glog.Infof("libcheck: pulled %s so its libc can be inspected", imageRef)
+	}()
 }
 
 // Inspect mounts imageRef read-only, inspects it for a musl or glibc
-// dynamic loader, and unmounts it again. The image must already be present
-// in the inspector's containerd (kubelet pulls it before Allocate runs in
-// the normal flow); a missing image is reported as an error, not Unknown,
-// so the caller can decide how to fail closed on "could not verify".
+// dynamic loader, and unmounts it again. The image must be present in the
+// inspector's containerd. Allocate runs at pod admission, before kubelet
+// pulls the image, so a missing image starts a background pull and is
+// reported as ErrImageNotPresent, not Unknown, so the caller fails closed on
+// "could not verify" and the next Pod finds the image.
 func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error) {
 	mountDir, err := os.MkdirTemp("", "amd-dp-libcheck-")
 	if err != nil {
@@ -142,6 +178,10 @@ func (ins *Inspector) Inspect(ctx context.Context, imageRef string) (Libc, error
 	// "--" ends flag parsing, so a ref starting with '-' is never a flag.
 	mountArgs := []string{"--namespace", ins.Namespace, "--address", ins.ContainerdSocket, "images", "mount", "--", imageRef, mountDir}
 	if out, err := exec.CommandContext(ctx, ins.CtrPath, mountArgs...).CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "not found") {
+			ins.pullInBackground(imageRef)
+			return Unknown, fmt.Errorf("%w: %s; pulling it in the background, retry the Pod once the pull finishes", ErrImageNotPresent, imageRef)
+		}
 		return Unknown, fmt.Errorf("ctr images mount %s: %w (%s)", imageRef, err, strings.TrimSpace(string(out)))
 	}
 	defer func() {

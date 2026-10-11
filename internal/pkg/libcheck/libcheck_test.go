@@ -18,10 +18,12 @@ package libcheck
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func touch(t *testing.T, path string) {
@@ -296,4 +298,76 @@ func TestInspectRootFollowsAbsoluteLibcLinkInsideImage(t *testing.T) {
 	if _, err := inspectRoot(root); err == nil {
 		t.Error("link outside the image accepted")
 	}
+}
+
+// Allocate runs before kubelet pulls the image, so the first Inspect of an
+// image that is not in containerd must start a pull and report
+// ErrImageNotPresent, and the next Inspect must find the pulled image.
+func TestInspectPullsMissingImage(t *testing.T) {
+	dir := t.TempDir()
+	pulled := filepath.Join(dir, "pulled")
+	pullCount := filepath.Join(dir, "pulls")
+	fixture := filepath.Join(dir, "image")
+	touch(t, filepath.Join(fixture, "lib64", "ld-linux-x86-64.so.2"))
+	libc := filepath.Join(fixture, "lib", "x86_64-linux-gnu", "libc.so.6")
+	touch(t, libc)
+	if err := os.WriteFile(libc, []byte("GLIBC_2.38\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctr := filepath.Join(dir, "ctr")
+	script := `#!/bin/sh
+case " $* " in
+*" pull "*) echo x >> ` + pullCount + `; touch ` + pulled + `; exit 0;;
+*" unmount "*) exit 0;;
+*" mount "*)
+  if [ ! -f ` + pulled + ` ]; then echo 'ctr: image "docker.io/library/x:1": not found'; exit 1; fi
+  for last; do :; done
+  cp -r ` + fixture + `/. "$last"/; exit 0;;
+esac
+exit 1
+`
+	if err := os.WriteFile(ctr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ins := &Inspector{CtrPath: ctr, ContainerdSocket: "/sock", Namespace: "k8s.io"}
+
+	if _, err := ins.Inspect(context.Background(), "x:1"); !errors.Is(err, ErrImageNotPresent) {
+		t.Fatalf("first Inspect error = %v, want ErrImageNotPresent", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(pulled); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no background pull started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var got Libc
+	for {
+		var err error
+		if got, err = ins.Inspect(context.Background(), "x:1"); err == nil {
+			break
+		}
+		if !errors.Is(err, ErrImageNotPresent) || time.Now().After(deadline) {
+			t.Fatalf("Inspect after the pull = %v", err)
+		}
+		time.Sleep(10 * time.Millisecond) // pull flag set, in-flight marker not yet cleared
+	}
+	if got != Glibc {
+		t.Errorf("Inspect after the pull = %v, want Glibc", got)
+	}
+	if n := strings.Count(readFile(t, pullCount), "x"); n != 1 {
+		t.Errorf("ctr images pull ran %d times, want 1", n)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
