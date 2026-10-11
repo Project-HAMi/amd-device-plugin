@@ -8,4 +8,4 @@ The Kubernetes device plugin that lets [HAMi](https://github.com/Project-HAMi/HA
 - [Resource allocation](user-guide/resource-allocation.md): how GPUs, CUs and VRAM are handed out, and the limits of slicing.
 - [Development](contributing/development.md): build, test and contribute.
 
-The [README](https://github.com/Project-HAMi/amd-device-plugin/blob/main/README.md) has the short version of all of this.
+[STATUS.md](https://github.com/Project-HAMi/amd-device-plugin/blob/main/STATUS.md) lists what was checked on a real GPU and what is left, and [ONBOARDING.md](https://github.com/Project-HAMi/amd-device-plugin/blob/main/ONBOARDING.md) explains how the project works.
