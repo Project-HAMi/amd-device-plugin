@@ -552,7 +552,8 @@ func ParseTopologyProperties(path string, re *regexp.Regexp) (int64, error) {
 	return 0, errors.New("Topology property not found.  Regex: " + re.String())
 }
 
-var fwVersionRe = regexp.MustCompile(`(\w+) feature version: (\d+), firmware version: (0x[0-9a-fA-F]+)`)
+// Newer kernels print an extra "program: N," field on the SMC line.
+var fwVersionRe = regexp.MustCompile(`(\w+) feature version: (\d+),(?: program: \d+,)? firmware version: (0x[0-9a-fA-F]+)`)
 
 func parseDebugFSFirmwareInfo(path string) (map[string]uint32, map[string]uint32) {
 	feat := make(map[string]uint32)
