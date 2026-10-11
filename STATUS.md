@@ -102,7 +102,7 @@ The "Still open" column of the table above now holds only what could not be run 
 - A real Device Metrics Exporter and a real hardware fault: #66, #127, #140, #152, #155.
 - XNACK spill: #158.
 - Large example images that were not pulled: #139, #141.
-- Hosted services: Read the Docs (#50, #147) and the Security Insights validator (#46, #149).
+- Hosted services: Read the Docs (#50, #147).
 - Dependabot can propose a development tag again (#136).
 
 ### Decisions
@@ -194,7 +194,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #38 | Skip amdgpu firmware test when debugfs is unavailable | The test was failing for another reason on a real GPU, an SMC field not parsed. Fixed in #162. On the host the test passes with debugfs mounted and skips without it. A card without debugfs used to skip the whole test on a multi-GPU node; it is now left out and the other cards are still compared. | The mixed case itself needs two GPUs. |
 | #40 | Update docs Python dependencies to patched versions | Main has the patched versions and the docs build succeeds with them. pip-audit finds no known vulnerability in the docs pins. | Nothing |
 | #42 | Bump go directive to 1.26.8 for standard-library fixes | Go version is set, builder image builds, vet is clean, and tests pass on a real GPU. govulncheck on the built plugin binary reports no vulnerability. | Nothing |
-| #46 | Add SECURITY.md and SECURITY-INSIGHTS.yml | Both files exist on main and the issue config links to the private report form. | The insights file was not checked against its schema |
+| #46 | Add SECURITY.md and SECURITY-INSIGHTS.yml | Both files exist on main and the issue config links to the private report form. Checked with cue vet against the published Security Insights schema: it failed (secret scanning used a tool type the schema does not have, and two fields sat in the wrong place). Fixed, now it passes. | Nothing |
 | #47 | Add OpenSSF Scorecard workflow | Workflow file is on main and its last three runs succeeded. The workflow ran after the protection change and its alerts are in the Security tab. | Nothing |
 | #48 | Pin GitHub Actions to commit SHAs | Every action is pinned to a full commit hash and the workflows pass on main. | The image provenance step was not confirmed on a real push |
 | #49 | Add CodeQL static analysis workflow | Workflow is on main and its recent runs succeeded. CodeQL has no open finding. | Nothing |
@@ -292,7 +292,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #146 | chore: bump amd-hami-core for the limit retry race fix | Submodule has the fix. Retry test passes under memory and thread checkers. A Pod without gpumem gets the whole memory as its limit (261824m). | Nothing |
 | #147 | chore: update docs dependencies, build docs on Python 3.12 | Docs build passes with the new dependencies. The docs build on Python 3.12 without errors. | No Read the Docs project is published yet. |
 | #148 | ci: read the CodeQL ROCm image from the Dockerfile | Workflow reads the image from the Dockerfile and ran successfully on main. Digest pins and the digest-less line both give the image name. | Nothing |
-| #149 | chore: point security insights at the raw file, ignore secret files | Docs build passes. The file points at the raw link and secret files are ignored. The raw URL answers 200. | The file was not run through the Security Insights validator. |
+| #149 | chore: point security insights at the raw file, ignore secret files | Docs build passes. The file points at the raw link and secret files are ignored. The raw URL answers 200. cue vet against the published schema now passes. | Nothing |
 | #150 | feat(monitor): report per-container VRAM and host GPU metrics | Host metrics are served. Per-container used and limit bytes were read on kernel 7.0. | Nothing |
 | #151 | docs: say the gfx12 sharing loss depends on the workload | Docs build passes. Wording matches the code (10 sharers by default, 2 on gfx12). | The loss on RDNA4 cards cannot be measured on this GPU. |
 | #152 | feat: mark GPUs the exporter reports unhealthy in the node annotation | With a test exporter, unhealthy moved the count from 10 to 0, set health false and sent a node event. | The real exporter was not used. |
