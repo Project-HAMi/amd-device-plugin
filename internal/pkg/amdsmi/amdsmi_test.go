@@ -67,3 +67,32 @@ func TestPartitionLookupsWithoutPartitionSupport(t *testing.T) {
 		t.Errorf("empty flip = %v, want nil", err)
 	}
 }
+
+// AMD SMI listed the XCC count for the current profile (SPX) only; the others
+// follow from the total split over their partitions.
+func TestFillXCCPerPartition(t *testing.T) {
+	profiles := []PartitionProfile{
+		{Type: "SPX", NumPartitions: 1, XCCPerPartition: 8},
+		{Type: "DPX", NumPartitions: 2},
+		{Type: "QPX", NumPartitions: 4},
+		{Type: "CPX", NumPartitions: 8},
+	}
+	fillXCCPerPartition(profiles)
+	for i, want := range []int{8, 4, 2, 1} {
+		if profiles[i].XCCPerPartition != want {
+			t.Errorf("%s: XCCPerPartition = %d, want %d", profiles[i].Type, profiles[i].XCCPerPartition, want)
+		}
+	}
+
+	// a value AMD SMI did give is kept, and without a total there is nothing to derive
+	kept := []PartitionProfile{{Type: "SPX", NumPartitions: 1, XCCPerPartition: 8}, {Type: "DPX", NumPartitions: 2, XCCPerPartition: 3}}
+	fillXCCPerPartition(kept)
+	if kept[1].XCCPerPartition != 3 {
+		t.Errorf("an XCC count from AMD SMI was overwritten: %d", kept[1].XCCPerPartition)
+	}
+	none := []PartitionProfile{{Type: "DPX", NumPartitions: 2}}
+	fillXCCPerPartition(none)
+	if none[0].XCCPerPartition != 0 {
+		t.Errorf("no total, got %d", none[0].XCCPerPartition)
+	}
+}
