@@ -79,8 +79,16 @@ The mode is chosen per node (`OPERATING_MODE`, or the
 - `partition`: every compute partition is published as a whole device (Count 1,
   `Mode` set to the partition type) and allocated exclusively without a CU mask. XCP
   partitions replace their parent GPU. With `COMPUTE_PARTITION` set, the plugin
-  switches idle GPUs to that type through AMD SMI at startup. GPUs without a
-  compute partition type (RDNA, SR-IOV VFs, embedded APUs) stay CU-maskable.
+  switches idle GPUs to that type through AMD SMI at startup. GPUs that report
+  no compute partition type (RDNA, embedded APUs), or report one they cannot
+  change because the driver exposes no `available_compute_partition` (SR-IOV
+  VFs), stay CU-sliced in both modes.
+
+| GPU | `cu` mode | `partition` mode |
+|---|---|---|
+| Instinct, bare metal | CU slices of the whole GPU | One hard device per compute partition, exclusive |
+| Instinct SR-IOV VF | CU slices | CU slices (the partition cannot change, `COMPUTE_PARTITION` is skipped) |
+| RDNA, embedded APU | CU slices | CU slices |
 
 In the register annotation (`hami.io/node-amd-register`) soft entries have
 `Mode` empty and hard entries carry the compute partition type, the way HAMi

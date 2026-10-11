@@ -592,3 +592,21 @@ func TestWithoutExcluded(t *testing.T) {
 		t.Fatalf("nothing excluded kept %d GPUs, want 3", len(got))
 	}
 }
+
+// A GPU with current_compute_partition but no available_compute_partition is
+// an SR-IOV VF: it reports a type it cannot change.
+func TestComputePartitionFixedForVF(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(mi355xSysfs)); err != nil {
+		t.Fatal(err)
+	}
+	gpus := filepath.Join(root, "module/amdgpu/drivers/pci:amdgpu")
+	if err := os.Remove(filepath.Join(gpus, "0000:75:00.0/available_compute_partition")); err != nil {
+		t.Fatal(err)
+	}
+	for key, dev := range GetAMDGPUs(root) {
+		if want := key == "0000:75:00.0"; dev["computePartitionFixed"] != want {
+			t.Errorf("%s: computePartitionFixed = %v, want %v", key, dev["computePartitionFixed"], want)
+		}
+	}
+}

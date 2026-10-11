@@ -318,6 +318,10 @@ func discoverGPUs(sysRoot string, renderDevIds map[int]string, renderNodeIds map
 			glog.Warningf("Failed to read 'current_memory_partition' file at %s: %s", memoryPartitionFile, err)
 		}
 
+		// SR-IOV VFs report a compute partition but cannot change it, and have
+		// no available_compute_partition file.
+		partitionFixed := computePartitionType != "" && !fileExists(filepath.Join(path, "available_compute_partition"))
+
 		data, err := os.ReadFile(numaNodeFile)
 		if err != nil {
 			glog.Warningf("Failed to read 'numa_node' file at %s: %s", numaNodeFile, err)
@@ -336,7 +340,7 @@ func discoverGPUs(sysRoot string, renderDevIds map[int]string, renderNodeIds map
 			continue
 		}
 		// add devID so that we can identify later which gpu should get reported under which resource type
-		devices[filepath.Base(path)] = map[string]interface{}{"card": card, "renderD": renderD, "devID": renderDevIds[renderD], "computePartitionType": computePartitionType, "memoryPartitionType": memoryPartitionType, "numaNode": numaNode, "nodeId": renderNodeIds[renderD]}
+		devices[filepath.Base(path)] = map[string]interface{}{"card": card, "renderD": renderD, "devID": renderDevIds[renderD], "computePartitionType": computePartitionType, "computePartitionFixed": partitionFixed, "memoryPartitionType": memoryPartitionType, "numaNode": numaNode, "nodeId": renderNodeIds[renderD]}
 	}
 
 	// certain products have additional devices (such as MI300's partitions)
@@ -353,11 +357,13 @@ func discoverGPUs(sysRoot string, renderDevIds map[int]string, renderNodeIds map
 
 		// take the partition types from the real GPU or another partition with the same devID
 		computePartitionType, memoryPartitionType := "", ""
+		partitionFixed := false
 		numaNode := -1
 		for _, device := range devices {
 			if device["devID"] == devID && device["computePartitionType"].(string) != "" && device["memoryPartitionType"].(string) != "" {
 				computePartitionType = device["computePartitionType"].(string)
 				memoryPartitionType = device["memoryPartitionType"].(string)
+				partitionFixed, _ = device["computePartitionFixed"].(bool)
 				numaNode = device["numaNode"].(int)
 				break
 			}
@@ -365,7 +371,7 @@ func discoverGPUs(sysRoot string, renderDevIds map[int]string, renderNodeIds map
 		if numaNode == -1 {
 			continue
 		}
-		devices[filepath.Base(path)] = map[string]interface{}{"card": card, "renderD": renderD, "devID": devID, "computePartitionType": computePartitionType, "memoryPartitionType": memoryPartitionType, "numaNode": numaNode, "nodeId": renderNodeIds[renderD]}
+		devices[filepath.Base(path)] = map[string]interface{}{"card": card, "renderD": renderD, "devID": devID, "computePartitionType": computePartitionType, "computePartitionFixed": partitionFixed, "memoryPartitionType": memoryPartitionType, "numaNode": numaNode, "nodeId": renderNodeIds[renderD]}
 	}
 	glog.Infof("Devices map: %v", devices)
 	return devices
@@ -414,6 +420,11 @@ func partitionSupported(file string) bool {
 		return false
 	}
 	_, err := os.Stat(filepath.Join(matches[0], file))
+	return err == nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
 	return err == nil
 }
 

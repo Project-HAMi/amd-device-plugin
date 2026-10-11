@@ -206,7 +206,7 @@ func hardwareSlots(mode string) int {
 		if strings.HasPrefix(key, "amdgpu_xcp_") {
 			continue
 		}
-		if t, _ := d["computePartitionType"].(string); mode == "partition" && t != "" {
+		if t, _ := d["computePartitionType"].(string); mode == "partition" && t != "" && d["computePartitionFixed"] != true {
 			n++
 		} else {
 			n += splitCount

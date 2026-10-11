@@ -36,8 +36,9 @@ The plugin registers AMD GPUs in one of two modes:
   their accounting. The kubelet-facing device list publishes
   only the hard entries (no soft splits). Whole GPUs with `amdgpu_xcp_*`
   partitions in KFD topology are replaced by them; any other partitioned GPU
-  registers as one hard device. GPUs without a compute partition type stay
-  soft.
+  registers as one hard device. GPUs without a compute partition type, and
+  GPUs that cannot change it (SR-IOV VFs have no `available_compute_partition`
+  file), stay soft.
 
 Mode resolution, lowest to highest precedence:
 
@@ -66,7 +67,9 @@ it, the plugin logs a warning and records a node Warning event,
    ds/amd-gpu-device-plugin-daemonset`).
 4. Check the log for `operating mode: <mode>`, and that
    `amd.com/gpu` under `kubectl get node <node> -o jsonpath='{.status.allocatable}'`
-   matches the new mode (the split count in `cu`, one per GPU in `partition`).
+   matches the new mode (the split count in `cu`; in `partition` one per
+   partition-capable GPU, while GPUs that cannot change their partition, such
+   as SR-IOV VFs, keep the split count).
 5. `kubectl uncordon <node>`.
 
 The same applies when upgrading from a build older than the device ID fix
