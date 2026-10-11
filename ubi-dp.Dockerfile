@@ -19,10 +19,10 @@ RUN dnf install -y 'dnf-command(config-manager)' && \
     rpm --import https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official && \
     dnf install git pkgconfig gcc gcc-c++ make glibc-devel binutils libdrm-devel hwloc-devel wget tar gzip -y && \
     dnf clean all
-RUN wget https://golang.org/dl/go1.26.8.linux-amd64.tar.gz && \
-    echo "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b  go1.26.8.linux-amd64.tar.gz" | sha256sum -c - && \
-    tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz && \
-    rm go1.26.8.linux-amd64.tar.gz
+RUN wget https://golang.org/dl/go1.26.9.linux-amd64.tar.gz && \
+    echo "42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d  go1.26.9.linux-amd64.tar.gz" | sha256sum -c - && \
+    tar -C /usr/local -xzf go1.26.9.linux-amd64.tar.gz && \
+    rm go1.26.9.linux-amd64.tar.gz
 # AMD SMI SDK at the same ROCm release as the main image.
 RUN printf '[rocm]\nname=ROCm 7.2.4\nbaseurl=https://repo.radeon.com/rocm/el9/7.2.4/main\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n' > /etc/yum.repos.d/rocm.repo && \
     dnf install -y amd-smi-lib && \

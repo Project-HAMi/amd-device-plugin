@@ -6,7 +6,7 @@
 
 Before you begin development, ensure you have the following prerequisites:
 
-- A working installation of Go (the version in `go.mod`, currently 1.26.8 or later).
+- A working installation of Go (the version in `go.mod`, currently 1.26.9 or later).
 - Access to a Kubernetes cluster for testing.
 - Familiarity with Git and GitHub workflows.
 
