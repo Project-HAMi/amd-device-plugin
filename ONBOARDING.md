@@ -978,6 +978,14 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - Sliced Pods on alpine, ubuntu 18.04 (the loader refuses the hook, the Pod still starts), fedora and ubi9; whole-GPU Pods get no hook.
   - Two sliced containers in one Pod, a first container without a GPU, and a Pod without `gpumem` (it gets the whole memory).
   - The UBI plugin image and both labeller images run as the DaemonSets; `govulncheck` on the built binary is clean.
+- Second round on the same host:
+  - The real Device Metrics Exporter (v1.4.1) runs on the VF. The plugin reads its health over the new gRPC client, a killed exporter leaves a stale socket and logs one warning, and one message when it is back. A removed socket (no exporter) is silent.
+  - The upstream ROCm plugin as a second DaemonSet: kubelet refuses the second registration and the first plugin keeps serving.
+  - A missing kubelet socket at start: the plugin retries, stays up and registers when the socket returns.
+  - An old file in the hook directory is replaced when the plugin starts.
+  - `hipMallocAsync` in a 4 GiB slice: 1 to 3 GiB work and 5 and 8 GiB are refused by the hook; with only the dmem cap, 5 GiB aborts the process.
+  - Core percentages 10, 50 and 100 give 85, 470 and 1013 kernels/s on 30, 152 and 304 CUs.
+  - The PyTorch (also sliced), TensorFlow and one-GPU JAX examples run; `cue vet` accepts both Security Insights files after fixes.
 - HAMi side (merged pull requests re-run against HAMi master on the same host):
   - The AMD end-to-end suite passes (9 specs, 2 skipped).
   - The `gpumem-percentage`, ResourceQuota, `numa-bind`, `runtimeClassName`, mutex and comma-separated policy features all behave as their pull requests describe.

@@ -87,7 +87,7 @@ The memory hook limits VRAM inside the process, so it needs glibc 2.34 or newer 
 - cgroup v2 with the `dmem` controller (kernel 6.14 or newer, listed in `/sys/fs/cgroup/cgroup.controllers`; kernel 6.8 has none and the plugin logs that the cap is skipped),
 - the systemd cgroup driver (`/sys/fs/cgroup/kubepods.slice` exists).
 
-For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgroup's `dmem.max`. The cap is written in the background shortly after the container starts, because the pod cgroup can take a few seconds to appear, and lowering `dmem.max` below current usage does not reclaim VRAM, so memory a workload allocates before the cap lands stays allocated. A whole-GPU pod gets no dmem cap. Do not put whole-GPU pods and slices on the same card if VRAM isolation matters.
+For each sliced GPU, the plugin writes `drm/<bdf>/vram <bytes>` to the pod cgroup's `dmem.max`. The cap is written in the background shortly after the container starts, because the pod cgroup can take a few seconds to appear, and lowering `dmem.max` below current usage does not reclaim VRAM, so memory a workload allocates before the cap lands stays allocated. With the dmem cap alone and no hook (a musl image, for example), a `hipMallocAsync` above the cap aborts the process in the ROCm runtime; the cap holds, but the process does not get an out-of-memory error it can handle. A whole-GPU pod gets no dmem cap. Do not put whole-GPU pods and slices on the same card if VRAM isolation matters.
 
 ## musl fail-closed
 
