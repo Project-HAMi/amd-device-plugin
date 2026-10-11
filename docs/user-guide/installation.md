@@ -10,7 +10,7 @@
   helm install hami hami-charts/hami -n kube-system --set devicePlugin.enabled=false
   ```
 
-- Remove any other plugin that registers `amd.com/gpu` on the same nodes, such as the upstream ROCm device plugin. Kubelet cannot serve one resource from two plugins.
+- Remove any other plugin that registers `amd.com/gpu` on the same nodes, such as the upstream ROCm device plugin. Kubelet cannot serve one resource from two plugins. Checked with the upstream plugin as a second DaemonSet on the MI325X host: kubelet refuses the second registration (`device plugin already connected`), the plugin that registered first keeps serving and Pods keep working.
 
 ## Install the device plugin
 
