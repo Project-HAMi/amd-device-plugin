@@ -161,7 +161,7 @@ The annotation is a JSON array of `utils.DeviceInfo` (`internal/pkg/utils/types.
 | `custominfo.cuPerWGP` | | 2 when `gfx_target_version >= 100000`, else 1. |
 | `custominfo.computeQueues` | | `num_cp_queues` from the KFD node. Only set when greater than 0. |
 | `custominfo.partitionProfile` | | XCP entries only: `<compute type>_<memory type>`. |
-| `custominfo.partitionProfiles` | | Whole GPUs whose AMD SMI partition profiles could be read: a list of profile objects. |
+| `custominfo.partitionProfiles` | | Whole GPUs whose AMD SMI partition profiles could be read: a list of profile objects. Not published for GPUs that cannot change their partition (SR-IOV VFs). `XCCPerPartition` is the GPU's XCC total split over the profile's partitions (8, 4, 2, 1 on an 8 XCC GPU), because AMD SMI lists the XCC count for the current profile only. |
 | `custominfo.xgmiPeers` | | Sorted BDFs of the other registered GPUs that are reachable over XGMI links (KFD link type 11). Left out when empty. |
 
 Note: `README.md` says each `partitionProfiles` entry has `profile_index` and similar snake case keys. But `amdsmi.PartitionProfile` (`internal/pkg/amdsmi/amdsmi.go`) has no JSON tags. So the annotation carries the Go field names `ProfileIndex`, `Type`, `MemoryCaps`, `NumPartitions` and `XCCPerPartition`. The spelling `profile_index` is from the `amd-smi` CLI JSON (see `testdata/amdsmi-partition-g*-mi355x.json`).
@@ -959,7 +959,7 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
 - Operating modes:
   - The registered id is the same in `cu` and `partition` mode.
   - A mode change under a running Pod emits `AMDGPUModeChangedInUse`.
-  - A compute-partition flip on the VF fails with AMD SMI status 2. It leaves the GPU registered as a hard `spx` device.
+  - On the VF a compute-partition request is not attempted: the log says the GPU cannot change its compute partition (it has no `available_compute_partition` file) and it stays registered as a soft device with the normal split count. This holds in both operating modes, so switching the mode with Pods running did not break allocation (the id stays the same, masks stayed disjoint, and the scheduler counted the running Pod).
 - Exporter health (tested with a stand-in that speaks the same gRPC protocol):
   - `unhealthy` drops allocatable to 0 and emits `AMDGPUUnhealthy`.
   - `healthy` restores it.

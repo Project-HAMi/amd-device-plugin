@@ -106,4 +106,4 @@ With `dp.cdi.enabled=true` the plugin writes an `amd.com/gpu` CDI spec to `dp.cd
 This only matters for Instinct GPUs split into compute partitions (for example CPX):
 
 - **`single`** (default): every GPU and partition is `amd.com/gpu`. Use it when all GPUs on a node use the same partition mode.
-- **`mixed`**: partitions are named after their mode, for example `amd.com/cpx_nps4`, and unpartitioned GPUs stay `amd.com/gpu`. Use it when a node mixes partition modes.
+- **`mixed`**: partitions are named after their mode, for example `amd.com/cpx_nps4`, and unpartitioned GPUs stay `amd.com/gpu`. GPUs that cannot change their partition (SR-IOV VFs) count as unpartitioned. Use it when a node mixes partition modes.

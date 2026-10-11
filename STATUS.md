@@ -6,7 +6,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 - We re-checked **every merged pull request** of this repository (131) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD-related pull requests in [HAMi](https://github.com/Project-HAMi/HAMi) (20). This file and `ONBOARDING.md` cover all three; they live only here.
 - Each one has one line below: the result and the one thing still not verified.
-- We found **six real bugs** and fixed them (table below). A seventh change (#169, keep virtual functions CU-sliced in partition mode) came from the follow-up work on partitions.
+- We found **eight real bugs** and fixed them (table below). The partition work (#17) was tested again from the start: it also led to #169 (virtual functions stay CU-sliced in partition mode), #171 and #172.
 - What is left: five open design questions, and the checks that need hardware we did not have.
 
 ## How we tested
@@ -26,6 +26,8 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 | Images were built with Go 1.26.8, which has 11 known standard library problems. | build | #166 |
 | `go.mod` used a grpc development tag instead of a release. | #136 | #167 |
 | No issue or pull request templates in amd-hami-core; some `/kind` labels missing in both repos. | core #2, #15 | core #26 and new labels |
+| With `-resource_naming_strategy=mixed` a virtual function was named `amd.com/spx_nps1` and `amd.com/gpu` went to zero. | #17 | #171 |
+| The registration said 0 XCC per partition for DPX, QPX and CPX, because AMD SMI lists XCC for the current profile only. | #17 | #172 |
 | Docs and README were behind the code. | all | #168 and core #27 |
 
 ## Open questions
@@ -121,7 +123,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #12 | Bump rocm/dev-ubuntu-24.04 from 7.0.2 to 7.2.4 | Image builds and runs on a real GPU, reading GPU state. A real Pod ran with the memory limit enforced. | Other GPU families and drivers were not tried |
 | #13 | Bump controller-runtime from 0.19.0 to 0.25.1 | Labeller runs on the GPU node and sets labels. Vet and tests pass with a newer version. | Older Kubernetes server versions were not tried |
 | #15 | docs: add AMD contribution templates | Template files are valid and labels exist. Four missing kind labels were added directly. | How GitHub shows the templates was not checked by eye |
-| #17 | feat(plugin): hardware compute partitions for Instinct GPUs | Helm values and start-up work on a GPU that cannot flip partitions. The flip failed cleanly and a Pod still ran. | A real partition flip on MI300 or MI355 hardware was not run |
+| #17 | feat(plugin): hardware compute partitions for Instinct GPUs | Tested again item by item on a virtual function: both operating modes, annotations over env, naming strategies, mode switches with Pods running (no errors, no overlap), all its tests. Two bugs found, fixed in #171 and #172. | A real partition flip and XCP registration need a bare metal MI300 or newer |
 | #18 | fix admission error if another device plugin was installed | Helm install fix works. A bug in the no-annotation fallback was found, fixed in #161. | A second real device plugin on one node was not tried |
 | #20 | Inject HIP_VISIBLE_DEVICES for Ray-compatible AMD allocations | Pods now get the variable. The Ray import error reproduced without it and went away with it. | Multi-GPU order such as 0,1 was not tested |
 | #37 | Slice AMD GPUs by whole WGPs on RDNA | Closed, not merged. The same fix landed in #105 and #107. | Nothing |
