@@ -637,6 +637,8 @@ Kernel dependency:
 - On kernel 6.8.0-136 it did not. So 8 whole-GPU entries registered.
 - The fixture `testdata/sysfs-mi355x-spx` captures that case (`docs/user-guide/mi355x-partitioning.md`).
 
+What is verified and what still needs a bare metal machine is in section 11.0.
+
 ### 7.4 XGMI peers
 
 - KFD link type 11 is XGMI (Infinity Fabric between GPUs). Type 2 is PCIe. See `kfdXGMILinkType` in `xgmi.go` and `calculatePairWeight` in `device.go`.
@@ -938,6 +940,14 @@ kubectl get events -n default --field-selector involvedObject.kind=Node
 | Monitor shows no container metrics | It needs cgroup v2 with the dmem controller and the systemd cgroup driver (`kubepods.slice`). The container must request an `amd.com/*` resource and appear in the node annotation by BDF. `hami_vgpumonitor_collect_success` 0 means part of a scrape failed. Read the monitor log. |
 | Stale limits in a hand-run test | Delete the shared accounting file `/tmp/hipdevshr.cache` before each manual run of `libamvgpu` (amd-hami-core README, "Usage"). |
 | Example `vllm-qpx-serve/device-config.yaml` | It shows `deviceSplitCount`, `defaultCores` and `defaultMemory` under `amd:`. HAMi's `AMDConfig` struct (`resourceCountName`, `resourceMemoryName`, `resourceMemoryPercentageName`, `resourceCoreName`, `runtimeClassName`) does not define them. Treat those keys as stale unless HAMi's config loader is shown to accept them. |
+
+### 11.0 What is verified, and what needs bare metal
+
+The real compute-partition flip (DPX, QPX, CPX) has not been verified on any hardware. It needs a bare metal machine with an Instinct GPU (MI300, MI325 or MI355).
+
+A cloud virtual machine with an SR-IOV virtual function (VF) cannot do it. The VF reports `SPX` in `current_compute_partition` but has no `available_compute_partition` file, and AMD SMI refuses a change (status 2). The plugin treats such a GPU as fixed: it stays one soft, CU-sliced device with the normal split count in both operating modes, publishes no partition profiles, skips the `COMPUTE_PARTITION` flip with a log line, and keeps the plain `gpu` resource name under the `mixed` strategy.
+
+Tested on a VF: both modes, the annotation overrides, switching the mode with Pods running, the naming strategies and all unit tests. Not tested anywhere: the flip itself, the registration of XCP partitions as hard devices on real hardware, and Pods placed on real partitions. To close it on a bare metal node, set `OPERATING_MODE=partition` and `COMPUTE_PARTITION=qpx` (or dpx, cpx), restart the plugin, and check the registration (hard entries, `count` 1, `mode`, per-partition VRAM and CU share), the kubelet ids (`<bdf>#<type>`) and a Pod on each partition.
 
 ### 11.1 Observed on a real MI325X
 
