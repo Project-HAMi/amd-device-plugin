@@ -999,7 +999,7 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
   - `healthy` restores it.
   - An outage is logged once.
 
-The full list of what is left, per pull request, is in STATUS.md under "Remaining work".
+The full list of what is left, per pull request, is in STATUS.md under "What is not verified, and why".
 
 Not checked:
 
