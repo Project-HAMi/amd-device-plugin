@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Hardware compute partitions on Instinct GPUs (#17); the device ID stays the same across operating modes (#159) and a mode change under running Pods emits `AMDGPUModeChangedInUse` (#160).
+- Per-GPU health from the AMD Device Metrics Exporter (#152), node events when a GPU turns unhealthy, leaves or recovers (#155), and the XGMI peers of each GPU in the node annotation (#153).
+- `-exclude_gpus` and `-hip_log_level` (#156), `-device_memory_scaling` for memory oversubscription (#158), and optional healthy node capacity for `amd.com/gpumem` and `amd.com/gpucores` (#157).
+- The monitor reports per-container VRAM and host GPU metrics (#150) and the host GPU memory capacity (#154).
+
+### Fixed
+
+- A Pod that HAMi did not schedule no longer fails with `no binding pod found`; whole GPUs are served (#18, #161).
+- The SMC firmware line with a `program:` field parses (#162).
+- An image that is not on the node yet is pulled for the fail-closed check (#163).
+- Node capacity entries are removed when reporting is off (#164).
+- Built with Go 1.26.9 and the released grpc v1.84.0 (#166, #167).
+- SR-IOV virtual functions stay CU-sliced in partition mode, and keep the `amd.com/gpu` name when the partition cannot change (#169, #171).
+- The XCC count is published for every partition profile (#172).
+
 ## v0.0.3
 
 ### Fixed
