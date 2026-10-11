@@ -38,6 +38,15 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 - **k3s paths.** The `muslFailClosed` chart defaults are for RKE2. On k3s two values must be set (see the configuration docs).
 - **Cordon.** `hami.io/device-cordon` works after the scheduler has seen the annotation. A Pod created within about a second can still be placed.
 
+## Compute partitions: what is verified and what is not
+
+Short answer: **the real partition flip (DPX, QPX, CPX) is not verified on any hardware yet.** It needs a bare metal machine with an Instinct GPU (MI300, MI325 or MI355).
+
+- A cloud virtual machine with an SR-IOV virtual function (VF) cannot use it. The VF reports its partition (SPX) but cannot change it: the `available_compute_partition` file is missing and AMD SMI refuses a change (status 2). It also did not work on the Radeon RX 9060 XT used earlier.
+- What was verified on the VF: the VF keeps working in both operating modes. It stays one CU-sliced GPU with the normal split count, a request to flip is skipped with a clear log line, and switching the mode while Pods run breaks nothing (no errors, no overlapping CUs). Fixed on the way: #169, #171 and #172.
+- What is still open (checklist item F5 of the #17 re-test): flipping to DPX, QPX or CPX, registering the XCP partitions, and placing Pods on partitions of a real partitioned GPU. The code and its unit tests pass, and fixtures captured from an MI355X cover the registration, but nothing ran on a partitioned GPU.
+- What is needed: one bare metal MI300, MI325 or MI355 node, then run the checks in section 11.0 of `ONBOARDING.md` with `OPERATING_MODE=partition` and `COMPUTE_PARTITION` set.
+
 ## What we could not check
 
 - Several GPUs: XGMI peers with real links, spread and binpack order, mask order across GPUs, topology-aware scheduling, `amd.com/link-bind`.
