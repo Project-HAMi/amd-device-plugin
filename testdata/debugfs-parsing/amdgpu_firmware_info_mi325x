@@ -1,0 +1,5 @@
+RLC feature version: 1, firmware version: 0x00000046
+MEC feature version: 50, firmware version: 0x000080c2
+SMC feature version: 0, program: 7, firmware version: 0x07551300 (85.19.0)
+SDMA0 feature version: 44, firmware version: 0x0000001b
+VCN feature version: 0, firmware version: 0x09118022

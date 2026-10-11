@@ -221,6 +221,21 @@ func TestParseDebugFSFirmwareInfo(t *testing.T) {
 	}
 }
 
+// Kernel 7.0 on an MI325X prints "program: N," between the SMC feature and
+// firmware versions; the SMC entry must still parse.
+func TestParseDebugFSFirmwareInfoSMCProgram(t *testing.T) {
+	feat, fw := parseDebugFSFirmwareInfo("../../../testdata/debugfs-parsing/amdgpu_firmware_info_mi325x")
+	if v, ok := fw["SMC"]; !ok || v != 0x07551300 {
+		t.Errorf("SMC firmware = %#x (present %v), want 0x07551300", v, ok)
+	}
+	if v, ok := feat["SMC"]; !ok || v != 0 {
+		t.Errorf("SMC feature = %d (present %v), want 0", v, ok)
+	}
+	if v := fw["MEC"]; v != 0x000080c2 {
+		t.Errorf("MEC firmware = %#x, want 0x80c2 (a line without program must still parse)", v)
+	}
+}
+
 func TestRenderDevIdsFromTopology(t *testing.T) {
 	renderDevIds := GetDevIdsFromTopology("../../../testdata/topology-parsing-mi308")
 
