@@ -174,6 +174,41 @@ func TestDecodePodDevicesMalformed(t *testing.T) {
 	}
 }
 
+func TestClearNodeStatusCapacity(t *testing.T) {
+	stale := corev1.ResourceList{"amd.com/gpumem": resource.MustParse("16304"), "amd.com/gpucores": resource.MustParse("32"), "cpu": resource.MustParse("4")}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}, Status: corev1.NodeStatus{Capacity: stale, Allocatable: stale.DeepCopy()}}
+	cs := setup(t, node)
+	if err := ClearNodeStatusCapacity(node, "amd.com/gpumem", "amd.com/gpucores"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cs.CoreV1().Nodes().Get(context.Background(), "n", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range []corev1.ResourceList{got.Status.Capacity, got.Status.Allocatable} {
+		for _, name := range []corev1.ResourceName{"amd.com/gpumem", "amd.com/gpucores"} {
+			if _, still := list[name]; still {
+				t.Errorf("%s is still listed after the clear", name)
+			}
+		}
+		if _, ok := list["cpu"]; !ok {
+			t.Error("an unrelated resource was removed")
+		}
+	}
+
+	// Nothing stale: no write.
+	clean := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "m"}}
+	cs = setup(t, clean)
+	if err := ClearNodeStatusCapacity(clean, "amd.com/gpumem"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range cs.Actions() {
+		if a.GetVerb() == "patch" {
+			t.Fatal("a node without the resources must not be patched")
+		}
+	}
+}
+
 func TestPatchNodeStatusCapacity(t *testing.T) {
 	cs := setup(t, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}})
 	res := corev1.ResourceList{"amd.com/gpumem": resource.MustParse("16304")}
