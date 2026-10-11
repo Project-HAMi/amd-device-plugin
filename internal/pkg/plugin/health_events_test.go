@@ -1,11 +1,14 @@
 package plugin
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 )
@@ -71,5 +74,74 @@ func TestHealthTransitionsMessagesAndTypes(t *testing.T) {
 	events, _ = healthTransitions(map[string]gpuState{"u": {gpuUnhealthy, 0, "b"}}, []*utils.DeviceInfo{gpu("u", 0, true)})
 	if len(events) != 1 || events[0].Type != corev1.EventTypeNormal {
 		t.Fatalf("recovery = %+v", events)
+	}
+}
+
+func TestModeChanges(t *testing.T) {
+	soft := `[{"id":"a","mode":""},{"id":"b","mode":""}]`
+	now := []*utils.DeviceInfo{{ID: "a", Mode: "spx"}, {ID: "b"}, {ID: "c", Mode: "spx"}}
+	ids := func(ds []*utils.DeviceInfo) (out []string) {
+		for _, d := range ds {
+			out = append(out, d.ID)
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		previous string
+		want     []string
+	}{
+		"first registration": {"", nil},
+		"unreadable":         {"not json", nil},
+		"cu to partition":    {soft, []string{"a"}},
+		"unchanged":          {`[{"id":"a","mode":"spx"},{"id":"b","mode":""}]`, nil},
+		"partition to cu":    {`[{"id":"b","mode":"cpx"}]`, []string{"b"}},
+	} {
+		if got := ids(modeChanges(tc.previous, now)); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: changed = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestWarnModeChangeInUse(t *testing.T) {
+	pod := func(name, alloc string, phase corev1.PodPhase) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Annotations: map[string]string{utils.DeviceAllocation: alloc}},
+			Spec:       corev1.PodSpec{NodeName: "gpu-node"},
+			Status:     corev1.PodStatus{Phase: phase},
+		}
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node", Annotations: map[string]string{
+		registerAnnosKey: `[{"id":"gpu-a","mode":""},{"id":"gpu-b","mode":""}]`,
+	}}}
+	old := utils.KubeClient
+	defer func() { utils.KubeClient = old }()
+	cs := fake.NewSimpleClientset(node,
+		pod("on-a", "gpu-a,MI325X,1024,76:;", corev1.PodRunning),
+		pod("done-on-a", "gpu-a,MI325X,1024,76:;", corev1.PodSucceeded),
+		pod("on-b", "gpu-b,MI325X,1024,76:;", corev1.PodRunning),
+	)
+	utils.KubeClient = cs
+
+	// gpu-a switched with a Pod on it, gpu-b kept its mode: one warning, for gpu-a only.
+	warnModeChangeInUse(node, []*utils.DeviceInfo{{ID: "gpu-a", Index: 1, Mode: "spx"}, {ID: "gpu-b", Index: 2}})
+	events, err := cs.CoreV1().Events(nodeEventNamespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events.Items) != 1 {
+		t.Fatalf("events = %+v, want one", events.Items)
+	}
+	ev := events.Items[0]
+	if ev.Type != corev1.EventTypeWarning || ev.Reason != reasonModeChangedInUse ||
+		!strings.Contains(ev.Message, "default/on-a") || strings.Contains(ev.Message, "done-on-a") || strings.Contains(ev.Message, "on-b") ||
+		!strings.Contains(ev.Message, "partition (spx)") {
+		t.Fatalf("event = %s %s %q", ev.Type, ev.Reason, ev.Message)
+	}
+
+	// The next registration sees its own annotation: nothing changed, no new warning.
+	node.Annotations[registerAnnosKey] = `[{"id":"gpu-a","mode":"spx"},{"id":"gpu-b","mode":""}]`
+	warnModeChangeInUse(node, []*utils.DeviceInfo{{ID: "gpu-a", Index: 1, Mode: "spx"}, {ID: "gpu-b", Index: 2}})
+	if events, _ = cs.CoreV1().Events(nodeEventNamespace).List(context.Background(), metav1.ListOptions{}); len(events.Items) != 1 {
+		t.Fatalf("repeat registration added events: %+v", events.Items)
 	}
 }
