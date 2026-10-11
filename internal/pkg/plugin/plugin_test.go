@@ -409,6 +409,8 @@ func TestKubeletAndSchedulerViewsAgree(t *testing.T) {
 		"amdgpu_xcp_30": {"computePartitionType": "cpx"},
 		"0000:05:00.0":  {"computePartitionType": "spx"},
 		"0000:75:00.0":  {"computePartitionType": ""},
+		// an SR-IOV VF reports a type but cannot change it
+		"0000:83:00.0": {"computePartitionType": "spx", "computePartitionFixed": true},
 	}
 	for _, mode := range []string{"cu", "partition"} {
 		p := &AMDGPUPlugin{operatingMode: mode}
@@ -419,7 +421,7 @@ func TestKubeletAndSchedulerViewsAgree(t *testing.T) {
 			if int32(len(ids)) != info.Count {
 				t.Errorf("%s %s: scheduler Count=%d, kubelet ids=%v", mode, key, info.Count, ids)
 			}
-			wantHard := mode == "partition" && data["computePartitionType"] != ""
+			wantHard := mode == "partition" && data["computePartitionType"] != "" && data["computePartitionFixed"] != true
 			if hard != wantHard {
 				t.Errorf("%s %s: hard=%v, want %v", mode, key, hard, wantHard)
 			}

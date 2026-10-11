@@ -334,6 +334,10 @@ func (p *AMDGPUPlugin) Start() error {
 		for _, deviceData := range amdgpu.GetAMDGPUs(p.sysRoot()) {
 			bdf, _ := deviceData["devID"].(string)
 			current, _ := deviceData["computePartitionType"].(string)
+			if fixed, _ := deviceData["computePartitionFixed"].(bool); fixed {
+				glog.Infof("GPU %s cannot change its compute partition (no available_compute_partition), keeping %s", bdf, current)
+				continue
+			}
 			if bdf != "" && !strings.EqualFold(current, p.computePartition) {
 				bdfs = append(bdfs, bdf)
 			}
@@ -442,6 +446,20 @@ func (p *AMDGPUPlugin) isSchedulableTopologyKey(key string, deviceData map[strin
 	return true
 }
 
+// hardPartitionType is the compute partition type a GPU registers as a hard
+// device in partition mode, "" when it stays CU-sliced: partition mode is
+// off, the GPU reports no type, or its partition cannot be changed (SR-IOV VF).
+func (p *AMDGPUPlugin) hardPartitionType(deviceData map[string]interface{}) string {
+	if p.operatingMode != "partition" {
+		return ""
+	}
+	if fixed, _ := deviceData["computePartitionFixed"].(bool); fixed {
+		return ""
+	}
+	t, _ := deviceData["computePartitionType"].(string)
+	return t
+}
+
 // partitionCapableBDFs lists the whole-GPU BDFs that report a compute
 // partition type in sysfs.
 func partitionCapableBDFs(devices map[string]map[string]interface{}) []string {
@@ -449,7 +467,7 @@ func partitionCapableBDFs(devices map[string]map[string]interface{}) []string {
 	for key, deviceData := range devices {
 		bdf, _ := deviceData["devID"].(string)
 		computeType, _ := deviceData["computePartitionType"].(string)
-		if !strings.HasPrefix(key, "amdgpu_xcp_") && bdf != "" && computeType != "" {
+		if fixed, _ := deviceData["computePartitionFixed"].(bool); !strings.HasPrefix(key, "amdgpu_xcp_") && bdf != "" && computeType != "" && !fixed {
 			bdfs = append(bdfs, bdf)
 		}
 	}
@@ -487,10 +505,8 @@ func partitionCounts(devices map[string]map[string]interface{}, profiles map[str
 // hard "<key>#<type>" in partition mode, splitCountFor soft slots otherwise.
 // It must stay in step with registerHardEntry.
 func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{}) []string {
-	if p.operatingMode == "partition" {
-		if t, _ := deviceData["computePartitionType"].(string); t != "" {
-			return []string{key + "#" + t}
-		}
+	if t := p.hardPartitionType(deviceData); t != "" {
+		return []string{key + "#" + t}
 	}
 	nodeId, _ := deviceData["nodeId"].(int)
 	ids := make([]string, splitCountFor(p.kfdNodesDir(), nodeId))
@@ -505,11 +521,8 @@ func (p *AMDGPUPlugin) kubeletIDs(key string, deviceData map[string]interface{})
 // stays the same as in cu mode: Pods allocated before an operating-mode
 // switch reference it, and the scheduler and CU rebuild must still find them.
 func (p *AMDGPUPlugin) registerHardEntry(deviceData map[string]interface{}, info *utils.DeviceInfo) bool {
-	if p.operatingMode != "partition" {
-		return false
-	}
-	computePartitionType, ok := deviceData["computePartitionType"].(string)
-	if !ok || computePartitionType == "" {
+	computePartitionType := p.hardPartitionType(deviceData)
+	if computePartitionType == "" {
 		return false
 	}
 	info.Mode = computePartitionType
