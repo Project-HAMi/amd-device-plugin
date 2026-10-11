@@ -301,6 +301,60 @@ func TestAllocateWholeGPUSkipsCUCommit(t *testing.T) {
 	}
 }
 
+// A Pod a different scheduler or a second device plugin placed on this
+// node's kubelet-reported device ids carries none of HAMi's bind-time
+// annotations, so GetPendingPod finds nothing. Allocate must still serve the
+// kubelet device ids as a whole GPU instead of failing the Pod.
+func TestAllocateWithoutHAMiTrackedPod(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}
+	cs := fake.NewSimpleClientset(node) // no Pod carries the bind-time annotations
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{
+		AMDGPUs:              map[string]map[string]interface{}{"0000:06:00.0": {"card": 1, "renderD": 129}},
+		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:06:00.0"},
+		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-1"},
+		deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 32, Devmem: 16304}},
+	}
+	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"uuid-a"}}},
+	})
+	if err != nil {
+		t.Fatalf("Allocate without a HAMi-tracked pod = %v, want the kubelet device ids served as a whole GPU", err)
+	}
+	if got := len(resp.ContainerResponses); got != 1 {
+		t.Fatalf("ContainerResponses = %d, want 1", got)
+	}
+	if _, maskSet := resp.ContainerResponses[0].Envs["HSA_CU_MASK"]; !maskSet {
+		t.Error("whole-GPU fallback must still set HSA_CU_MASK")
+	}
+	if got := resp.ContainerResponses[0].Envs["ROCR_VISIBLE_DEVICES"]; got != "GPU-1" {
+		t.Errorf("ROCR_VISIBLE_DEVICES = %q, want GPU-1", got)
+	}
+}
+
+// A real error getting the pending pod (API server trouble, not simply no
+// bound pod found) must still fail Allocate rather than silently falling
+// back, so kubelet retries instead of starting a container without the
+// scheduler's intended device.
+func TestAllocateFailsOnRealPendingPodError(t *testing.T) {
+	cs := fake.NewSimpleClientset() // no Node "n" either: GetAllocatePodByNode errors
+	old := utils.KubeClient
+	t.Cleanup(func() { utils.KubeClient = old })
+	utils.KubeClient = cs
+	t.Setenv(utils.NodeNameEnvName, "n")
+
+	p := &AMDGPUPlugin{}
+	if _, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"uuid-a"}}},
+	}); err == nil {
+		t.Fatal("Allocate = nil error on a real pending-pod lookup failure, want it to fail")
+	}
+}
+
 func TestIsSchedulableTopologyKey(t *testing.T) {
 	defer func(n int) { splitCount = n }(splitCount)
 	splitCount = 10 // these tests pin one slot count for every GPU

@@ -20,6 +20,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -1039,8 +1040,20 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	glog.Infof("Allocate request: %+v", r)
 	nodename := os.Getenv(utils.NodeNameEnvName)
 	current, err := utils.GetPendingPod(ctx, nodename)
-	if err != nil {
-		return &pluginapi.AllocateResponse{}, err
+	trackedPod := err == nil
+	if !trackedPod {
+		if !errors.Is(err, utils.ErrNoPendingPod) {
+			return &pluginapi.AllocateResponse{}, err
+		}
+		// No Pod on this node carries HAMi's bind-time annotations, most
+		// often because a different scheduler or a second device plugin
+		// placed this Pod directly on the kubelet-reported device ids
+		// (see besteffort_policy.go's same assumption on the list side).
+		// Serve the whole GPUs kubelet asked for instead of failing the
+		// Pod; there is no HAMi-tracked Pod to persist CU state against
+		// or to release a node lock for.
+		glog.Warningf("no HAMi-tracked pod pending on node %s (%v); serving kubelet device ids %v as whole GPUs", nodename, err, r.ContainerRequests)
+		current = &corev1.Pod{}
 	}
 	podCuAllocList := map[string]string{}
 	if raw := strings.TrimSpace(current.Annotations[utils.CuAllocation]); raw != "" {
@@ -1261,13 +1274,15 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						ReadOnly:      true,
 					})
 				}
-				if p.dmemEnabled {
+				if p.dmemEnabled && trackedPod {
 					// The pod's cgroup can take several seconds to appear
 					// after binding (measured up to ~7s on a real RKE2
 					// node), well past what Allocate should ever block for.
 					// Apply the cap in the background; libamvgpu's
 					// HIP_DEVICE_MEMORY_LIMIT_<i> above is already the
 					// synchronous enforcement path when auditCompatible.
+					// Skipped without a HAMi-tracked pod: there is no real
+					// namespace/name/UID to resolve a cgroup path from.
 					podNamespace, podName, podUID, qos := current.Namespace, current.Name, string(current.UID), current.Status.QOSClass
 					for _, d := range devreq {
 						go p.applyDmemCap(podNamespace, podName, podUID, qos, d)
@@ -1308,7 +1323,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	}
 
 	glog.Infoln("Allocate Response", response.ContainerResponses)
-	utils.PodAllocationTrySuccess(nodename, NodeLockName, current)
+	if trackedPod {
+		utils.PodAllocationTrySuccess(nodename, NodeLockName, current)
+	}
 
 	return response, nil
 }

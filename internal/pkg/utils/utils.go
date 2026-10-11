@@ -19,6 +19,7 @@ package utils
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,13 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
+
+// ErrNoPendingPod is returned by GetPendingPod when no Pod on the node
+// carries HAMi's bind-time annotations, typically because kubelet is
+// asking Allocate for a Pod that a different scheduler or a second device
+// plugin placed on this node's kubelet-reported device ids, outside HAMi's
+// own scheduling flow.
+var ErrNoPendingPod = errors.New("no binding pod found")
 
 func GetNode(nodename string) (*corev1.Node, error) {
 	if nodename == "" {
@@ -85,7 +93,7 @@ func GetPendingPod(ctx context.Context, node string) (*corev1.Pod, error) {
 			return &p, nil
 		}
 	}
-	return nil, fmt.Errorf("no binding pod found on node %s", node)
+	return nil, fmt.Errorf("%w on node %s", ErrNoPendingPod, node)
 }
 
 func GetAllocatePodByNode(ctx context.Context, nodeName string) (*corev1.Pod, error) {
