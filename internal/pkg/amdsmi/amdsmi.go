@@ -324,7 +324,28 @@ func partitionProfilesForBDF(bdf string) ([]PartitionProfile, error) {
 			XCCPerPartition: xccPerPartition(config, profile.profile_index),
 		})
 	}
+	fillXCCPerPartition(profiles)
 	return profiles, nil
+}
+
+// fillXCCPerPartition sets the XCC count of profiles that AMD SMI listed no
+// resources for. The resource list can describe the current profile only (an
+// MI325X VF returned the XCC count for SPX and nothing for DPX, QPX and CPX),
+// so the other profiles get the GPU's XCC total, taken from the single
+// partition profile, split evenly over their partitions.
+func fillXCCPerPartition(profiles []PartitionProfile) {
+	total := 0
+	for _, p := range profiles {
+		if p.NumPartitions == 1 && p.XCCPerPartition > 0 {
+			total = p.XCCPerPartition
+		}
+	}
+	for i := range profiles {
+		p := &profiles[i]
+		if p.XCCPerPartition == 0 && p.NumPartitions > 0 && total%p.NumPartitions == 0 {
+			p.XCCPerPartition = total / p.NumPartitions
+		}
+	}
 }
 
 // SetGPUComputePartitions flips every GPU to the given compute partition
