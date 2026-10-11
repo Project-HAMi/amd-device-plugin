@@ -981,8 +981,8 @@ The test host had one GPU (a virtual function), k3s 1.37, and kernel 6.8.0 and t
 
 Not checked:
 
-- Several GPUs and real XGMI links.
-- Multi-NUMA `numa-bind` and the open HAMi pull requests that need several GPUs (#3187, #3191).
+- Real XGMI hardware and several real GPUs. The multi-GPU scheduler logic of HAMi #3187 and #3191 (link-bind, topology-aware, numa-bind) was run with the real scheduler on this machine, but with extra GPUs and XGMI links written into the node registration, so only the scheduling decision is covered.
+- Open HAMi pull requests, all waiting for a review: #3212 (empty type fix), #3213 (AMD guide and examples), #3190, #3192, #3187, #3191.
 - A real partition flip.
 - RDNA behavior.
 - A `hipMalloc` larger than VRAM (XNACK is off on the VF).
