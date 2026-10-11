@@ -9,6 +9,7 @@ subtrees:
   - file: user-guide/configuration
   - file: user-guide/examples
   - file: user-guide/resource-allocation
+  - file: user-guide/mi355x-partitioning
 - caption: Contributing
   entries:
   - file: contributing/development

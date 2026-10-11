@@ -99,7 +99,7 @@ The kubelet calls the plugin when it admits the pod, before it pulls the image. 
 
 ## CDI
 
-With `dp.cdi.enabled=true` the plugin writes an `amd.com/gpu` CDI spec to `dp.cdi.specDir`, with one device per DRM card plus `/dev/kfd`, and returns CDI device names instead of device nodes. The container runtime must have CDI enabled and read that directory; containerd 2.x and CRI-O do by default. CDI device responses from a device plugin need Kubernetes 1.28 or newer (the `DevicePluginCDIDevices` feature gate, on by default since 1.29).
+With `dp.cdi.enabled=true` the plugin writes an `amd.com/gpu` CDI spec to `dp.cdi.specDir`, with one device per DRM card plus `/dev/kfd`, and returns CDI device names instead of device nodes. The container runtime must have CDI enabled and read that directory; containerd 2.x and CRI-O do by default. CDI device responses from a device plugin need Kubernetes 1.28 or newer (the `DevicePluginCDIDevices` feature gate, on by default since 1.29). Turning CDI off does not delete the spec: `amd.com-gpu.json` stays in `dp.cdi.specDir` (it is harmless, Pods get device nodes again) until you remove it or the node reboots.
 
 ## Resource naming strategy
 
