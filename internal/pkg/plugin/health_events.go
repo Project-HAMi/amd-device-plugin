@@ -2,13 +2,16 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 
 	"github.com/Project-HAMi/amd-device-plugin/internal/pkg/utils"
 )
@@ -101,5 +104,75 @@ func emitNodeEvent(node *corev1.Node, ev healthEvent) {
 	}, metav1.CreateOptions{})
 	if err != nil {
 		glog.Warningf("record node event %s: %v", ev.Reason, err)
+	}
+}
+
+const reasonModeChangedInUse = "AMDGPUModeChangedInUse"
+
+// modeChanges lists, in order, the GPUs whose registered Mode differs from the
+// previous register annotation: the operating mode switched since the last
+// registration. An empty or unreadable previous annotation reports nothing.
+func modeChanges(previous string, current []*utils.DeviceInfo) []*utils.DeviceInfo {
+	var before []utils.DeviceInfo
+	if json.Unmarshal([]byte(previous), &before) != nil {
+		return nil
+	}
+	modes := make(map[string]string, len(before))
+	for _, d := range before {
+		modes[d.ID] = d.Mode
+	}
+	var changed []*utils.DeviceInfo
+	for _, d := range current {
+		if mode, ok := modes[d.ID]; ok && mode != d.Mode {
+			changed = append(changed, d)
+		}
+	}
+	return changed
+}
+
+// podsHolding lists the running Pods, as namespace/name, whose device
+// allocation names the GPU id.
+func podsHolding(pods []corev1.Pod, id string) []string {
+	var out []string
+	for i := range pods {
+		pod := &pods[i]
+		if !utils.IsPodInTerminatedState(pod) && strings.Contains(pod.Annotations[utils.DeviceAllocation], id) {
+			out = append(out, pod.Namespace+"/"+pod.Name)
+		}
+	}
+	return out
+}
+
+func modeName(mode string) string {
+	if mode == "" {
+		return "cu"
+	}
+	return "partition (" + mode + ")"
+}
+
+// warnModeChangeInUse reports GPUs whose operating mode changed while Pods
+// still hold them. Those Pods were placed under the old mode's slot count and
+// CU layout, so the node should have been drained first. It only warns.
+func warnModeChangeInUse(node *corev1.Node, devices []*utils.DeviceInfo) {
+	changed := modeChanges(node.Annotations[registerAnnosKey], devices)
+	if len(changed) == 0 {
+		return
+	}
+	selector := fields.OneTermEqualSelector("spec.nodeName", node.Name).String()
+	pods, err := utils.GetClient().CoreV1().Pods("").List(context.Background(), metav1.ListOptions{FieldSelector: selector})
+	if err != nil {
+		glog.Warningf("operating mode changed, cannot list Pods to check for running GPU workloads: %v", err)
+		return
+	}
+	for _, d := range changed {
+		holders := podsHolding(pods.Items, d.ID)
+		if len(holders) == 0 {
+			continue
+		}
+		ev := healthEvent{corev1.EventTypeWarning, reasonModeChangedInUse,
+			fmt.Sprintf("GPU %d (%s) switched to %s mode while %d Pod(s) still use it: %s. Drain the node before changing the operating mode",
+				d.Index, d.ID, modeName(d.Mode), len(holders), strings.Join(holders, ", "))}
+		glog.Warningf("%s: %s", ev.Reason, ev.Message)
+		emitNodeEvent(node, ev)
 	}
 }

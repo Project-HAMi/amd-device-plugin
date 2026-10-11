@@ -372,6 +372,7 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 		}
 	}
 
+	warnModeChangeInUse(node, devices)
 	annos[registerAnnosKey] = marshalNodeDevices(devices)
 	glog.Infof("patch node with the following annos %v", annos)
 	err = utils.PatchNodeAnnotations(node, annos)
