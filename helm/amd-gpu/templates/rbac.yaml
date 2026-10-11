@@ -10,11 +10,12 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "patch"]
-{{- if .Values.dp.reportNodeCapacity }}
+  # Publishes amd.com/gpumem and amd.com/gpucores with dp.reportNodeCapacity,
+  # and removes them again once it is turned off: kubelet keeps a value it
+  # did not advertise itself.
   - apiGroups: [""]
     resources: ["nodes/status"]
     verbs: ["patch"]
-{{- end }}
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create"]

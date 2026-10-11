@@ -385,6 +385,10 @@ func (p *AMDGPUPlugin) RegisterInAnnotation() error {
 		if err := utils.PatchNodeStatusCapacity(node, healthyCapacity(devices)); err != nil {
 			glog.Errorf("patch node capacity error: %v", err)
 		}
+	} else if err := utils.ClearNodeStatusCapacity(node, gpuMemResource, gpuCoresResource); err != nil {
+		// A run with reporting on left these behind; kubelet would keep
+		// rejecting Pods that ask for more than the stale value.
+		glog.Errorf("clear stale node capacity error: %v", err)
 	}
 
 	warnModeChangeInUse(node, devices)

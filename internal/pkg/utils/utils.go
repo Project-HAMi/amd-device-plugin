@@ -140,6 +140,31 @@ func PatchNodeStatusCapacity(node *corev1.Node, resources corev1.ResourceList) e
 	return err
 }
 
+// ClearNodeStatusCapacity removes the named resources from the node's status
+// capacity and allocatable when it still lists them. Kubelet never drops an
+// extended resource it does not advertise itself, so a value patched earlier
+// stays until something removes it.
+func ClearNodeStatusCapacity(node *corev1.Node, names ...corev1.ResourceName) error {
+	stale := map[string]any{}
+	for _, n := range names {
+		_, inCapacity := node.Status.Capacity[n]
+		_, inAllocatable := node.Status.Allocatable[n]
+		if inCapacity || inAllocatable {
+			stale[string(n)] = nil
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	bytes, err := json.Marshal(map[string]any{"status": map[string]any{"capacity": stale, "allocatable": stale}})
+	if err != nil {
+		return err
+	}
+	_, err = GetClient().CoreV1().Nodes().
+		Patch(context.Background(), node.Name, k8stypes.StrategicMergePatchType, bytes, metav1.PatchOptions{}, "status")
+	return err
+}
+
 func PatchNodeAnnotations(node *corev1.Node, annotations map[string]string) error {
 	type patchMetadata struct {
 		Annotations map[string]string `json:"annotations,omitempty"`
