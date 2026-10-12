@@ -15,7 +15,7 @@ A short guide for someone who opens the repo for the first time. For what was te
 ## 2. How a pod gets its GPU
 
 1. **Webhook (HAMi).** Checks `amd.com/gpucores` is 1 to 100 and sends the pod to the HAMi scheduler.
-2. **Scheduler (HAMi).** Reads the node annotation, picks node and GPUs, writes `hami.io/amd-devices-to-allocate` and `hami.io/amd-devices-allocated` on the pod.
+2. **Scheduler (HAMi).** Reads the node annotation, picks node and GPUs, writes `hami.io/amd-devices-to-allocate` and `hami.io/amd-devices-allocated` on the pod. One slot per container, init containers first, then app containers; the plugin maps a slot back to its container (`GetNextDeviceRequest`).
 3. **Bind (HAMi).** Takes the node lock (`hami.io/mutex.lock`) and sets `hami.io/bind-phase=allocating`.
 4. **Kubelet** calls this plugin's `Allocate`.
 5. **Plugin `Allocate`** (`internal/pkg/plugin/plugin.go`) finds the pod, turns the allocation into devices (`/dev/kfd`, `/dev/dri/*`, or CDI names), `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` and `HSA_CU_MASK`. For slices it adds `HIP_DEVICE_MEMORY_LIMIT_<i>`, `LD_AUDIT` and a read-only mount of the hook, records the CU bits in `hami.io/amd-cu-allocated` and starts the dmem cap. It then sets `bind-phase=success` and releases the lock (on error: `failed`).
@@ -137,6 +137,7 @@ Everything was run on one AMD Instinct MI325X (shown as a virtual function) with
 | Pod stays Pending with `CardInsufficientCore` or `CardInsufficientMemory` | Another pod holds the cores or memory. A pod without `gpucores` books 100 percent. |
 | Pod stays Pending with `NodeInsufficientDevice` | Allocatable GPUs are 0 (plugin down or the GPU unhealthy), or the request needs more distinct GPUs than the node has. |
 | Pod fails with `no binding pod found` | An older plugin got a pod HAMi did not schedule; current versions serve whole GPUs. |
+| Slice Pod with an init container gets the whole GPU (log: `annotation allocation unavailable`) | The plugin predates #189, which maps the annotation slots past init containers. |
 | Plugin Pod stops with a usage message | Chart and image come from different releases. |
 | Allocatable is 0 right after a restart | Wait one registration (30 s); check that no other plugin owns `amd.com/gpu`. |
 | Slice runs without a memory limit | The image cannot load the hook (musl, static, glibc older than 2.34). With `muslFailClosed` it is refused instead. |
