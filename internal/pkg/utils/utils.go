@@ -280,16 +280,21 @@ func GetNextDeviceRequest(dtype string, p corev1.Pod) (corev1.Container, Contain
 	if !ok {
 		return corev1.Container{}, res, fmt.Errorf("device request not found")
 	}
+	initCount := len(p.Spec.InitContainers)
 	for ctridx, ctrDevice := range pd {
 		if len(ctrDevice) == 0 {
 			continue
 		}
+		// the annotation lists init containers first, then app containers
+		if ctridx < initCount {
+			return p.Spec.InitContainers[ctridx], ctrDevice, nil
+		}
 		// a stale or hand-edited annotation can list more containers than
 		// the pod has; refuse it instead of panicking in Allocate
-		if ctridx >= len(p.Spec.Containers) {
-			return corev1.Container{}, res, fmt.Errorf("device request for container %d, pod has %d", ctridx, len(p.Spec.Containers))
+		if ctridx-initCount >= len(p.Spec.Containers) {
+			return corev1.Container{}, res, fmt.Errorf("device request for container %d, pod has %d init and %d app containers", ctridx, initCount, len(p.Spec.Containers))
 		}
-		return p.Spec.Containers[ctridx], ctrDevice, nil
+		return p.Spec.Containers[ctridx-initCount], ctrDevice, nil
 	}
 	return corev1.Container{}, res, fmt.Errorf("device request not found")
 }
