@@ -146,6 +146,16 @@ func TestNextDeviceRequestSkipsGPULessContainer(t *testing.T) {
 	}
 }
 
+// Slot 0 belongs to the init container, so the app container is slot 1.
+func TestNextDeviceRequestMapsPastInitContainers(t *testing.T) {
+	pod := testPod(";uuid-a,AMDGPU,4096,25:;", "app")
+	pod.Spec.InitContainers = []corev1.Container{{Name: "wait"}}
+	ctr, devs, err := GetNextDeviceRequest("amd", *pod)
+	if err != nil || ctr.Name != "app" || len(devs) != 1 {
+		t.Fatalf("GetNextDeviceRequest = %q, %v, %v; want app with one device", ctr.Name, devs, err)
+	}
+}
+
 // An annotation naming a container the pod does not have is an error, not a panic.
 func TestNextDeviceRequestRejectsMissingContainer(t *testing.T) {
 	pod := testPod(";uuid-a,AMDGPU,4096,25:;", "only")
