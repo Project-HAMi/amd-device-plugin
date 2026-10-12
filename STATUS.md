@@ -4,9 +4,9 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 ## In one minute
 
-- We re-ran **every merged pull request** of this repository (131) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (17 closed, 6 open). This file and `ONBOARDING.md` cover all three; they live only here.
+- We re-ran **every merged pull request** of this repository (131, plus #189 found afterwards) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (17 closed, 6 open). This file and `ONBOARDING.md` cover all three; they live only here.
 - Each pull request has one line below: the result and what is still not verified. "Nothing" means it ran fully on the real GPU.
-- We found **twelve real problems** and fixed them (table below). The partition work (#17) was tested again from the start and led to #169, #171 and #172.
+- We found **thirteen real problems** and fixed them (table below). The partition work (#17) was tested again from the start and led to #169, #171 and #172.
 - What is left: five open questions and the checks that need hardware this machine did not have (end of this file).
 
 ## How we tested
@@ -34,6 +34,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 | The weekly Dependabot job for the pinned ROCm images failed because it tried to move the 6.2 baseline tag. | core #17, #22 | core #32 |
 | The partitioning page was in no docs toctree, and the changelog lacked 21 pull requests. | #50, #117 | #179, #180 |
 | Docs and README were behind the code. | all | #168 and core #27 |
+| A Pod with an init container got no slice limits (no CU mask, no VRAM cap, no hook, no dmem cap): `GetNextDeviceRequest` indexed the app containers without skipping the init container slots HAMi writes first, so Allocate fell back to a whole GPU. | reported on an RX 9070 XT | #189 |
 
 ## Open questions
 
@@ -254,3 +255,4 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #158 | feat(plugin): add -device_memory_scaling for memory oversubscription | Scaling 1.5 registered 1.5 times the memory and Pods got the oversubscribe setting. Resetting restored it. | A real allocation larger than VRAM spilling to host memory is not verified. |
 | #159 | fix(plugin): keep the device ID stable across operating modes | The registered GPU ID is the same in cu mode and partition mode. | Real partitionable Instinct GPUs and XCP partition IDs were not tested. |
 | #160 | feat(plugin): warn when the operating mode changes under running Pods | With a Pod running, changing the mode and restarting logged a warning and sent a node event naming the Pod. | A GPU with real hardware partitions was not tested. |
+| #189 | fix(utils): map device request slots past init containers | Merged. A unit test with one init container and one app container fails before the fix and passes after. The mapping is the one HAMi's NVIDIA plugin uses. Not re-run on the MI325X. | A Pod with an init container and a slice on a real GPU (CU mask, memory limit, hook, dmem cap). |
