@@ -37,7 +37,7 @@ RUN echo "73A2,   C0, AMD Radeon Pro W6900X" >> /go/src/github.com/Project-HAMi/
 RUN echo "73AB,   C0, AMD Radeon Pro W6800X" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 RUN echo "74BC,   00, AMD Instinct MI308X HF VF" >> /go/src/github.com/Project-HAMi/amd-device-plugin/cmd/k8s-node-labeller/amdgpu.ids
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8@sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8@sha256:c4c285d42941ebb2bd4da878479008e1e4536bb599aad1dbe568f89de9053661
 LABEL \
     name="amd-k8s-node-labeller" \
     maintainer="Project-HAMi maintainers" \
