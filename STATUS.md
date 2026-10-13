@@ -96,7 +96,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 
 | PR | Change | Result | Still open |
 |---|---|---|---|
-| #1975 | docs: fix typo and mark AMD and MIG as supported in roadmap | Merged. Docs only. Not run on a GPU. | Whether the AMD support claim matches what is built. |
+| #1975 | docs: fix typo and mark AMD and MIG as supported in roadmap | Merged. Docs only. The roadmap page was removed later (#3200, moved to the website). The claim "Support AMD GPU device" holds: the AMD scheduler support is on HAMi master and every feature was run on the real MI325X. | The website roadmap was not checked. |
 | #2011 | feat: new mutex GPU scheduling policy | Merged. Unit test and a real run: a Pod with `mutex` stays Pending (ExclusiveDeviceAllocateConflict) while another Pod holds the GPU, and a normal Pod can still share a GPU a mutex Pod holds. | Several GPUs (one idle, one used) were not available. |
 | #2098 | chore: remove dead script, boilerplate file, and unused ParseConfig stubs | Merged. Only removals. Build and tests pass on the GPU host. | Nothing |
 | #2621 | feat: support comma-separated gpu-scheduler-policy combinations | Merged. Real run: `binpack,mutex` and `mutex,spread` apply mutex (Pod refused), `spread,binpack` does not. | Other orders and three or more policies were not run. |
