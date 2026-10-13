@@ -1,6 +1,6 @@
 # Onboarding: Project-HAMi/amd-device-plugin
 
-A short guide for someone who opens the repo for the first time. For what was tested on a real GPU and what is still open, read [STATUS.md](STATUS.md). Both files cover this repo and [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core); they live only here.
+A short guide for someone who opens the repo for the first time. For what was tested on a real GPU and what is still open, read [STATUS.md](STATUS.md). It also covers [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core).
 
 ## 1. What it is
 
@@ -34,7 +34,7 @@ Every 30 s the plugin re-publishes the node annotation; every `-pulse` seconds i
 
 Notes:
 
-- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi PR #3192 adds defaults).
+- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi #3192 adds `defaultCores` and `defaultMemory` settings).
 - Optional pod annotations the HAMi scheduler honors: `amd.com/use-gputype`, `amd.com/nouse-gputype`, `amd.com/use-gpu-uuid`, `amd.com/nouse-gpu-uuid`, `amd.com/numa-bind`, `hami.io/gpu-scheduler-policy`.
 - With `-resource_naming_strategy=mixed`, partitioned Instinct GPUs get names like `amd.com/cpx_nps4`.
 - Do not put whole-GPU pods and slices on one card when VRAM isolation matters.
@@ -125,10 +125,7 @@ helm lint helm/amd-gpu
 
 ## 10. Verified on a real GPU
 
-Everything was run on one AMD Instinct MI325X (shown as a virtual function) with k3s, the HAMi scheduler, kernel 6.8 and 7.0. [STATUS.md](STATUS.md) has the result for every pull request and what is not verified. In short:
-
-- Verified: slices and masks (disjoint across pods, pinned against `setenv`), memory limits for the allocator types (including `hipMallocAsync` and pools), the dmem cap on kernel 7.0, queue priority (144.7 against 72.3 kernels/s), upgrades and rollbacks of the published 0.0.2 and 0.0.3, CDI, restarts of the kubelet, health from the real Device Metrics Exporter, the HAMi scheduler features (memory percentage, ResourceQuota, mutex, numa and link binding, runtimeClassName).
-- Not verified: several real GPUs and XGMI (only the scheduler decision was run, with extra GPUs written into the registration), real compute-partition flips (a virtual function cannot flip; needs bare metal MI300, MI325 or MI355), RDNA cards, memory spill to host (XNACK is off on the VF), a real hardware fault.
+Everything was run on one AMD Instinct MI325X (shown as a virtual function) with k3s, the HAMi scheduler, kernel 6.8 and 7.0. [STATUS.md](STATUS.md) has the result for every pull request and what is not verified (several GPUs and XGMI, real partition flips, RDNA cards, memory spill to host, a real hardware fault).
 
 ## 11. Troubleshooting
 

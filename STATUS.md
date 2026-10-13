@@ -4,10 +4,9 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 ## In one minute
 
-- We re-ran **every merged pull request** of this repository (131, plus #189 found afterwards) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (17 closed, 6 open). This file and `ONBOARDING.md` cover all three; they live only here.
+- We re-ran **every merged pull request** of this repository (131, plus #189 found afterwards) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (all closed or merged).
 - Each pull request has one line below: the result and what is still not verified. "Nothing" means it ran fully on the real GPU.
-- We found **thirteen real problems** and fixed them (table below). The partition work (#17) was tested again from the start and led to #169, #171 and #172.
-- What is left: five open questions and the checks that need hardware this machine did not have (end of this file).
+- What is left: the checks that need hardware this machine did not have (end of this file).
 
 ## How we tested
 
@@ -15,34 +14,6 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 - Also run there: the real AMD Device Metrics Exporter, the upstream ROCm plugin as a second DaemonSet, the published 0.0.2 and 0.0.3 images, UBI, alpine, fedora and old glibc images, ROCm 6.2 and 7.2, and the example Pods (PyTorch, TensorFlow, JAX, vLLM).
 - Several GPUs were simulated for the HAMi scheduler only, with extra GPUs written into the node registration.
 
-
-## Problems found and fixed
-
-| Problem | Where it was found | Fix |
-|---|---|---|
-| A Pod that HAMi did not schedule failed at start with "no binding pod found". | #18 | #161 |
-| A firmware test failed on kernel 7.0 because a debugfs line has a new field. | #38 | #162 |
-| With `muslFailClosed`, the first Pod that used a new image failed, and every retry failed too. | #104 | #163 |
-| Turning `reportNodeCapacity` off left old values on the node. | #157 | #164 |
-| Images were built with Go 1.26.8, which has 11 known standard library problems. | build | #166 |
-| `go.mod` used a grpc development tag instead of a release. | #136 | #167 |
-| No issue or pull request templates in amd-hami-core; some `/kind` labels missing in both repos. | core #2, #15 | core #26 and new labels |
-| With `-resource_naming_strategy=mixed` a virtual function was named `amd.com/spx_nps1` and `amd.com/gpu` went to zero. | #17 | #171 |
-| The registration said 0 XCC per partition for DPX, QPX and CPX, because AMD SMI lists XCC for the current profile only. | #17 | #172 |
-| On HAMi master a GPU registered with an empty type was never picked: the Pod stayed Pending with NodeInsufficientDevice. | HAMi #2815 | HAMi #3212 (merged) |
-| The Security Insights files did not validate against the published schema (a wrong tool type, two fields in the wrong place). | #46, core #15 | #184 and core #31 |
-| The weekly Dependabot job for the pinned ROCm images failed because it tried to move the 6.2 baseline tag. | core #17, #22 | core #32 |
-| The partitioning page was in no docs toctree, and the changelog lacked 21 pull requests. | #50, #117 | #179, #180 |
-| Docs and README were behind the code. | all | #168 and core #27 |
-| A Pod with an init container got no slice limits (no CU mask, no VRAM cap, no hook, no dmem cap): `GetNextDeviceRequest` indexed the app containers without skipping the init container slots HAMi writes first, so Allocate fell back to a whole GPU. | reported on an RX 9070 XT | #189 |
-
-## Open questions
-
-- **Cores default.** A request without `amd.com/gpucores` gets all CUs, so a Pod that sets only `amd.com/gpumem` blocks the GPU's compute (HAMi #3192 adds settings for this).
-- **OWNERS.** Neither repo has an `OWNERS` file, so the approval bot reports "not approved".
-- **Dependabot.** It can move a Go module to a development tag again.
-- **k3s paths.** The `muslFailClosed` chart defaults are RKE2 paths; on k3s two values must be set.
-- **Cordon.** `hami.io/device-cordon` takes effect once the scheduler has seen the annotation; a Pod created within about a second can still be placed.
 
 ## What is not verified, and why
 
@@ -54,8 +25,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 - **Examples:** the two-GPU JAX pods (#139) and the vLLM model download (#141, no IPv6 route to Hugging Face).
 - **Release, arm64 and other Kubernetes versions:** #7, #11, #12, #13, #60, #128.
 - **Hosted services:** Read the Docs has no project (#50, #147).
-- **Waiting for a review:** HAMi #3192. After it merges, re-run its checks on HAMi master.
-- **HAMi checks still open on this machine:** #2621 (more policy orders), #3178 (used bytes under load), #3179 (Helm output), #3180 (init containers in a quota), #3193 (two skipped e2e specs), #3194 (Helm rendering, missing RuntimeClass).
+- **HAMi checks still open on this machine:** #3192 (re-run on HAMi master, cordon race), #2621 (more policy orders), #3178 (used bytes under load), #3179 (Helm output), #3180 (init containers in a quota), #3190 (priority under slices), #3193 (two skipped e2e specs), #3194 (Helm rendering, missing RuntimeClass).
 
 
 ## amd-hami-core pull requests
@@ -114,7 +84,7 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #3188 | docs(amd): add the AMD GPU guide and examples | Closed, not merged. Re-opened as #3213, which was also closed. All 8 example manifests were applied on the real GPU: the whole-GPU, cores, memory and memory percentage ones ran, the type and UUID ones ran or stayed Pending (CardTypeMismatch, CardUuidMismatch) as the comments say. | The guide text itself was only read. |
 | #3190 | feat(amd): add amd.com/priority as AMD_TASK_PRIORITY | Closed, not merged: the maintainer asked for the environment variable only, which already works, so the resource form was dropped. Before closing, on a real node the Pod got the variable and a bad value was rejected. | Effect of the priority under HAMi slices was not re-measured. |
 | #3191 | feat(amd): make the topology-aware policy choose the most XGMI-linked GPUs | Merged (includes link-bind). Same fake multi-GPU run: topology-aware chose the linked pair, the same-NUMA pair without links, and the linked NUMA-1 pair together with numa-bind. | Real XGMI hardware and a real multi-GPU node. |
-| #3192 | feat(amd): default the GPU count, memory and cores, and honor device cordon | Open, waits for a review. Unit tests pass. On a real node defaults and cordon worked, four Pods ran with disjoint masks. Two review findings were fixed: a memory request without a limit is read, and an explicit 0 memory is kept as a whole GPU. | A Pod created right after the cordon can still be placed. |
+| #3192 | feat(amd): default the GPU count, memory and cores, and honor device cordon | Merged. Unit tests pass. On a real node defaults and cordon worked, four Pods ran with disjoint masks. Two review findings were fixed: a memory request without a limit is read, and an explicit 0 memory is kept as a whole GPU. | A Pod created right after the cordon can still be placed. |
 | #3193 | test(e2e): add an AMD GPU end-to-end suite | Merged. On a real node 9 specs passed, 0 failed, 2 skipped (re-run on current master). | The two skipped specs and the workflow run were not checked. |
 | #3194 | feat(amd): set a configurable runtimeClassName on AMD GPU Pods | Merged. Real Pods: a GPU Pod gets the class, an explicit class is kept, a Pod without a GPU is left alone. | Helm rendering and a missing RuntimeClass are untested. |
 | #3212 | fix(amd): read a registration without a type as the AMD type | Merged. Found by re-running #2815: a GPU registered without a type never matched, so its Pods stayed Pending. The new test fails without the change; with it a real Pod is scheduled and runs. | Nothing |
@@ -124,16 +94,10 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 
 | PR | Change | Result | Still open |
 |---|---|---|---|
-| #1 | Bump rocm-docs-core from 1.21.1 to 1.38.0 in docs/sphinx | Docs build with the new version finished fine. Only two old warnings, unrelated to the bump. | Nothing |
+| #1, #3, #4, #5, #6, #8, #10, #62 to #65, #68 to #71, #73, #74, #77, #79 | Dependency bumps (Go modules, base images, actions, docs pins) | Main carries the new versions. Builds, vet and tests pass, the docs build, and a real Pod ran with the images where it applies. | Nothing |
+| #9, #37, #67, #72, #76 | Bumps and a fix closed without merging | Superseded by #78, #79, #105 and #107, or already on main through other changes. | Nothing |
 | #2 | Bump golang from 1.23.6-alpine3.21 to 1.25.5-alpine3.21 | Builder image builds, vet is clean, tests pass on a real GPU except one old debugfs test. A real Pod ran and memory limit worked. The labeller image built from this Dockerfile ran on the node and set the labels. | Nothing |
-| #3 | Bump go-logr/logr from 1.4.3 to 1.4.4 | Vet and race tests pass on main. The running plugin logs normally. | Nothing |
-| #4 | Bump ubi9/ubi-minimal from 9.4 to 9.8 | Both UBI images build on current main. The UBI labeller image ran on the node and set the labels. | Nothing |
-| #5 | Bump alpine from 3.21.3 to 3.24.1 | Labeller image builds on main. Main now uses a newer Alpine than this PR. The labeller image ran on the node and set the labels. | Nothing |
-| #6 | Bump actions/checkout from 6 to 7 | CI only change. Main pins checkout v7, so the bump landed. | Nothing |
 | #7 | Bump google.golang.org/grpc from 1.65.0 to 1.84.0 | Plugin registers with kubelet over grpc, tests pass, and a real Pod got a GPU and memory limit. Restarting the kubelet with a GPU Pod running: allocatable was back in 6 seconds, the Pod kept running, a new Pod ran. | Other Kubernetes versions were not tried. |
-| #8 | Bump google.golang.org/protobuf from 1.36.8 to 1.36.11 | Covered by working registration and passing tests. A real Pod ran with the memory limit enforced. | Nothing |
-| #9 | Bump rocm/dev-ubuntu-22.04 from 7.0.2 to 7.2.4 | Closed, not merged. Main already has this ROCm version through other changes. | Nothing |
-| #10 | Bump k8s.io/klog/v2 from 2.130.1 to 2.140.0 | Plugin logs look normal, tests pass, and a real Pod ran fine. | Nothing |
 | #11 | Bump helm/chart-releaser-action from 1.6.0 to 1.7.0 | Workflow change only. Main pins the new version. | A real chart release with the new action was not run |
 | #12 | Bump rocm/dev-ubuntu-24.04 from 7.0.2 to 7.2.4 | Image builds and runs on a real GPU, reading GPU state. A real Pod ran with the memory limit enforced. | Other GPU families and drivers were not tried |
 | #13 | Bump controller-runtime from 0.19.0 to 0.25.1 | Labeller runs on the GPU node and sets labels. Vet and tests pass with a newer version. | Older Kubernetes server versions were not tried |
@@ -141,7 +105,6 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #17 | feat(plugin): hardware compute partitions for Instinct GPUs | Tested again item by item on a virtual function: both operating modes, annotations over env, naming strategies, mode switches with Pods running (no errors, no overlap), all its tests. Two bugs found, fixed in #171 and #172. | A real partition flip and XCP registration need a bare metal MI300 or newer |
 | #18 | fix admission error if another device plugin was installed | Helm install fix works. A bug in the no-annotation fallback was found, fixed in #161. The upstream ROCm plugin was run as a second DaemonSet on the node: kubelet refuses the second registration (device plugin already connected), the first plugin keeps serving, a GPU Pod ran with the hook, and removing the second plugin left everything working. | Nothing |
 | #20 | Inject HIP_VISIBLE_DEVICES for Ray-compatible AMD allocations | Pods now get the variable. The Ray import error reproduced without it and went away with it. On one GPU the Pod gets HIP_VISIBLE_DEVICES=0 next to ROCR_VISIBLE_DEVICES. | The order for several GPUs such as 0,1 needs several GPUs. |
-| #37 | Slice AMD GPUs by whole WGPs on RDNA | Closed, not merged. The same fix landed in #105 and #107. | Nothing |
 | #38 | Skip amdgpu firmware test when debugfs is unavailable | The test was failing for another reason on a real GPU, an SMC field not parsed. Fixed in #162. On the host the test passes with debugfs mounted and skips without it. A card without debugfs used to skip the whole test on a multi-GPU node; it is now left out and the other cards are still compared. | The mixed case itself needs two GPUs. |
 | #40 | Update docs Python dependencies to patched versions | Main has the patched versions and the docs build succeeds with them. pip-audit finds no known vulnerability in the docs pins. | Nothing |
 | #42 | Bump go directive to 1.26.8 for standard-library fixes | Go version is set, builder image builds, vet is clean, and tests pass on a real GPU. govulncheck on the built plugin binary reports no vulnerability. | Nothing |
@@ -156,24 +119,9 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #59 | chore(allocator): fix staticcheck findings | Staticcheck shows only generated code findings and vet is clean. | Allocation results on a multi-GPU node were not compared |
 | #60 | chore(deps): align k8s.io modules and use released protobuf | Modules are aligned on main, builder image builds, and tests pass. | Mixed Kubernetes versions were not tried on a real cluster |
 | #61 | fix(labeller): compare render minor without narrowing int64 | Unit test passes. Labeller built from main runs on the MI325X node and sets the expected labels. | Several GPUs with different render minors were not tried. |
-| #62 | Bump urllib3 from 2.2.2 to 2.8.0 in /docs/sphinx | Main pins this version or newer. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #63 | Bump gitpython from 3.1.43 to 3.1.62 in /docs/sphinx | Main pins this version or newer. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #64 | Bump pyjwt from 2.9.0 to 2.15.0 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #65 | Bump tornado from 6.4.2 to 6.5.9 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #66 | chore: replace deprecated io/ioutil and grpc.Dial | No old calls remain in the code. Plugin registers with kubelet and serves Allocate on the node. The real exporter (v1.4.1) ran on the host; the plugin read its health over the new client. | Nothing |
-| #67 | Bump k8s.io/kubelet from 0.31.0 to 0.37.1 | Closed, not merged. The same bump landed in #78, which also fixed the code changes this bump needed. | Nothing |
-| #68 | Bump alpine from 3.24.1 to 3.24.2 | Main uses the new base. The labeller image builds and runs. | Nothing |
-| #69 | Bump ubi9/ubi-init from 9.4 to 9.8 | Main uses the new base and the image builds. The UBI plugin image ran as the DaemonSet and registered the GPU. | Nothing |
-| #70 | Bump soupsieve from 2.5 to 2.9 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #71 | Bump pygments from 2.18.0 to 2.20.0 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #72 | Bump cryptography from 43.0.1 to 50.0.0 in /docs/sphinx | Closed, not merged. It was replaced by #79, which bumps the same packages together. | Nothing |
-| #73 | Bump requests from 2.32.3 to 2.33.0 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
-| #74 | Bump idna from 3.7 to 3.15 in /docs/sphinx | Main pins a newer version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #75 | chore: fix remaining staticcheck findings in cgo code | Staticcheck reports nothing in the hand written code. go vet is clean. | Nothing |
-| #76 | Bump pynacl from 1.5.0 to 1.6.2 in /docs/sphinx | Closed, not merged. It was replaced by #79, which bumps the same packages together. | Nothing |
-| #77 | Bump jinja2 from 3.1.4 to 3.1.6 in /docs/sphinx | Main pins this version. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #78 | chore(deps): bump k8s.io/kubelet to v0.37.1 | Plugin builds and runs against the new kubelet API. It registers and serves Allocate on the node. Upgrade 0.0.2 to 0.0.3 to main and a rollback ran with a GPU Pod running; the Pod was not restarted. | Nothing |
-| #79 | chore(docs): bump cryptography, pynacl, cffi and typing-extensions | Main pins these versions or newer. Docs build succeeds with the pins, with 2 unrelated warnings. | Nothing |
 | #80 | chore(docker): align Go and ROCm versions across Dockerfiles | Dockerfiles use matching Go and ROCm 7.2.4 versions. All four images build on the node. | Nothing |
 | #81 | chore: drop checked-in libamvgpu.so and refresh stale docs | The binary is gone and the image builds the hook from the submodule. Docs build succeeds. Pods load the hook. An old file in the hook directory was replaced by the plugin start; the new hook loaded in a Pod. | Nothing |
 | #82 | docs: refresh README hook and delivery description | Docs build succeeds. A whole-GPU Pod gets no hook. A sliced Pod gets the hook and the limits, as the README says. Alpine and glibc 2.27 images ran a sliced Pod. | Nothing |
