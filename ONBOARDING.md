@@ -34,7 +34,7 @@ Every 30 s the plugin re-publishes the node annotation; every `-pulse` seconds i
 
 Notes:
 
-- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi #3192 adds `defaultCores` and `defaultMemory` settings).
+- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi #3192, still open, adds `defaultCores` and `defaultMemory` settings).
 - Optional pod annotations the HAMi scheduler honors: `amd.com/use-gputype`, `amd.com/nouse-gputype`, `amd.com/use-gpu-uuid`, `amd.com/nouse-gpu-uuid`, `amd.com/numa-bind`, `hami.io/gpu-scheduler-policy`.
 - With `-resource_naming_strategy=mixed`, partitioned Instinct GPUs get names like `amd.com/cpx_nps4`.
 - Do not put whole-GPU pods and slices on one card when VRAM isolation matters.
@@ -51,7 +51,7 @@ The node annotation `hami.io/node-amd-register` is a JSON list, one entry per GP
 | `devmem`, `devcore` | VRAM in MiB (times `-device_memory_scaling`), active CUs |
 | `custominfo` | `pciBDF`, `cuPerWGP` (2 on RDNA), `computeQueues`, `xgmiPeers` (BDFs reachable over XGMI), partition profiles |
 
-Other annotations: `hami.io/amd-operating-mode` and `hami.io/amd-compute-partition` (node, per-node overrides of `OPERATING_MODE` and `COMPUTE_PARTITION`), `hami.io/device-cordon` (node, HAMi skips the listed GPUs).
+Other annotations: `hami.io/amd-operating-mode` and `hami.io/amd-compute-partition` (node, per-node overrides of `OPERATING_MODE` and `COMPUTE_PARTITION`), `hami.io/device-cordon` (node, HAMi skips the listed GPUs; needs HAMi #3192, still open).
 
 Extras: Events `AMDGPUUnhealthy`, `AMDGPUMissing`, `AMDGPURecovered`, `AMDGPUModeChangedInUse`; with `-report_node_capacity` the node also gets `amd.com/gpumem` and `amd.com/gpucores` capacity. When no GPU is left to serve, the annotation is cleared.
 
