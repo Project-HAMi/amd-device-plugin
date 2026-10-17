@@ -98,6 +98,18 @@ tolerations:
   - key: CriticalAddonsOnly
     operator: Exists
 
+# Keeps the device plugin and monitor off nodes labelled hami.io/amd-mode=dra,
+# which run the AMD DRA driver (HAMi-DRA drivers.amd) instead. Both would hand
+# out the same GPU, and the HAMi scheduler does not see DRA claims.
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: hami.io/amd-mode
+          operator: NotIn
+          values: ["dra"]
+
 node_selector_enabled: false
 node_selector:
   feature.node.kubernetes.io/pci-0300_1002.present: "true"
