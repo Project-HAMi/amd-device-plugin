@@ -12,6 +12,10 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 FROM rocm/dev-ubuntu-24.04:7.2.4@sha256:bdc8e61026cbb844ede93d44d2c50055f51ebb2041906b60182bf3bee3139054 AS rocm-runtime
+# AMD SMI 27 (ROCm 10.0) as vendored by the DRA driver. ROCm 10.0 has no
+# package repository; older AMD SMI releases report another UUID and product
+# name for some cards than the host tools and the DRA driver do.
+FROM ghcr.io/project-hami/amd-dra-driver:0.3.0@sha256:f221d3c844c7264d10d003eb1b835a8f3d92bbe5df5090182101297b28f120b6 AS amdsmi-lib
 FROM rocm/dev-ubuntu-22.04:7.2.4@sha256:a50a8547101ac9e7c35848ff609a56335214b789b468c9eb05dcd006a4a38c25 AS amdsmi-sdk
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
@@ -23,10 +27,11 @@ FROM docker.io/golang:1.26@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac23714
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     git pkg-config build-essential libdrm-dev libhwloc-dev \
     && rm -rf /var/lib/apt/lists/*
-# Keep the AMD SMI API at ROCm 7.2.4, but take it from Ubuntu 22.04 so the
-# library has an older glibc/libstdc++ baseline than the Ubuntu 24.04 runtime.
+# The 7.2.4 header declares the same types and calls as AMD SMI 27 for what
+# the plugin uses; the library itself is AMD SMI 27.
 COPY --from=amdsmi-sdk /opt/rocm/include/amd_smi /opt/rocm/include/amd_smi
-COPY --from=amdsmi-sdk /opt/rocm-7.2.4/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm/lib/libamd_smi.so
+COPY --from=amdsmi-lib /usr/lib64/libamd_smi.so.27.0.0 /usr/lib64/librocm_sysdeps_*.so* /opt/rocm/lib/
+RUN ln -s libamd_smi.so.27.0.0 /opt/rocm/lib/libamd_smi.so
 COPY --from=amdsmi-sdk /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/rocm/lib/libstdc++.so.6
 RUN ln -s libstdc++.so.6 /opt/rocm/lib/libstdc++.so
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
@@ -43,9 +48,10 @@ LABEL \
     org.opencontainers.image.vendor="Project-HAMi" \
     org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdrm2 libhwloc15 && rm -rf /var/lib/apt/lists/*
-# The executable records the libamd_smi.so.26 SONAME. Override the runtime
-# target so it uses the Ubuntu 22.04-built, but still ROCm 7.2.4, library.
-COPY --from=amdsmi-sdk /opt/rocm-7.2.4/share/amd_smi/amdsmi/libamd_smi.so /opt/rocm-7.2.4/lib/libamd_smi.so.26.2.2
+# The executable records the libamd_smi.so.27 SONAME. The library finds its
+# rocm_sysdeps libraries next to itself ($ORIGIN).
+COPY --from=amdsmi-lib /usr/lib64/libamd_smi.so.27.0.0 /usr/lib64/librocm_sysdeps_*.so* /opt/hami/lib/amdsmi/
+RUN echo /opt/hami/lib/amdsmi > /etc/ld.so.conf.d/hami-amdsmi.conf && ldconfig
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
 WORKDIR /root/
 COPY --from=builder /go/bin/k8s-device-plugin .

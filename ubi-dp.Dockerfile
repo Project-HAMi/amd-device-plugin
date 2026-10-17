@@ -11,6 +11,9 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+# AMD SMI 27 (ROCm 10.0), the same library as the main image; see Dockerfile.
+FROM ghcr.io/project-hami/amd-dra-driver:0.3.0@sha256:f221d3c844c7264d10d003eb1b835a8f3d92bbe5df5090182101297b28f120b6 AS amdsmi-lib
+
 FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:16e9e43d99e181463513cc84a514859b1abb9460f1c4d9e208da4b4e51cd5cc3 AS builder
 USER root
 RUN dnf install -y 'dnf-command(config-manager)' && \
@@ -23,10 +26,12 @@ RUN wget https://golang.org/dl/go1.26.9.linux-amd64.tar.gz && \
     echo "42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d  go1.26.9.linux-amd64.tar.gz" | sha256sum -c - && \
     tar -C /usr/local -xzf go1.26.9.linux-amd64.tar.gz && \
     rm go1.26.9.linux-amd64.tar.gz
-# AMD SMI SDK at the same ROCm release as the main image.
+# The AMD SMI header from ROCm 7.2.4, linked against the AMD SMI 27 library.
 RUN printf '[rocm]\nname=ROCm 7.2.4\nbaseurl=https://repo.radeon.com/rocm/el9/7.2.4/main\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n' > /etc/yum.repos.d/rocm.repo && \
     dnf install -y amd-smi-lib && \
     dnf clean all
+COPY --from=amdsmi-lib /usr/lib64/libamd_smi.so.27.0.0 /usr/lib64/librocm_sysdeps_*.so* /opt/rocm/lib/
+RUN ln -sf libamd_smi.so.27.0.0 /opt/rocm/lib/libamd_smi.so
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
@@ -60,9 +65,8 @@ RUN mkdir -p /licenses && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/ && \
     dnf install -y hwloc && \
     dnf clean all
-RUN printf '[rocm]\nname=ROCm 7.2.4\nbaseurl=https://repo.radeon.com/rocm/el9/7.2.4/main\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n' > /etc/yum.repos.d/rocm.repo && \
-    dnf install -y amd-smi-lib && \
-    dnf clean all
+COPY --from=amdsmi-lib /usr/lib64/libamd_smi.so.27.0.0 /usr/lib64/librocm_sysdeps_*.so* /opt/rocm/lib/
+RUN ln -s libamd_smi.so.27.0.0 /opt/rocm/lib/libamd_smi.so.27
 ENV LD_LIBRARY_PATH=/opt/rocm/lib
 ADD ./LICENSE /licenses/LICENSE
 RUN mkdir -p /opt/hami/bin /opt/hami/lib/amd
