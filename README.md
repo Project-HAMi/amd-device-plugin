@@ -9,4 +9,6 @@ A Kubernetes device plugin that lets [HAMi](https://github.com/Project-HAMi/HAMi
 - [STATUS.md](STATUS.md): what was checked on a real GPU, the problems found and fixed, and what is left.
 - [ONBOARDING.md](ONBOARDING.md): how the project works, for someone new.
 
-The library that limits memory inside pods lives in [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core); `STATUS.md` and `ONBOARDING.md` cover it too. Install steps and settings are in [docs](docs/index.md).
+The library that limits memory inside pods lives in [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core); `STATUS.md` and `ONBOARDING.md` cover it too. Install steps and settings are in [docs](docs/index.md), and the changes of each release in [CHANGELOG.md](CHANGELOG.md).
+
+The same sharing through Kubernetes DRA is [amd-dra-driver](https://github.com/Project-HAMi/amd-dra-driver). A node runs one of the two: the chart keeps this plugin off nodes labelled `hami.io/amd-mode=dra`.
