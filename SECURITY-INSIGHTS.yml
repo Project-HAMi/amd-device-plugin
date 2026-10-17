@@ -1,7 +1,7 @@
 header:
   schema-version: 2.0.0
-  last-updated: '2026-10-11'
-  last-reviewed: '2026-10-11'
+  last-updated: '2026-10-17'
+  last-reviewed: '2026-10-17'
   url: https://raw.githubusercontent.com/Project-HAMi/amd-device-plugin/main/SECURITY-INSIGHTS.yml
   comment: |
     Security metadata for the HAMi amd-device-plugin repository, following
@@ -105,7 +105,8 @@ repository:
         comment: |
           Static analysis on pull requests via GitHub Actions.
       - name: GitHub secret scanning
-        type: secret
+        # OpenSSF baseline scanners before v0.32.1 only read secret-scanning.
+        type: secret-scanning
         version: latest
         rulesets:
           - built-in
