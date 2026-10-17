@@ -173,6 +173,11 @@ type AMDGPUPlugin struct {
 	// bdfToROCrUUID maps the topology BDF to its ROCr UUID for kubelet split
 	// ids ("<bdf>#<slot>") resolved during Allocate.
 	bdfToROCrUUID map[string]string
+	// lastCapacity is the last libdrm capacity read per BDF. A GPU's CU and
+	// VRAM count do not change, so a failed read reuses it instead of
+	// dropping the GPU until the next discovery.
+	capacityMu   sync.Mutex
+	lastCapacity map[string]amdgpu.DeviceCapacity
 	// dmemEnabled additionally caps sliced allocations through the kernel
 	// dmem cgroup controller when available, a hard driver-level VRAM cap
 	// that needs no LD_AUDIT injection (see Project-HAMi/amd-hami-core#6).
@@ -556,7 +561,7 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 			continue
 		}
 		card, _ := deviceData["card"].(int)
-		capacity, err := getDeviceCapacity(fmt.Sprintf("card%d", card))
+		capacity, err := p.deviceCapacity(bdf, card)
 		if err != nil {
 			// With no CU or VRAM count every slice of it would fail in
 			// Allocate, and rebuilding CU occupancy would fail the node.
@@ -731,6 +736,29 @@ func (p *AMDGPUPlugin) publish(gpus map[string]map[string]interface{}, toTopolog
 
 // getDeviceCapacity is amdgpu.GetDeviceCapacity, replaceable in tests.
 var getDeviceCapacity = amdgpu.GetDeviceCapacity
+
+// deviceCapacity reads the capacity of the GPU at bdf through libdrm. Opening
+// the card can fail for a moment (seen as EACCES on an RX 9060 XT every few
+// minutes); the last value read for the GPU is used then, so the GPU stays
+// registered. A GPU never read is still an error.
+func (p *AMDGPUPlugin) deviceCapacity(bdf string, card int) (amdgpu.DeviceCapacity, error) {
+	capacity, err := getDeviceCapacity(fmt.Sprintf("card%d", card))
+	p.capacityMu.Lock()
+	defer p.capacityMu.Unlock()
+	if err != nil {
+		last, ok := p.lastCapacity[bdf]
+		if !ok {
+			return amdgpu.DeviceCapacity{}, err
+		}
+		glog.Warningf("GPU %s: libdrm capacity lookup failed (card%d), using the last value: %v", bdf, card, err)
+		return last, nil
+	}
+	if p.lastCapacity == nil {
+		p.lastCapacity = map[string]amdgpu.DeviceCapacity{}
+	}
+	p.lastCapacity[bdf] = capacity
+	return capacity, nil
+}
 
 func marshalNodeDevices(devices []*utils.DeviceInfo) string {
 	b, err := json.Marshal(devices)
