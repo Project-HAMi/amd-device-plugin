@@ -51,7 +51,7 @@ jobs:
           --workdir /go/src/github.com/Project-HAMi/amd-device-plugin
           --env LD_LIBRARY_PATH=/opt/rocm/lib
           "${BUILDER_IMAGE}"
-          bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.26 && go vet ./... && go test -race ./...'
+          bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.27 && go vet ./... && go test -race ./...'
 
   helm:
     name: Lint Helm chart
