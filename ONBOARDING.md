@@ -110,7 +110,7 @@ Dockerfile, ubi-dp.Dockerfile, labeller.Dockerfile, ubi-labeller.Dockerfile
 ```
 docker build --target builder -t amd-device-plugin-builder .
 docker run --rm -e LD_LIBRARY_PATH=/opt/rocm/lib --workdir /go/src/github.com/Project-HAMi/amd-device-plugin \
-  amd-device-plugin-builder bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.26 && go vet ./... && go test -race ./...'
+  amd-device-plugin-builder bash -c 'ln -sf libamd_smi.so /opt/rocm/lib/libamd_smi.so.27 && go vet ./... && go test -race ./...'
 helm lint helm/amd-gpu
 ```
 

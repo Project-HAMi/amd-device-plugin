@@ -8,6 +8,7 @@
 - Per-GPU health from the AMD Device Metrics Exporter (#152), node events when a GPU turns unhealthy, leaves or recovers (#155), and the XGMI peers of each GPU in the node annotation (#153).
 - `-exclude_gpus` and `-hip_log_level` (#156), `-device_memory_scaling` for memory oversubscription (#158), and optional healthy node capacity for `amd.com/gpumem` and `amd.com/gpucores` (#157).
 - The monitor reports per-container VRAM and host GPU metrics (#150) and the host GPU memory capacity (#154).
+- The chart keeps the plugin and the monitor off nodes labelled `hami.io/amd-mode=dra`, which run the AMD DRA driver instead (#203).
 
 ### Fixed
 
@@ -15,7 +16,9 @@
 - The SMC firmware line with a `program:` field parses (#162).
 - An image that is not on the node yet is pulled for the fail-closed check (#163).
 - Node capacity entries are removed when reporting is off (#164).
-- Built with Go 1.26.9 and the released grpc v1.84.0 (#166, #167).
+- Built with Go 1.27.2 and the released grpc v1.84.0 (#166, #167, #205).
+- Linked against AMD SMI 27, so the GPU UUID and product name match the host's `amd-smi` and the DRA driver; AMD SMI 26 reported the RX 9060 XT as `AMD Radeon Graphics` (#204).
+- The Security Insights file declares secret scanning with the tool type that OpenSSF baseline scanners read (#206).
 - SR-IOV virtual functions stay CU-sliced in partition mode, and keep the `amd.com/gpu` name when the partition cannot change (#169, #171).
 - The XCC count is published for every partition profile (#172).
 
