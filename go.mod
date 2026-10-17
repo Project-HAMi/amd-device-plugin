@@ -1,6 +1,6 @@
 module github.com/Project-HAMi/amd-device-plugin
 
-go 1.26.9
+go 1.27.2
 
 require (
 	github.com/go-logr/logr v1.4.4
