@@ -1210,6 +1210,30 @@ func TestGetAPIDevicesSkipsGPUWithoutCapacity(t *testing.T) {
 	}
 }
 
+// A failed read after a good one keeps the GPU with its last capacity.
+func TestDeviceCapacityReusesTheLastRead(t *testing.T) {
+	defer func(f func(string) (amdgpu.DeviceCapacity, error)) { getDeviceCapacity = f }(getDeviceCapacity)
+	fail := false
+	getDeviceCapacity = func(string) (amdgpu.DeviceCapacity, error) {
+		if fail {
+			return amdgpu.DeviceCapacity{}, errors.New("open /dev/dri/card1: permission denied")
+		}
+		return amdgpu.DeviceCapacity{VRAMMiB: 16304, CUCount: 32}, nil
+	}
+	p := &AMDGPUPlugin{}
+	if _, err := p.deviceCapacity("0000:07:00.0", 2); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	got, err := p.deviceCapacity("0000:07:00.0", 2)
+	if err != nil || got.VRAMMiB != 16304 || got.CUCount != 32 {
+		t.Fatalf("got %+v, %v; want the last capacity", got, err)
+	}
+	if _, err := p.deviceCapacity("0000:08:00.0", 3); err == nil {
+		t.Fatal("a GPU never read must still fail")
+	}
+}
+
 func TestHealthyCapacity(t *testing.T) {
 	got := healthyCapacity([]*utils.DeviceInfo{
 		{Health: true, Devmem: 16304, Devcore: 32},
