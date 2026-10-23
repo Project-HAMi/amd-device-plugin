@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 # AMD SMI 27 (ROCm 10.0), the same library as the main image; see Dockerfile.
-FROM ghcr.io/project-hami/amd-dra-driver:0.3.0@sha256:f221d3c844c7264d10d003eb1b835a8f3d92bbe5df5090182101297b28f120b6 AS amdsmi-lib
+FROM ghcr.io/project-hami/amd-dra-driver:0.4.0@sha256:1f3a182b11203c59e49833c49b9c81ec1756846091bbfce5fcdb781d7c1ae05c AS amdsmi-lib
 
 FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:16e9e43d99e181463513cc84a514859b1abb9460f1c4d9e208da4b4e51cd5cc3 AS builder
 USER root
