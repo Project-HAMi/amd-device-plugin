@@ -14,7 +14,7 @@
 # AMD SMI 27 (ROCm 10.0), the same library as the main image; see Dockerfile.
 FROM ghcr.io/project-hami/amd-dra-driver:0.4.0@sha256:1f3a182b11203c59e49833c49b9c81ec1756846091bbfce5fcdb781d7c1ae05c AS amdsmi-lib
 
-FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:16e9e43d99e181463513cc84a514859b1abb9460f1c4d9e208da4b4e51cd5cc3 AS builder
+FROM registry.access.redhat.com/ubi9/ubi:9.8@sha256:48393e4261b2544f652c915b3e052256ddf66ee95cd04dc0362191f302c4e94a AS builder
 USER root
 RUN dnf install -y 'dnf-command(config-manager)' && \
     dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ && \
