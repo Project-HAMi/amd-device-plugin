@@ -34,7 +34,7 @@ Every 30 s the plugin re-publishes the node annotation; every `-pulse` seconds i
 
 Notes:
 
-- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi #3192, still open, adds `defaultCores` and `defaultMemory` settings).
+- A request with only `gpumem` still books 100 percent of the cores, so only one such pod runs at a time (HAMi #3192, merged on 2026-10-13, adds `defaultCores` and `defaultMemory` settings).
 - Optional pod annotations the HAMi scheduler honors: `amd.com/use-gputype`, `amd.com/nouse-gputype`, `amd.com/use-gpu-uuid`, `amd.com/nouse-gpu-uuid`, `amd.com/numa-bind`, `hami.io/gpu-scheduler-policy`.
 - With `-resource_naming_strategy=mixed`, partitioned Instinct GPUs get names like `amd.com/cpx_nps4`.
 - Do not put whole-GPU pods and slices on one card when VRAM isolation matters.
