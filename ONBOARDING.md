@@ -46,7 +46,7 @@ The node annotation `hami.io/node-amd-register` is a JSON list, one entry per GP
 | Field | Value |
 |---|---|
 | `id` | AMD SMI UUID (or `GPU-<unique_id>` for an XCP partition). Same in both operating modes. |
-| `index`, `numa`, `type`, `health` | DRM card minor, NUMA node, market name, false if the DRM node cannot be opened or the exporter says unhealthy |
+| `index`, `numa`, `type`, `health` | DRM card minor, NUMA node, market name, false if the DRM node cannot be opened or the exporter says unhealthy. When AMD SMI reports no name or the generic `AMD Radeon Graphics` (it does for the MI325X), the name comes from the KFD `device_id` (`amd.com/use-gputype: "AMD Instinct MI325X"`). |
 | `count` | Share count: `-split_count`, else 2 on gfx12 and 10 elsewhere |
 | `devmem`, `devcore` | VRAM in MiB (times `-device_memory_scaling`), active CUs |
 | `custominfo` | `pciBDF`, `cuPerWGP` (2 on RDNA), `computeQueues`, `xgmiPeers` (BDFs reachable over XGMI), partition profiles |
@@ -125,7 +125,7 @@ helm lint helm/amd-gpu
 
 ## 10. Verified on a real GPU
 
-Everything was run on one AMD Instinct MI325X (shown as a virtual function) with k3s, the HAMi scheduler, kernel 6.8 and 7.0. [STATUS.md](STATUS.md) has the result for every pull request and what is not verified (several GPUs and XGMI, real partition flips, RDNA cards, memory spill to host, a real hardware fault).
+Everything was run on AMD Instinct MI325X cards: one shown as a virtual function (k3s, kernel 6.8 and 7.0) and one MI325X (PCI `0x74b9`, kernel 6.14, `amdgpu-dkms` 6.16.13, RKE2 v1.36.5) that also ran the DRA path. [STATUS.md](STATUS.md) has the result for every pull request and what is not verified (several GPUs and XGMI, real partition flips, RDNA cards, memory spill to host, a real hardware fault).
 
 ## 11. Troubleshooting
 
@@ -135,6 +135,8 @@ Everything was run on one AMD Instinct MI325X (shown as a virtual function) with
 | Pod stays Pending with `NodeInsufficientDevice` | Allocatable GPUs are 0 (plugin down or the GPU unhealthy), or the request needs more distinct GPUs than the node has. |
 | Pod fails with `no binding pod found` | An older plugin got a pod HAMi did not schedule; current versions serve whole GPUs. |
 | Slice Pod with an init container gets the whole GPU (log: `annotation allocation unavailable`) | The plugin predates #189, which maps the annotation slots past init containers. |
+| No GPU registered, `/dev/kfd` exists, `lspci -k` shows no `amdgpu` in use | The in-tree `amdgpu` of kernels 6.8 and 7.0 did not bind to the MI325X (`Doesn't get TRN_MSG_ACK from pf` in `dmesg`). Use kernel 6.14 with `amdgpu-dkms` 6.16.13; that DKMS version does not build on 6.17 and 7.0. |
+| `type` in the annotation is `AMD Radeon Graphics` on an Instinct card | The plugin predates #230, which maps the device ID to the Instinct name. |
 | Plugin Pod stops with a usage message | Chart and image come from different releases. |
 | Allocatable is 0 right after a restart | Wait one registration (30 s); check that no other plugin owns `amd.com/gpu`. |
 | Slice runs without a memory limit | The image cannot load the hook (musl, static, glibc older than 2.34). With `muslFailClosed` it is refused instead. |

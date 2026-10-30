@@ -4,9 +4,10 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 ## In one minute
 
-- We re-ran **every merged pull request** of this repository (131, plus #189 found afterwards) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (22 closed, 1 open).
+- We re-ran **every merged pull request** of this repository (131, plus #189 found afterwards and #230) and of [amd-hami-core](https://github.com/Project-HAMi/amd-hami-core) (19) on a real AMD GPU, and the AMD pull requests of [HAMi](https://github.com/Project-HAMi/HAMi) (22 closed, 1 open).
 - Each pull request has one line below: the result and what is still not verified. "Nothing" means it ran fully on the real GPU.
-- What is left: the checks that need hardware this machine did not have (end of this file).
+- A second MI325X node ran the plugin from `main` on kernel 6.14, together with the AMD DRA driver and HAMi-DRA. It found that AMD SMI names the card `AMD Radeon Graphics`; #230 fixes that.
+- What is left: the checks that need hardware these machines did not have (end of this file).
 
 ## How we tested
 
@@ -205,3 +206,4 @@ These are in the HAMi repository. "Not run on a GPU" means the change was read a
 | #159 | fix(plugin): keep the device ID stable across operating modes | The registered GPU ID is the same in cu mode and partition mode. | Real partitionable Instinct GPUs and XCP partition IDs were not tested. |
 | #160 | feat(plugin): warn when the operating mode changes under running Pods | With a Pod running, changing the mode and restarting logged a warning and sent a node event naming the Pod. | A GPU with real hardware partitions was not tested. |
 | #189 | fix(utils): map device request slots past init containers | Merged. A unit test with one init container and one app container fails before the fix and passes after. The mapping is the one HAMi's NVIDIA plugin uses. Not re-run on the MI325X. | A Pod with an init container and a slice on a real GPU (CU mask, memory limit, hook, dmem cap). |
+| #230 | fix: name Instinct GPUs by device ID when AMD SMI reports AMD Radeon Graphics | On the MI325X (kernel 6.14) the registration showed `AMD Instinct MI325X` and the UUID `1d0074b9-...` the DRA driver publishes. `use-gputype: AMD Instinct MI325X` ran, `AMD Radeon Graphics` stayed Pending, two slices got CUs 0-75 and 76-151 and a 30 GB allocation was refused. The unit test passes. | Other Instinct models: the IDs come from libdrm `amdgpu.ids`, only `0x74b9` was seen on hardware. |
