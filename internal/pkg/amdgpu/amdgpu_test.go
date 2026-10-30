@@ -630,3 +630,22 @@ func TestComputePartitionFixedForVF(t *testing.T) {
 		}
 	}
 }
+
+func TestInstinctProductName(t *testing.T) {
+	cases := []struct {
+		id      int64
+		current string
+		want    string
+	}{
+		{0x74b9, "AMD Radeon Graphics", "AMD Instinct MI325X"},
+		{0x74b9, "", "AMD Instinct MI325X"},
+		{0x74a1, "AMD Instinct MI300X", "AMD Instinct MI300X"},
+		{0x74a1, "Custom Name", "Custom Name"},
+		{0x1002, "AMD Radeon Graphics", "AMD Radeon Graphics"},
+	}
+	for _, c := range cases {
+		if got := InstinctProductName(c.id, c.current); got != c.want {
+			t.Errorf("InstinctProductName(%#x, %q) = %q, want %q", c.id, c.current, got, c.want)
+		}
+	}
+}

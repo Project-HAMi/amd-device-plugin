@@ -693,8 +693,12 @@ func (p *AMDGPUPlugin) getAPIDevices() []*utils.DeviceInfo {
 		} else if profiles, ok := partitionProfiles[strings.ToLower(bdf)]; ok {
 			customInfo["partitionProfiles"] = profiles
 		}
+		productName := amdSMIProductNames[strings.ToLower(bdf)]
+		if id, err := amdgpu.ParseTopologyProperties(filepath.Join(p.kfdNodesDir(), strconv.Itoa(nodeId), "properties"), deviceIDRe); err == nil {
+			productName = amdgpu.InstinctProductName(id, productName)
+		}
 		deviceType := "amd-gpu"
-		if productName, ok := amdSMIProductNames[strings.ToLower(bdf)]; ok && productName != "" {
+		if productName != "" {
 			deviceType = productName
 		}
 
@@ -1543,6 +1547,8 @@ func (p *AMDGPUPlugin) isWholeGPU(devreq utils.ContainerDevices) bool {
 }
 
 var cpQueuesRe = regexp.MustCompile(`num_cp_queues\s(\d+)`)
+
+var deviceIDRe = regexp.MustCompile(`device_id\s(\d+)`)
 
 var gfxVersionRe = regexp.MustCompile(`gfx_target_version\s(\d+)`)
 

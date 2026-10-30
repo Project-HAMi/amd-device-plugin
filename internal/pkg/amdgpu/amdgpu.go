@@ -568,6 +568,30 @@ func ParseTopologyProperties(path string, re *regexp.Regexp) (int64, error) {
 	return 0, errors.New("Topology property not found.  Regex: " + re.String())
 }
 
+// instinctNames names the Instinct parts by PCI device ID, from libdrm's
+// amdgpu.ids. 0x74b9 is the MI325X virtual function, which libdrm does not list.
+var instinctNames = map[int64]string{
+	0x74a0: "AMD Instinct MI300A",
+	0x74a1: "AMD Instinct MI300X",
+	0x74a5: "AMD Instinct MI325X",
+	0x74a9: "AMD Instinct MI300X HF",
+	0x74b5: "AMD Instinct MI300X VF",
+	0x74b6: "AMD Instinct MI308X",
+	0x74b9: "AMD Instinct MI325X",
+	0x74bd: "AMD Instinct MI300X HF",
+}
+
+// InstinctProductName returns the Instinct name for a PCI device ID when current
+// is empty or generic. AMD SMI reports "AMD Radeon Graphics" for some Instinct
+// cards (MI325X); otherwise it returns current.
+func InstinctProductName(deviceID int64, current string) string {
+	name, ok := instinctNames[deviceID]
+	if !ok || (current != "" && !strings.Contains(current, "Radeon Graphics")) {
+		return current
+	}
+	return name
+}
+
 // Newer kernels print an extra "program: N," field on the SMC line.
 var fwVersionRe = regexp.MustCompile(`(\w+) feature version: (\d+),(?: program: \d+,)? firmware version: (0x[0-9a-fA-F]+)`)
 

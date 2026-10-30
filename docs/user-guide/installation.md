@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - Linux amd64 nodes with ROCm-supported AMD GPUs, the `amdgpu` kernel driver, `/dev/kfd` and `/dev/dri`. See the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) for drivers.
+- Check that `lspci -k` shows `amdgpu` in use for the GPU, not only that the module is loaded. On an Instinct MI325X (PCI `0x74b9`) the in-tree `amdgpu` of kernels 6.8 and 7.0 did not bind to the card. It worked with kernel 6.14 and `amdgpu-dkms` 6.16.13 from the ROCm 7.2.4 repository; that DKMS version does not build on kernels 6.17 and 7.0. The memory cap through the dmem cgroup needs kernel 6.14 or newer.
 - Kubernetes with the [HAMi scheduler](https://github.com/Project-HAMi/HAMi) installed. HAMi schedules `amd.com/gpu`, `amd.com/gpucores` and `amd.com/gpumem` out of the box. Install it with its own device plugin disabled if the cluster has no NVIDIA GPUs:
 
   ```bash
