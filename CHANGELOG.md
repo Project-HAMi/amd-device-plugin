@@ -19,6 +19,7 @@
 - Built with Go 1.27.2 and the released grpc v1.84.0 (#166, #167, #205).
 - Linked against AMD SMI 27, so the GPU UUID and product name match the host's `amd-smi` and the DRA driver; AMD SMI 26 reported the RX 9060 XT as `AMD Radeon Graphics` (#204).
 - The Security Insights file declares secret scanning with the tool type that OpenSSF baseline scanners read (#206).
+- An Instinct GPU that AMD SMI names `AMD Radeon Graphics` (the MI325X) is registered under its Instinct name, taken from the KFD device ID, so `amd.com/use-gputype` can select it (#230).
 - A GPU stays registered when reading its CU and VRAM count through libdrm fails for a moment; the last value is used (#208).
 - SR-IOV virtual functions stay CU-sliced in partition mode, and keep the `amd.com/gpu` name when the partition cannot change (#169, #171).
 - The XCC count is published for every partition profile (#172).
