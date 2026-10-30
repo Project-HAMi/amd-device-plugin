@@ -12,6 +12,7 @@ What was checked, what was found and what is left, in plain words. Read [ONBOARD
 
 - A real AMD Instinct MI325X (one GPU, shown to the machine as a virtual function) with k3s, the HAMi scheduler and this plugin built from `main`, on kernel 6.8 and then 7.0 (the dmem memory cap needs 6.14 or newer).
 - Also run there: the real AMD Device Metrics Exporter, the upstream ROCm plugin as a second DaemonSet, the published 0.0.2 and 0.0.3 images, UBI, alpine, fedora and old glibc images, ROCm 6.2 and 7.2, and the example Pods (PyTorch, TensorFlow, JAX, vLLM).
+- A second MI325X node (PCI `0x74b9`, SPX/NPS1, 304 CUs, kernel 6.14, `amdgpu-dkms` 6.16.13, RKE2 v1.36.5, HAMi scheduler from the Helm repository) ran this plugin built from `main`: two `gpumem: 20000`, `gpucores: 25` Pods got CUs 0-75 and 76-151, a 30 GB PyTorch allocation was refused in a slice, and PyTorch matmul ran at 224 TFLOPS in a slice against 757 without the mask. AMD SMI reports the market name `AMD Radeon Graphics` there; the plugin now registers `AMD Instinct MI325X` from the KFD device ID, and `amd.com/use-gputype: AMD Instinct MI325X` matched while `AMD Radeon Graphics` stayed Pending. The published 0.0.3 image registered the UUID `1dff74b9-...` there and `main` registers `1d0074b9-...`, the one the DRA driver publishes.
 - Several GPUs were simulated for the HAMi scheduler only, with extra GPUs written into the node registration.
 
 
