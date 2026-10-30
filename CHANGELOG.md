@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.0.4
+
 ### Added
 
 - Hardware compute partitions on Instinct GPUs (#17); the device ID stays the same across operating modes (#159) and a mode change under running Pods emits `AMDGPUModeChangedInUse` (#160).
