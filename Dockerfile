@@ -15,7 +15,7 @@ FROM rocm/dev-ubuntu-24.04:7.2.4@sha256:bdc8e61026cbb844ede93d44d2c50055f51ebb20
 # AMD SMI 27 (ROCm 10.0) as vendored by the DRA driver. ROCm 10.0 has no
 # package repository; older AMD SMI releases report another UUID and product
 # name for some cards than the host tools and the DRA driver do.
-FROM ghcr.io/project-hami/amd-dra-driver:0.4.0@sha256:1f3a182b11203c59e49833c49b9c81ec1756846091bbfce5fcdb781d7c1ae05c AS amdsmi-lib
+FROM ghcr.io/project-hami/amd-dra-driver:0.4.1@sha256:160bce48d88bfc36cc92e46492efc4db28416f8de59800bd71d1ed5ccc7d83ee AS amdsmi-lib
 FROM rocm/dev-ubuntu-22.04:7.2.4@sha256:a50a8547101ac9e7c35848ff609a56335214b789b468c9eb05dcd006a4a38c25 AS amdsmi-sdk
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     cmake build-essential \
