@@ -184,11 +184,16 @@ func (c *Collector) collectContainers(ch chan<- prometheus.Metric, devices map[s
 		return err
 	}
 	type owner struct {
-		pod       *corev1.Pod
-		container corev1.Container
+		pod        *corev1.Pod
+		container  corev1.Container
+		allocation utils.ContainerDevices
 	}
 	owners := map[string]owner{}
 	for _, pod := range pods {
+		allocated, err := utils.DecodePodDevices(map[string]string{"amd": utils.DeviceAllocation}, pod.Annotations)
+		if err != nil {
+			glog.Warningf("Failed to decode AMD allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
 		containers := append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...)
 		statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
 		for _, st := range statuses {
@@ -196,9 +201,13 @@ func (c *Collector) collectContainers(ch chan<- prometheus.Metric, devices map[s
 			if !ok {
 				continue
 			}
-			for _, ctr := range containers {
+			for i, ctr := range containers {
 				if ctr.Name == st.Name && requestsAMD(ctr) {
-					owners[id] = owner{pod, ctr}
+					var allocation utils.ContainerDevices
+					if i < len(allocated["amd"]) {
+						allocation = allocated["amd"][i]
+					}
+					owners[id] = owner{pod, ctr, allocation}
 				}
 			}
 		}
@@ -229,9 +238,19 @@ func (c *Collector) collectContainers(ch chan<- prometheus.Metric, devices map[s
 		next[u.ContainerID]++
 		labels := []string{o.pod.Namespace, o.pod.Name, o.container.Name, strconv.Itoa(idx), info.ID}
 		ch <- prometheus.MustNewConstMetric(ctrMemoryUsedDesc, prometheus.GaugeValue, float64(u.Used), labels...)
-		// The dmem cap is the exact limit, where the node enforces one. Without it
-		// the limit is what the pod asked for.
+		// Prefer a container's dmem cap. The plugin caps the parent pod cgroup,
+		// so an uncapped container falls back to its scheduler allocation, not
+		// the shared pod cap. Allocation slots list init containers first.
 		limit := float64(u.Limit)
+		if limit == 0 {
+			for _, d := range o.allocation {
+				if d.UUID == info.ID && d.Usedmem > 0 {
+					limit = float64(d.Usedmem) * mib
+					break
+				}
+			}
+		}
+		// Preserve the explicit-MiB fallback for pods without a matching allocation.
 		if limit == 0 {
 			if q, ok := o.container.Resources.Limits[memoryResource]; ok {
 				limit = float64(q.Value() * mib)
