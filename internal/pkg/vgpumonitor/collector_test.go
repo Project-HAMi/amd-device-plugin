@@ -132,7 +132,7 @@ func TestCollectAllocatedMemoryLimit(t *testing.T) {
 		want       float64
 	}{
 		{name: "percentage", allocation: testUUID + ",AMD,4096,25:;", percentage: true, want: 4096 * mib},
-		{name: "default memory", allocation: testUUID + ",AMD,8192,25:;", want: 8192 * mib},
+		{name: "default memory", allocation: testUUID + ",AMD Radeon Graphics,8192,25:;", want: 8192 * mib},
 		{name: "allocation precedes request", allocation: testUUID + ",AMD,2048,25:;", explicit: true, want: 2048 * mib},
 		{name: "container cap precedes allocation", allocation: testUUID + ",AMD,4096,25:;", dmemCap: "1234", want: 1234},
 		{name: "missing annotation", percentage: true},
@@ -173,7 +173,7 @@ func TestCollectAllocatedMemoryLimit(t *testing.T) {
 			if tt.want > 0 {
 				want["burn/"+testUUID] = tt.want
 			}
-			require.Equal(t, want, containerMemoryLimits(t, c))
+			require.Equal(t, want, containerMemoryLimits(t, c, map[string]float64{"burn/" + testUUID: 1073741824}))
 		})
 	}
 }
@@ -220,32 +220,46 @@ func TestCollectAllocatedMemoryLimitsMatchContainerSlotsAndDeviceUUIDs(t *testin
 		"burn/" + testUUID:     4096 * mib,
 		"burn/u-0e":            8192 * mib,
 		"sidecar/" + testUUID:  2048 * mib,
-	}, containerMemoryLimits(t, c))
+	}, containerMemoryLimits(t, c, map[string]float64{
+		"gpu-init/" + testUUID: 40,
+		"burn/" + testUUID:     10,
+		"burn/u-0e":            20,
+		"sidecar/" + testUUID:  30,
+	}))
 }
 
-func containerMemoryLimits(t *testing.T, c *Collector) map[string]float64 {
+func containerMemoryLimits(t *testing.T, c *Collector, wantUsed map[string]float64) map[string]float64 {
 	t.Helper()
 	reg := prometheus.NewPedanticRegistry()
 	reg.MustRegister(c)
 	families, err := reg.Gather()
 	require.NoError(t, err)
 	limits := map[string]float64{}
+	used := map[string]float64{}
+	successFound := false
 	for _, family := range families {
 		switch family.GetName() {
-		case "hami_vgpu_memory_limit_bytes":
+		case "hami_vgpu_memory_limit_bytes", "hami_vgpu_memory_used_bytes":
 			for _, metric := range family.GetMetric() {
 				labels := map[string]string{}
 				for _, label := range metric.GetLabel() {
 					labels[label.GetName()] = label.GetValue()
 				}
-				limits[labels["container"]+"/"+labels["device_uuid"]] = metric.GetGauge().GetValue()
+				key := labels["container"] + "/" + labels["device_uuid"]
+				if family.GetName() == "hami_vgpu_memory_limit_bytes" {
+					limits[key] = metric.GetGauge().GetValue()
+				} else {
+					used[key] = metric.GetGauge().GetValue()
+				}
 			}
-		case "hami_vgpu_memory_used_bytes":
-			require.NotEmpty(t, family.GetMetric())
 		case "hami_vgpumonitor_collect_success":
+			successFound = true
+			require.Len(t, family.GetMetric(), 1)
 			require.Equal(t, 1.0, family.GetMetric()[0].GetGauge().GetValue())
 		}
 	}
+	require.Equal(t, wantUsed, used)
+	require.True(t, successFound, "collection success metric is missing")
 	return limits
 }
 

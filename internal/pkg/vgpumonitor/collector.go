@@ -190,9 +190,13 @@ func (c *Collector) collectContainers(ch chan<- prometheus.Metric, devices map[s
 	}
 	owners := map[string]owner{}
 	for _, pod := range pods {
-		allocated, err := utils.DecodePodDevices(map[string]string{"amd": utils.DeviceAllocation}, pod.Annotations)
-		if err != nil {
-			glog.Warningf("Failed to decode AMD allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		var allocated utils.PodSingleDevice
+		if pod.Annotations[utils.DeviceAllocation] != "" {
+			podDevices, err := utils.DecodePodDevices(map[string]string{"amd": utils.DeviceAllocation}, pod.Annotations)
+			if err != nil {
+				glog.Warningf("Failed to decode AMD allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			}
+			allocated = podDevices["amd"]
 		}
 		containers := append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...)
 		statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
@@ -204,8 +208,8 @@ func (c *Collector) collectContainers(ch chan<- prometheus.Metric, devices map[s
 			for i, ctr := range containers {
 				if ctr.Name == st.Name && requestsAMD(ctr) {
 					var allocation utils.ContainerDevices
-					if i < len(allocated["amd"]) {
-						allocation = allocated["amd"][i]
+					if i < len(allocated) {
+						allocation = allocated[i]
 					}
 					owners[id] = owner{pod, ctr, allocation}
 				}
