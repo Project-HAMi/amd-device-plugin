@@ -122,6 +122,147 @@ hami_vgpumonitor_collect_success{node="gpu-1"} 1
 	require.NoError(t, testutil.GatherAndCompare(reg, strings.NewReader(want)))
 }
 
+func TestCollectAllocatedMemoryLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		allocation string
+		explicit   bool
+		percentage bool
+		dmemCap    string
+		want       float64
+	}{
+		{name: "percentage", allocation: testUUID + ",AMD,4096,25:;", percentage: true, want: 4096 * mib},
+		{name: "default memory", allocation: testUUID + ",AMD Radeon Graphics,8192,25:;", want: 8192 * mib},
+		{name: "allocation precedes request", allocation: testUUID + ",AMD,2048,25:;", explicit: true, want: 2048 * mib},
+		{name: "container cap precedes allocation", allocation: testUUID + ",AMD,4096,25:;", dmemCap: "1234", want: 1234},
+		{name: "missing annotation", percentage: true},
+		{name: "missing GPU", allocation: "another-gpu,AMD,8192,25:;", percentage: true},
+		{name: "missing container slot", allocation: ";"},
+		{name: "zero allocation", allocation: testUUID + ",AMD,0,25:;"},
+		{name: "negative allocation", allocation: testUUID + ",AMD,-1,25:;"},
+		{name: "malformed annotation", allocation: testUUID + ",AMD,invalid,25:;", explicit: true, want: 4096 * mib},
+		{name: "truncated annotation", allocation: testUUID + ",AMD,4096:;", percentage: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fixture(t)
+			pods, err := c.Pods()
+			require.NoError(t, err)
+			pod := pods[0]
+			if !tt.explicit {
+				delete(pod.Spec.Containers[0].Resources.Limits, memoryResource)
+			}
+			if tt.percentage {
+				pod.Spec.Containers[0].Resources.Limits["amd.com/gpumem-percentage"] = resource.MustParse("25")
+			}
+			pod.Annotations = map[string]string{
+				"hami.io/amd-devices-allocated": tt.allocation,
+				// Allocate consumes this annotation; it is not the persistent source.
+				"hami.io/amd-devices-to-allocate": ";;",
+			}
+			if tt.allocation == "" {
+				delete(pod.Annotations, "hami.io/amd-devices-allocated")
+			}
+			podCgroup := filepath.Join(c.CgroupRoot, "kubepods.slice", "kubepods-besteffort.slice",
+				"kubepods-besteffort-pod76ee6770_1f4c_436c_9d68_2c6d515ad8f7.slice")
+			// A parent cap must not substitute for an absent container allocation.
+			writeFile(t, filepath.Join(podCgroup, "dmem.max"), region+" 4294967296\n")
+			if tt.dmemCap != "" {
+				writeFile(t, filepath.Join(podCgroup, "cri-containerd-abc123.scope", "dmem.max"), region+" "+tt.dmemCap+"\n")
+			}
+			want := map[string]float64{}
+			if tt.want > 0 {
+				want["burn/"+testUUID] = tt.want
+			}
+			require.Equal(t, want, containerMemoryLimits(t, c, map[string]float64{"burn/" + testUUID: 1073741824}))
+		})
+	}
+}
+
+func TestCollectAllocatedMemoryLimitsMatchContainerSlotsAndDeviceUUIDs(t *testing.T) {
+	c := fixture(t)
+	pods, err := c.Pods()
+	require.NoError(t, err)
+	pod := pods[0]
+	request := corev1.ResourceRequirements{Limits: corev1.ResourceList{
+		"amd.com/gpu": resource.MustParse("1"), "amd.com/gpumem-percentage": resource.MustParse("25"),
+	}}
+	pod.Spec.InitContainers = []corev1.Container{{Name: "setup"}, {Name: "gpu-init", Resources: request}}
+	pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{Limits: corev1.ResourceList{
+		"amd.com/gpu": resource.MustParse("2"), "amd.com/gpumem-percentage": resource.MustParse("25"),
+	}}
+	pod.Spec.Containers[1].Resources = request
+	pod.Spec.Containers = append([]corev1.Container{{Name: "plain"}}, pod.Spec.Containers...)
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "gpu-init", ContainerID: "containerd://init123"}}
+	// Empty slots belong to setup and plain. GPU order differs from PCI region order.
+	pod.Annotations = map[string]string{"hami.io/amd-devices-allocated": ";" +
+		testUUID + ",AMD,1024,25:;;" +
+		"u-0e,AMD,8192,25:" + testUUID + ",AMD,4096,25:;" +
+		testUUID + ",AMD,2048,25:;"}
+	node, err := c.Node()
+	require.NoError(t, err)
+	node.Annotations["hami.io/node-amd-register"] = `[` +
+		`{"id":"` + testUUID + `","index":1,"type":"AMD","custominfo":{"pciBDF":"` + testBDF + `"}},` +
+		`{"id":"u-0e","index":2,"type":"AMD","custominfo":{"pciBDF":"0000:0e:00.0"}}]`
+	writeFile(t, filepath.Join(c.DRMRoot, "card2", "device", "mem_info_vram_total"), "34359738368\n")
+	podCgroup := filepath.Join(c.CgroupRoot, "kubepods.slice", "kubepods-besteffort.slice",
+		"kubepods-besteffort-pod76ee6770_1f4c_436c_9d68_2c6d515ad8f7.slice")
+	writeFile(t, filepath.Join(podCgroup, "dmem.max"), region+" 7516192768\n")
+	for id, current := range map[string]string{
+		"abc123":  region + " 10\ndrm/0000:0e:00.0/vram 20\n",
+		"def456":  region + " 30\n",
+		"init123": region + " 40\n",
+	} {
+		writeFile(t, filepath.Join(podCgroup, "cri-containerd-"+id+".scope", "dmem.current"), current)
+		writeFile(t, filepath.Join(podCgroup, "cri-containerd-"+id+".scope", "dmem.max"), region+" max\ndrm/0000:0e:00.0/vram max\n")
+	}
+	require.Equal(t, map[string]float64{
+		"gpu-init/" + testUUID: 1024 * mib,
+		"burn/" + testUUID:     4096 * mib,
+		"burn/u-0e":            8192 * mib,
+		"sidecar/" + testUUID:  2048 * mib,
+	}, containerMemoryLimits(t, c, map[string]float64{
+		"gpu-init/" + testUUID: 40,
+		"burn/" + testUUID:     10,
+		"burn/u-0e":            20,
+		"sidecar/" + testUUID:  30,
+	}))
+}
+
+func containerMemoryLimits(t *testing.T, c *Collector, wantUsed map[string]float64) map[string]float64 {
+	t.Helper()
+	reg := prometheus.NewPedanticRegistry()
+	reg.MustRegister(c)
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	limits := map[string]float64{}
+	used := map[string]float64{}
+	successFound := false
+	for _, family := range families {
+		switch family.GetName() {
+		case "hami_vgpu_memory_limit_bytes", "hami_vgpu_memory_used_bytes":
+			for _, metric := range family.GetMetric() {
+				labels := map[string]string{}
+				for _, label := range metric.GetLabel() {
+					labels[label.GetName()] = label.GetValue()
+				}
+				key := labels["container"] + "/" + labels["device_uuid"]
+				if family.GetName() == "hami_vgpu_memory_limit_bytes" {
+					limits[key] = metric.GetGauge().GetValue()
+				} else {
+					used[key] = metric.GetGauge().GetValue()
+				}
+			}
+		case "hami_vgpumonitor_collect_success":
+			successFound = true
+			require.Len(t, family.GetMetric(), 1)
+			require.Equal(t, 1.0, family.GetMetric()[0].GetGauge().GetValue())
+		}
+	}
+	require.Equal(t, wantUsed, used)
+	require.True(t, successFound, "collection success metric is missing")
+	return limits
+}
+
 func TestCollectWithoutSensorsStillSucceeds(t *testing.T) {
 	c := fixture(t)
 	require.NoError(t, os.RemoveAll(filepath.Join(c.DRMRoot, "card1", "device", "hwmon")))
