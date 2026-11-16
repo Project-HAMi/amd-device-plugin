@@ -48,7 +48,7 @@ COPY amd-hami-core/ /build/amd-hami-core/
 RUN cd /build/amd-hami-core && make -f Makefile.hip clean all
 
 
-FROM registry.access.redhat.com/ubi9/ubi-init:9.8@sha256:832747e358174ee06c1c81573cbe22aff41efb94d857acc1bacba111576d2448
+FROM registry.access.redhat.com/ubi9/ubi-init:9.9@sha256:1e1e7fe6413372d1f2cb9427d1d41506490e7e99fcc9af1bec538d6cac8b0c55
 LABEL \
     name="amd-k8s-device-plugin" \
     maintainer="Project-HAMi maintainers" \
