@@ -1087,6 +1087,83 @@ func TestAllocateMemoryOnlySliceHoldsNoCUs(t *testing.T) {
 	}
 }
 
+// Under compute sharing a container runs on every CU of its GPU: no
+// HSA_CU_MASK, no CUs held, so a GPU whose CUs another pod already holds
+// still takes a core slice. Memory limits and the hook stay.
+func TestAllocateComputeSharing(t *testing.T) {
+	for _, tc := range []struct {
+		name, request string
+		wantHook      bool
+	}{
+		{"core slice", "uuid-a,AMDGPU,4096,16:;", true},
+		{"memory-only slice", "uuid-a,AMDGPU,4096,0:;", true},
+		{"whole gpu", "uuid-a,AMDGPU,16304,64:;", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
+					utils.BindTimeAnnotations:     "1",
+					utils.AssignedNodeAnnotations: "n",
+					utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+					utils.DeviceToAllocate:        tc.request,
+				}},
+				Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			}
+			holder := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "holder", Namespace: "ns", Annotations: map[string]string{
+					utils.CuAllocation: `{"uuid-a":"0-63"}`,
+				}},
+				Spec:   corev1.PodSpec{NodeName: "n"},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			}
+			cs := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, pod, holder)
+			old := utils.KubeClient
+			t.Cleanup(func() { utils.KubeClient = old })
+			utils.KubeClient = cs
+			t.Setenv(utils.NodeNameEnvName, "n")
+
+			p := &AMDGPUPlugin{
+				AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
+				amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
+				amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
+				deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64, Devmem: 16304}},
+			}
+			WithComputeSharing(true)(p)
+			resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+				ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			envs := resp.ContainerResponses[0].Envs
+			if mask, set := envs["HSA_CU_MASK"]; set {
+				t.Errorf("HSA_CU_MASK = %q, want unset", mask)
+			}
+			if got := envs["ROCR_VISIBLE_DEVICES"]; got != "GPU-a" {
+				t.Errorf("ROCR_VISIBLE_DEVICES = %q, want GPU-a", got)
+			}
+			wantLimit := ""
+			if tc.wantHook {
+				wantLimit = "4096m"
+			}
+			if got := envs["HIP_DEVICE_MEMORY_LIMIT_0"]; got != wantLimit {
+				t.Errorf("HIP_DEVICE_MEMORY_LIMIT_0 = %q, want %q", got, wantLimit)
+			}
+			if hooked := len(resp.ContainerResponses[0].Mounts) == 1; hooked != tc.wantHook {
+				t.Errorf("hook mounted = %v, want %v", hooked, tc.wantHook)
+			}
+			got, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cu, held := got.Annotations[utils.CuAllocation]; held {
+				t.Errorf("compute sharing holds CUs %s", cu)
+			}
+		})
+	}
+}
+
 // Discovery swaps the device maps every 30s while Allocate, ListAndWatch and
 // the dmem goroutines read them; run with -race.
 func TestPublishWhileReading(t *testing.T) {
