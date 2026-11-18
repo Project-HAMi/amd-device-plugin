@@ -186,6 +186,10 @@ type AMDGPUPlugin struct {
 	dmemEnabled bool
 	// hipLogLevel is LIBHIP_LOG_LEVEL for the pods that load libamvgpu (1 error to 4 debug); 0 leaves its default.
 	hipLogLevel int
+	// computeSharing lets every container on a GPU use all of its CUs:
+	// Allocate sets no HSA_CU_MASK and reserves no CUs, so amd.com/gpucores
+	// only weighs the scheduler's placement. Memory limits are unchanged.
+	computeSharing bool
 	// dmemCgroupRoot overrides dmem.DefaultCgroupRoot; tests point it at a
 	// fake hierarchy.
 	dmemCgroupRoot string
@@ -286,6 +290,14 @@ func WithHipLogLevel(level int) AMDGPUPluginOption {
 	}
 }
 
+// WithComputeSharing makes containers share all CUs of their GPUs instead of
+// each getting its own CU slice through HSA_CU_MASK.
+func WithComputeSharing(enabled bool) AMDGPUPluginOption {
+	return func(p *AMDGPUPlugin) {
+		p.computeSharing = enabled
+	}
+}
+
 // WithMuslFailClosed enables refusing sliced allocations on an
 // LD_AUDIT-incompatible image. ctrPath and containerdSocket must resolve
 // inside the plugin's own container (see internal/pkg/libcheck).
@@ -331,6 +343,9 @@ func (p *AMDGPUPlugin) Start() error {
 		p.operatingMode = "cu"
 	}
 	glog.Infof("operating mode: %s, compute partition: %s", p.operatingMode, p.computePartition)
+	if p.computeSharing {
+		glog.Infof("compute sharing: containers use all CUs of their GPUs, no HSA_CU_MASK")
+	}
 
 	// Flip GPUs not yet in the target compute partition before registration
 	// reads the hardware mode. Busy GPUs fail and keep their current mode.
@@ -1117,11 +1132,14 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	// Pod annotations are the source of truth. The scheduler keeps the node
 	// locked until this allocation is persisted, so a direct API read gives us
 	// the complete bitmap committed by all preceding Pods without depending on
-	// informer delivery.
-	cuAllocationSnapshot, err := p.rebuildCUAllocations(ctx, nodename)
-	if err != nil {
-		utils.PodAllocationFailed(nodename, current, NodeLockName)
-		return &pluginapi.AllocateResponse{}, fmt.Errorf("rebuild CU allocation for node %s: %w", nodename, err)
+	// informer delivery. Compute sharing reserves no CUs, so it needs none.
+	var cuAllocationSnapshot map[string]cuallocation.Allocation
+	if !p.computeSharing {
+		cuAllocationSnapshot, err = p.rebuildCUAllocations(ctx, nodename)
+		if err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("rebuild CU allocation for node %s: %w", nodename, err)
+		}
 	}
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
 	p.mu.RLock()
@@ -1207,62 +1225,66 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		}
 
 		if len(devreq) > 0 {
-			hsaCuSets := make([]string, 0, len(devreq))
-			for i, d := range devreq {
-				totalCUs, err := p.getDeviceTotalCUs(d.UUID)
-				if err != nil {
-					utils.PodAllocationFailed(nodename, current, NodeLockName)
-					return &pluginapi.AllocateResponse{}, err
-				}
-				baseAllocation, ok := cuAllocationSnapshot[d.UUID]
-				if !ok {
-					baseAllocation, err = cuallocation.NewAllocation(totalCUs)
+			// Compute sharing runs every container on all CUs of its GPUs, so it
+			// neither reserves CUs nor sets HSA_CU_MASK.
+			if !p.computeSharing {
+				hsaCuSets := make([]string, 0, len(devreq))
+				for i, d := range devreq {
+					totalCUs, err := p.getDeviceTotalCUs(d.UUID)
 					if err != nil {
 						utils.PodAllocationFailed(nodename, current, NodeLockName)
 						return &pluginapi.AllocateResponse{}, err
 					}
-					cuAllocationSnapshot[d.UUID] = baseAllocation
-				}
-				cores := int(d.Usedcores)
-				if cores == 0 {
-					if !p.isWholeGPU(utils.ContainerDevices{d}) {
-						// A memory-only slice shares every CU with the GPU's
-						// other pods, so it holds none of them exclusively.
-						hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:0-%d", i, totalCUs-1))
-						slicedCU = true
-						continue
+					baseAllocation, ok := cuAllocationSnapshot[d.UUID]
+					if !ok {
+						baseAllocation, err = cuallocation.NewAllocation(totalCUs)
+						if err != nil {
+							utils.PodAllocationFailed(nodename, current, NodeLockName)
+							return &pluginapi.AllocateResponse{}, err
+						}
+						cuAllocationSnapshot[d.UUID] = baseAllocation
 					}
-					// Whole GPU: mask every CU.
-					cores = totalCUs
-				}
-				_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, p.cuMaskUnit(d.UUID, p.kfdNodesDir()))
-				if err != nil {
-					utils.PodAllocationFailed(nodename, current, NodeLockName)
-					return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
-				}
-				cuList := allocationToIDList(deltaAllocation, totalCUs)
-				// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
-				// Use container-local device index as GPU_list and ID_List as CU_list.
-				hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
+					cores := int(d.Usedcores)
+					if cores == 0 {
+						if !p.isWholeGPU(utils.ContainerDevices{d}) {
+							// A memory-only slice shares every CU with the GPU's
+							// other pods, so it holds none of them exclusively.
+							hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:0-%d", i, totalCUs-1))
+							slicedCU = true
+							continue
+						}
+						// Whole GPU: mask every CU.
+						cores = totalCUs
+					}
+					_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, p.cuMaskUnit(d.UUID, p.kfdNodesDir()))
+					if err != nil {
+						utils.PodAllocationFailed(nodename, current, NodeLockName)
+						return &pluginapi.AllocateResponse{}, fmt.Errorf("allocate cu for %s: %w", d.UUID, err)
+					}
+					cuList := allocationToIDList(deltaAllocation, totalCUs)
+					// HSA_CU_MASK: GPU_list:CU_list[;GPU_list:CU_list]*.
+					// Use container-local device index as GPU_list and ID_List as CU_list.
+					hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
-				slicedCU = slicedCU || !p.isWholeGPU(utils.ContainerDevices{d})
-				if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
-					oldAllocation, err := idListToAllocation(oldList, totalCUs)
-					if err != nil {
-						utils.PodAllocationFailed(nodename, current, NodeLockName)
-						return &pluginapi.AllocateResponse{}, fmt.Errorf("decode existing pod cu allocation for %s: %w", d.UUID, err)
+					slicedCU = slicedCU || !p.isWholeGPU(utils.ContainerDevices{d})
+					if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
+						oldAllocation, err := idListToAllocation(oldList, totalCUs)
+						if err != nil {
+							utils.PodAllocationFailed(nodename, current, NodeLockName)
+							return &pluginapi.AllocateResponse{}, fmt.Errorf("decode existing pod cu allocation for %s: %w", d.UUID, err)
+						}
+						mergedAllocation, err := cuallocation.AddAllocation(oldAllocation, totalCUs, deltaAllocation)
+						if err != nil {
+							utils.PodAllocationFailed(nodename, current, NodeLockName)
+							return &pluginapi.AllocateResponse{}, fmt.Errorf("merge pod cu allocation for %s: %w", d.UUID, err)
+						}
+						podCuAllocList[d.UUID] = allocationToIDList(mergedAllocation, totalCUs)
+					} else {
+						podCuAllocList[d.UUID] = cuList
 					}
-					mergedAllocation, err := cuallocation.AddAllocation(oldAllocation, totalCUs, deltaAllocation)
-					if err != nil {
-						utils.PodAllocationFailed(nodename, current, NodeLockName)
-						return &pluginapi.AllocateResponse{}, fmt.Errorf("merge pod cu allocation for %s: %w", d.UUID, err)
-					}
-					podCuAllocList[d.UUID] = allocationToIDList(mergedAllocation, totalCUs)
-				} else {
-					podCuAllocList[d.UUID] = cuList
 				}
+				car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			}
-			car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
 			// ROCr renumbers devices after this list is applied. HSA_CU_MASK uses
 			// those container-local indices, so it is built in the same order.
 			car.Envs["ROCR_VISIBLE_DEVICES"] = rocrVisibleList(rocrVisibleDevices, renderMinors)
@@ -1808,6 +1830,9 @@ type AMDGPULister struct {
 	DmemBackend bool
 	// HipLogLevel is LIBHIP_LOG_LEVEL for the pods that load libamvgpu; 0 leaves its default.
 	HipLogLevel int
+	// ComputeSharing lets containers share all CUs of their GPUs instead of
+	// masking each to its own CU slice.
+	ComputeSharing bool
 	// MuslFailClosed refuses a sliced allocation whose image is not
 	// LD_AUDIT-compatible, instead of silently running it unprotected.
 	MuslFailClosed bool
@@ -1864,6 +1889,7 @@ func (l *AMDGPULister) NewPlugin(resourceLastName string) dpm.PluginInterface {
 		WithCDISpecDir(l.CDISpecDir),
 		WithDmemBackend(l.DmemBackend && dmemUsable()),
 		WithHipLogLevel(l.HipLogLevel),
+		WithComputeSharing(l.ComputeSharing),
 		WithMuslFailClosed(l.MuslFailClosed, l.CtrPath, l.ContainerdSocket),
 	}
 	return NewAMDGPUPlugin(options...)

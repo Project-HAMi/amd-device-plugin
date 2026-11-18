@@ -20,6 +20,12 @@ A request without `amd.com/gpucores` gets all of the GPU's CUs, so the HAMi sche
 
 The mask is cooperative. The hook pins `HSA_CU_MASK` to the pod spec so the process cannot widen it, but a process that re-executes itself without the hook runs outside the slice.
 
+### Compute sharing
+
+With `dp.computeSharing: true` (`-compute_sharing`) the plugin sets no `HSA_CU_MASK` and reserves no CUs, so every pod on a GPU runs on all of its CUs and the hardware schedules their work. A pod can then use CUs that the others leave idle, but nothing limits how much of the GPU it takes. `amd.com/gpucores` still counts against the GPU in the HAMi scheduler, so it limits how many pods share a card, not what each one gets. VRAM limits work as before.
+
+The setting applies to the whole node and is read at plugin start. Drain the node before changing it: pods started in the other mode keep their CU masks, and the plugin does not account for pods that run without one.
+
 ## Memory
 
 `amd.com/gpumem: M` limits VRAM to M MiB per GPU, through `HIP_DEVICE_MEMORY_LIMIT_<i>` for the hook and `dmem.max` for the kernel cap. See [Configuration](configuration.md) for when dmem applies.

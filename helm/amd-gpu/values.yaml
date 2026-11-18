@@ -45,6 +45,10 @@ dp:
   reportNodeCapacity: false
   # Multiplies the VRAM each GPU registers. Above 1 oversubscribes through managed memory (host RAM spill).
   deviceMemoryScaling: 1
+  # Let every pod on a GPU run on all of its CUs instead of its own CU slice
+  # (no HSA_CU_MASK). amd.com/gpucores then only weighs scheduling; memory
+  # limits still apply.
+  computeSharing: false
   # Preferred allocation policy for multi-GPU requests: besteffort, binpack or spread.
   allocatorPolicy: besteffort
   # Also cap sliced allocations through the kernel dmem cgroup controller, a

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `-compute_sharing` (chart `dp.computeSharing`) lets pods share all CUs of a GPU: no `HSA_CU_MASK` and no reserved CUs, while memory limits stay.
+
 ## v0.0.4
 
 ### Added
