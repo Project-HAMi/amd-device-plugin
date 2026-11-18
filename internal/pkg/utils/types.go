@@ -33,6 +33,10 @@ const (
 	// CuAllocation is JSON: { "<device-uuid>": "<ID_List>", ... } with device-uuid matching DeviceInfo.ID (e.g. node~card0).
 	// ID_List format examples: "0-90", "0-3,8,10-12".
 	CuAllocation = "hami.io/amd-cu-allocated"
+	// CuAllocationSteady has the same format and lists the CUs of the pod's
+	// app and sidecar containers, which keep running after the regular init
+	// containers exit. CuAllocation also covers the init containers.
+	CuAllocationSteady = "hami.io/amd-cu-allocated-steady"
 
 	DeviceBindAllocating = "allocating"
 	DeviceBindFailed     = "failed"

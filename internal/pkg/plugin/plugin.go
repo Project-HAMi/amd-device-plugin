@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -47,6 +48,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -1122,23 +1124,41 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 		glog.Warningf("no HAMi-tracked pod pending on node %s (%v); serving kubelet device ids %v as whole GPUs", nodename, err, r.ContainerRequests)
 		current = &corev1.Pod{}
 	}
+	// podCuAllocList holds every CU of the pod, podSteadyList only those of
+	// its app and sidecar containers. A regular init container exits before
+	// the app containers start, so they may reuse its CUs.
 	podCuAllocList := map[string]string{}
-	if raw := strings.TrimSpace(current.Annotations[utils.CuAllocation]); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &podCuAllocList); err != nil {
-			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, fmt.Errorf("parse existing %s: %w", utils.CuAllocation, err)
+	podSteadyList := map[string]string{}
+	for _, a := range []struct {
+		key  string
+		into map[string]string
+	}{{utils.CuAllocation, podCuAllocList}, {utils.CuAllocationSteady, podSteadyList}} {
+		if raw := strings.TrimSpace(current.Annotations[a.key]); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &a.into); err != nil {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, fmt.Errorf("parse existing %s: %w", a.key, err)
+			}
 		}
+	}
+	if _, ok := current.Annotations[utils.CuAllocationSteady]; !ok {
+		// Written by a plugin that did not record it: reuse nothing.
+		maps.Copy(podSteadyList, podCuAllocList)
 	}
 	// Pod annotations are the source of truth. The scheduler keeps the node
 	// locked until this allocation is persisted, so a direct API read gives us
 	// the complete bitmap committed by all preceding Pods without depending on
-	// informer delivery. Compute sharing reserves no CUs, so it needs none.
+	// informer delivery. This pod's own CUs come from its steady list only.
+	// Compute sharing reserves no CUs, so it needs none.
 	var cuAllocationSnapshot map[string]cuallocation.Allocation
 	if !p.computeSharing {
-		cuAllocationSnapshot, err = p.rebuildCUAllocations(ctx, nodename)
+		cuAllocationSnapshot, err = p.rebuildCUAllocations(ctx, nodename, current.UID)
 		if err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
 			return &pluginapi.AllocateResponse{}, fmt.Errorf("rebuild CU allocation for node %s: %w", nodename, err)
+		}
+		if err := p.addIDLists(cuAllocationSnapshot, podSteadyList); err != nil {
+			utils.PodAllocationFailed(nodename, current, NodeLockName)
+			return &pluginapi.AllocateResponse{}, fmt.Errorf("add CU allocation of pod %s/%s: %w", current.Namespace, current.Name, err)
 		}
 	}
 	hostHookPath := os.Getenv("HOST_HOOK_PATH")
@@ -1224,6 +1244,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 			}
 		}
 
+		// A regular init container's CUs are free again once it exits, so
+		// they stay out of the snapshot and only the pod's union records them.
+		steady := !utils.IsRegularInitContainer(current, currentCtr.Name)
 		if len(devreq) > 0 {
 			// Compute sharing runs every container on all CUs of its GPUs, so it
 			// neither reserves CUs nor sets HSA_CU_MASK.
@@ -1256,6 +1279,9 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 						// Whole GPU: mask every CU.
 						cores = totalCUs
 					}
+					if !steady {
+						baseAllocation = append(cuallocation.Allocation(nil), baseAllocation...)
+					}
 					_, deltaAllocation, err := cuallocation.AllocateN(baseAllocation, totalCUs, cores, p.cuMaskUnit(d.UUID, p.kfdNodesDir()))
 					if err != nil {
 						utils.PodAllocationFailed(nodename, current, NodeLockName)
@@ -1267,20 +1293,17 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 					hsaCuSets = append(hsaCuSets, fmt.Sprintf("%d:%s", i, cuList))
 
 					slicedCU = slicedCU || !p.isWholeGPU(utils.ContainerDevices{d})
-					if oldList, ok := podCuAllocList[d.UUID]; ok && strings.TrimSpace(oldList) != "" {
-						oldAllocation, err := idListToAllocation(oldList, totalCUs)
-						if err != nil {
-							utils.PodAllocationFailed(nodename, current, NodeLockName)
-							return &pluginapi.AllocateResponse{}, fmt.Errorf("decode existing pod cu allocation for %s: %w", d.UUID, err)
-						}
-						mergedAllocation, err := cuallocation.AddAllocation(oldAllocation, totalCUs, deltaAllocation)
+					lists := []map[string]string{podCuAllocList}
+					if steady {
+						lists = append(lists, podSteadyList)
+					}
+					for _, list := range lists {
+						merged, err := unionIDList(list[d.UUID], deltaAllocation, totalCUs)
 						if err != nil {
 							utils.PodAllocationFailed(nodename, current, NodeLockName)
 							return &pluginapi.AllocateResponse{}, fmt.Errorf("merge pod cu allocation for %s: %w", d.UUID, err)
 						}
-						podCuAllocList[d.UUID] = allocationToIDList(mergedAllocation, totalCUs)
-					} else {
-						podCuAllocList[d.UUID] = cuList
+						list[d.UUID] = merged
 					}
 				}
 				car.Envs["HSA_CU_MASK"] = strings.Join(hsaCuSets, ";")
@@ -1371,19 +1394,23 @@ func (p *AMDGPUPlugin) Allocate(ctx context.Context, r *pluginapi.AllocateReques
 	// Whole-GPU allocations own the full card; their CU occupancy is not
 	// shared, so there is nothing to persist and no node lock to check.
 	if len(podCuAllocList) > 0 && slicedCU {
-		b, err := json.Marshal(podCuAllocList)
-		if err != nil {
-			utils.PodAllocationFailed(nodename, current, NodeLockName)
-			return &pluginapi.AllocateResponse{}, fmt.Errorf("marshal %s: %w", utils.CuAllocation, err)
+		annotations := map[string]string{}
+		for key, list := range map[string]map[string]string{utils.CuAllocation: podCuAllocList, utils.CuAllocationSteady: podSteadyList} {
+			b, err := json.Marshal(list)
+			if err != nil {
+				utils.PodAllocationFailed(nodename, current, NodeLockName)
+				return &pluginapi.AllocateResponse{}, fmt.Errorf("marshal %s: %w", key, err)
+			}
+			annotations[key] = string(b)
 		}
 		if err := p.validateNodeLockOwner(ctx, nodename, current); err != nil {
 			utils.PodAllocationFailed(nodename, current, NodeLockName)
 			return &pluginapi.AllocateResponse{}, err
 		}
-		if err := utils.PatchPodAnnotations(current, map[string]string{utils.CuAllocation: string(b)}); err != nil {
+		if err := utils.PatchPodAnnotations(current, annotations); err != nil {
 			// A transport error can be returned after the API server applied the
 			// patch. Read back before failing to preserve a durable commit.
-			persisted, getErr := p.hasPersistedCUAllocation(ctx, current, string(b))
+			persisted, getErr := p.hasPersistedCUAllocation(ctx, current, annotations)
 			if getErr == nil && persisted {
 				glog.Warningf("CU allocation annotation patch for %s/%s returned %v after it was persisted", current.Namespace, current.Name, err)
 			} else {
@@ -1459,17 +1486,25 @@ func (p *AMDGPUPlugin) dmemRegion(uuid string) (string, bool) {
 	return region, true
 }
 
-func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string) (map[string]cuallocation.Allocation, error) {
+func (p *AMDGPUPlugin) rebuildCUAllocations(ctx context.Context, nodeName string, skip types.UID) (map[string]cuallocation.Allocation, error) {
 	selector := fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
 	pods, err := utils.GetClient().CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: selector})
 	if err != nil {
 		return nil, fmt.Errorf("list Pods: %w", err)
 	}
-	return p.buildCUAllocations(pods.Items)
+	items := pods.Items[:0]
+	for _, pod := range pods.Items {
+		if skip == "" || pod.UID != skip {
+			items = append(items, pod)
+		}
+	}
+	return p.buildCUAllocations(items)
 }
 
 // buildCUAllocations reconstructs device occupancy solely from durable Pod
 // annotations. It fails closed if persisted allocations already overlap.
+// Once a pod's regular init containers have succeeded, only its steady CUs
+// count, as the HAMi scheduler stops counting the init containers then.
 func (p *AMDGPUPlugin) buildCUAllocations(pods []corev1.Pod) (map[string]cuallocation.Allocation, error) {
 	result := make(map[string]cuallocation.Allocation)
 	owners := make(map[string][]string)
@@ -1479,12 +1514,16 @@ func (p *AMDGPUPlugin) buildCUAllocations(pods []corev1.Pod) (map[string]cualloc
 		if utils.IsPodInTerminatedState(pod) {
 			continue
 		}
-		if strings.TrimSpace(pod.Annotations[utils.CuAllocation]) == "" {
+		key := utils.CuAllocation
+		if _, ok := pod.Annotations[utils.CuAllocationSteady]; ok && utils.AllRegularInitContainersSucceeded(pod) {
+			key = utils.CuAllocationSteady
+		}
+		if raw := strings.TrimSpace(pod.Annotations[key]); raw == "" || raw == "{}" {
 			continue
 		}
 
 		podKey := pod.Namespace + "/" + pod.Name
-		allocations, err := p.parseCuAllocation(pod.Annotations)
+		allocations, err := p.parseCuAllocation(pod.Annotations, key)
 		if err != nil {
 			return nil, fmt.Errorf("pod %s: %w", podKey, err)
 		}
@@ -1647,12 +1686,54 @@ func (p *AMDGPUPlugin) getDeviceTotalCUs(uuid string) (int, error) {
 	return int(d.Devcore), nil
 }
 
-func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1.Pod, expected string) (bool, error) {
+func (p *AMDGPUPlugin) hasPersistedCUAllocation(ctx context.Context, pod *corev1.Pod, expected map[string]string) (bool, error) {
 	refreshed, err := utils.GetClient().CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	if err != nil {
 		return false, err
 	}
-	return refreshed.Annotations[utils.CuAllocation] == expected, nil
+	for key, value := range expected {
+		if refreshed.Annotations[key] != value {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// unionIDList returns the ID_List of list plus delta. Unlike AddAllocation it
+// accepts bits both already hold: an app container may reuse the CUs of the
+// pod's init containers.
+func unionIDList(list string, delta cuallocation.Allocation, totalCUs int) (string, error) {
+	allocation, err := idListToAllocation(list, totalCUs)
+	if err != nil {
+		return "", err
+	}
+	for i := range allocation {
+		if i < len(delta) {
+			allocation[i] |= delta[i]
+		}
+	}
+	return allocationToIDList(allocation, totalCUs), nil
+}
+
+// addIDLists marks the CUs of lists, keyed by device, as taken in snapshot.
+func (p *AMDGPUPlugin) addIDLists(snapshot map[string]cuallocation.Allocation, lists map[string]string) error {
+	for uuid, list := range lists {
+		totalCUs, err := p.getDeviceTotalCUs(uuid)
+		if err != nil {
+			return err
+		}
+		allocation, err := idListToAllocation(list, totalCUs)
+		if err != nil {
+			return fmt.Errorf("device %s: %w", uuid, err)
+		}
+		if snapshot[uuid] == nil {
+			snapshot[uuid] = make(cuallocation.Allocation, len(allocation))
+		}
+		if _, err := cuallocation.AddAllocation(snapshot[uuid], totalCUs, allocation); err != nil {
+			return fmt.Errorf("device %s: %w", uuid, err)
+		}
+	}
+	return nil
 }
 
 // rocrVisibleList joins ROCr UUIDs for ROCR_VISIBLE_DEVICES. A GPU without
@@ -1771,30 +1852,31 @@ func idListToAllocation(s string, totalCUs int) (cuallocation.Allocation, error)
 	return allocation, nil
 }
 
-// parseCuAllocation decodes utils.CuAllocation as JSON:
+// parseCuAllocation decodes the CU annotation key (utils.CuAllocation or
+// utils.CuAllocationSteady) as JSON:
 //
 //	{ "<device-uuid>": "<ID_List>", ... }
 //
 // device-uuid must match DeviceInfo.ID and ID_List follows grammar like "0-3,8,10-12".
-func (p *AMDGPUPlugin) parseCuAllocation(annotations map[string]string) (map[string]cuallocation.Allocation, error) {
+func (p *AMDGPUPlugin) parseCuAllocation(annotations map[string]string, key string) (map[string]cuallocation.Allocation, error) {
 	if annotations == nil {
 		return nil, fmt.Errorf("nil annotations")
 	}
-	raw := strings.TrimSpace(annotations[utils.CuAllocation])
+	raw := strings.TrimSpace(annotations[key])
 	if raw == "" {
-		return nil, fmt.Errorf("empty %s", utils.CuAllocation)
+		return nil, fmt.Errorf("empty %s", key)
 	}
 	var m map[string]string
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return nil, fmt.Errorf("parse %s JSON: %w", utils.CuAllocation, err)
+		return nil, fmt.Errorf("parse %s JSON: %w", key, err)
 	}
 	if len(m) == 0 {
-		return nil, fmt.Errorf("no entries in %s", utils.CuAllocation)
+		return nil, fmt.Errorf("no entries in %s", key)
 	}
 	out := make(map[string]cuallocation.Allocation, len(m))
 	for uuid, idList := range m {
 		if uuid == "" {
-			return nil, fmt.Errorf("empty device uuid key in %s", utils.CuAllocation)
+			return nil, fmt.Errorf("empty device uuid key in %s", key)
 		}
 		totalCUs, err := p.getDeviceTotalCUs(uuid)
 		if err != nil {

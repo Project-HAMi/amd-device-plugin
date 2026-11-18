@@ -223,6 +223,47 @@ func IsPodInTerminatedState(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded
 }
 
+// IsSidecarContainer reports whether an init container keeps running beside
+// the app containers (restartPolicy Always).
+func IsSidecarContainer(c *corev1.Container) bool {
+	return c != nil && c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
+}
+
+// IsRegularInitContainer reports whether name is an init container that runs
+// to completion before the app containers start, so it never runs beside them.
+func IsRegularInitContainer(p *corev1.Pod, name string) bool {
+	for i := range p.Spec.InitContainers {
+		if p.Spec.InitContainers[i].Name == name {
+			return !IsSidecarContainer(&p.Spec.InitContainers[i])
+		}
+	}
+	return false
+}
+
+// AllRegularInitContainersSucceeded reports whether every init container that
+// is not a sidecar has exited with code 0, as the HAMi scheduler checks before
+// it stops counting their devices.
+func AllRegularInitContainersSucceeded(p *corev1.Pod) bool {
+	if len(p.Spec.InitContainers) == 0 {
+		return false
+	}
+	status := make(map[string]corev1.ContainerStatus, len(p.Status.InitContainerStatuses))
+	for _, s := range p.Status.InitContainerStatuses {
+		status[s.Name] = s
+	}
+	for i := range p.Spec.InitContainers {
+		c := &p.Spec.InitContainers[i]
+		if IsSidecarContainer(c) {
+			continue
+		}
+		s, ok := status[c.Name]
+		if !ok || s.State.Terminated == nil || s.State.Terminated.ExitCode != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // PodAllocationTrySuccess releases the node lock once no container of the pod
 // has devices left in its to-allocate annotation.
 func PodAllocationTrySuccess(nodeName string, lockName string, pod *corev1.Pod) {
