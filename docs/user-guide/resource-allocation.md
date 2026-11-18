@@ -18,6 +18,8 @@ On RDNA (gfx10 and later) the CU mask is applied per WGP, a pair of CUs, and a m
 
 A request without `amd.com/gpucores` gets all of the GPU's CUs, so the HAMi scheduler books the whole card's compute for it: a pod that sets only `amd.com/gpumem` takes the full CU range and the next such pod waits until it ends. Set `amd.com/gpucores` on every pod that should share a GPU.
 
+Init containers that run to completion get their own CUs, and the app containers may reuse them, since they start only after the init containers exit. Once the init containers have succeeded, other pods can take the CUs only they used, as the HAMi scheduler stops counting them too. The pod records all of its CUs in `hami.io/amd-cu-allocated` and those of its app and sidecar containers in `hami.io/amd-cu-allocated-steady`. A sidecar (an init container with `restartPolicy: Always`) keeps running, so its CUs are never reused.
+
 The mask is cooperative. The hook pins `HSA_CU_MASK` to the pod spec so the process cannot widen it, but a process that re-executes itself without the hook runs outside the slice.
 
 ### Compute sharing

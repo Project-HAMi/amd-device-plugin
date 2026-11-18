@@ -6,6 +6,10 @@
 
 - `-compute_sharing` (chart `dp.computeSharing`) lets pods share all CUs of a GPU: no `HSA_CU_MASK` and no reserved CUs, while memory limits stay.
 
+### Fixed
+
+- App containers reuse the CUs of the pod's init containers, and other pods get them once the init containers have succeeded, matching the HAMi scheduler. A pod whose init container took more CUs than its app container was placed by the scheduler and then refused by `Allocate` with `insufficient free CUs` (#266).
+
 ## v0.0.4
 
 ### Added

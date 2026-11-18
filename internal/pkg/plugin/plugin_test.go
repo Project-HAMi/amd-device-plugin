@@ -1371,3 +1371,136 @@ func TestScaledMemory(t *testing.T) {
 		}
 	}
 }
+
+// A regular init container exits before the app containers start, so they
+// may reuse its CUs: kubelet allocates every container up front, and the
+// HAMi scheduler counts only the larger phase (Project-HAMi/amd-device-plugin#266).
+// A sidecar keeps running, so its CUs are not reused.
+func TestAllocateInitContainerCUs(t *testing.T) {
+	sidecar := corev1.ContainerRestartPolicyAlways
+	for _, tc := range []struct {
+		name                  string
+		restart               *corev1.ContainerRestartPolicy
+		wantInit, wantApp     string
+		wantUnion, wantSteady string
+	}{
+		{"regular init", nil, "0:32-63", "0:32-47", "32-63", "32-47"},
+		{"sidecar", &sidecar, "0:32-63", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The sidecar holds 32-63 for the pod's lifetime, so the app
+			// container needs 16 CUs of its own and finds none.
+			const appCores = 16
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", UID: "uid-p", Annotations: map[string]string{
+					utils.BindTimeAnnotations:     "1",
+					utils.AssignedNodeAnnotations: "n",
+					utils.DeviceBindPhase:         utils.DeviceBindAllocating,
+					utils.DeviceToAllocate:        "uuid-a,AMDGPU,8192,32:;uuid-a,AMDGPU,2048," + strconv.Itoa(appCores) + ":;",
+				}},
+				Spec: corev1.PodSpec{
+					NodeName:       "n",
+					InitContainers: []corev1.Container{{Name: "init", RestartPolicy: tc.restart}},
+					Containers:     []corev1.Container{{Name: "app"}},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			}
+			holder := makeCUPod("holder", corev1.PodRunning, `{"uuid-a":"0-31"}`)
+			holder.UID = "uid-holder"
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
+				utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
+			}}}
+			cs := fake.NewSimpleClientset(node, pod, &holder)
+			old := utils.KubeClient
+			t.Cleanup(func() { utils.KubeClient = old })
+			utils.KubeClient = cs
+			t.Setenv(utils.NodeNameEnvName, "n")
+
+			p := &AMDGPUPlugin{
+				AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
+				amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
+				amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
+				deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64, Devmem: 16304}},
+			}
+			// kubelet calls Allocate once per container, init containers first.
+			var masks []string
+			var lastErr error
+			for range 2 {
+				resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
+					ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
+				})
+				if err != nil {
+					lastErr = err
+					break
+				}
+				masks = append(masks, resp.ContainerResponses[0].Envs["HSA_CU_MASK"])
+			}
+			if tc.wantApp == "" {
+				if lastErr == nil || !strings.Contains(lastErr.Error(), "insufficient free CUs") {
+					t.Fatalf("app container beside a sidecar: err = %v, masks %v; want insufficient free CUs", lastErr, masks)
+				}
+				if len(masks) != 1 || masks[0] != tc.wantInit {
+					t.Fatalf("sidecar mask = %v, want %s", masks, tc.wantInit)
+				}
+				return
+			}
+			if lastErr != nil {
+				t.Fatalf("Allocate: %v", lastErr)
+			}
+			if masks[0] != tc.wantInit || masks[1] != tc.wantApp {
+				t.Fatalf("masks = %v, want init %s, app %s", masks, tc.wantInit, tc.wantApp)
+			}
+			got, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a := got.Annotations[utils.CuAllocation]; a != `{"uuid-a":"`+tc.wantUnion+`"}` {
+				t.Errorf("%s = %s, want %s", utils.CuAllocation, a, tc.wantUnion)
+			}
+			if a := got.Annotations[utils.CuAllocationSteady]; a != `{"uuid-a":"`+tc.wantSteady+`"}` {
+				t.Errorf("%s = %s, want %s", utils.CuAllocationSteady, a, tc.wantSteady)
+			}
+
+			// Other pods see the init CUs until the init container succeeds.
+			others := []corev1.Pod{holder, *got}
+			occupied, err := p.buildCUAllocations(others)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertAllocationWord(t, occupied, "uuid-a", ^uint64(0))
+			others[1].Status.InitContainerStatuses = []corev1.ContainerStatus{{
+				Name: "init", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+			}}
+			occupied, err = p.buildCUAllocations(others)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertAllocationWord(t, occupied, "uuid-a", 0x0000ffffffffffff)
+		})
+	}
+}
+
+// A pod allocated by an older plugin has no steady annotation; all of its
+// CUs keep counting.
+func TestBuildCUAllocationsWithoutSteadyAnnotation(t *testing.T) {
+	p := &AMDGPUPlugin{deviceCache: []*utils.DeviceInfo{{ID: "node~gpu0", Devcore: 8}}}
+	pod := makeCUPod("old", corev1.PodRunning, `{"node~gpu0":"0-3"}`)
+	pod.Spec.InitContainers = []corev1.Container{{Name: "init"}}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+		Name: "init", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+	}}
+	occupied, err := p.buildCUAllocations([]corev1.Pod{pod})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAllocationWord(t, occupied, "node~gpu0", 0x0f)
+
+	pod.Annotations[utils.CuAllocationSteady] = `{}`
+	occupied, err = p.buildCUAllocations([]corev1.Pod{pod})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := occupied["node~gpu0"]; len(a) != 0 && a[0] != 0 {
+		t.Fatalf("init-only pod after its init succeeded holds %#x", a[0])
+	}
+}
