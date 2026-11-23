@@ -11,7 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-FROM docker.io/golang:1.27-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18
+FROM docker.io/golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280
 RUN apk --no-cache add git pkgconfig build-base libdrm-dev wget
 RUN mkdir -p /go/src/github.com/Project-HAMi/amd-device-plugin
 ADD . /go/src/github.com/Project-HAMi/amd-device-plugin
