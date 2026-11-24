@@ -146,6 +146,22 @@ func TestNextDeviceRequestSkipsGPULessContainer(t *testing.T) {
 	}
 }
 
+// Consecutive GetNextDeviceRequest and EraseNextDeviceTypeFromAnnotation calls
+// on the same in-memory Pod advance across containers without requiring an API re-fetch.
+func TestNextDeviceRequestMultiContainerInMemory(t *testing.T) {
+	pod := testPod("uuid-a,AMDGPU,4096,25:;uuid-b,AMDGPU,4096,25:;", "gpu1", "gpu2")
+	setup(t, pod)
+	for _, want := range []string{"gpu1", "gpu2"} {
+		ctr, _, err := GetNextDeviceRequest("amd", *pod)
+		if err != nil || ctr.Name != want {
+			t.Fatalf("GetNextDeviceRequest = %q, %v; want %q", ctr.Name, err, want)
+		}
+		if err := EraseNextDeviceTypeFromAnnotation("amd", *pod); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // Slot 0 belongs to the init container, so the app container is slot 1.
 func TestNextDeviceRequestMapsPastInitContainers(t *testing.T) {
 	pod := testPod(";uuid-a,AMDGPU,4096,25:;", "app")
