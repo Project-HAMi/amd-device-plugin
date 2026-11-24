@@ -4,7 +4,7 @@
 
 ### Added
 
-- `-compute_sharing` (chart `dp.computeSharing`) lets pods share all CUs of a GPU: no `HSA_CU_MASK` and no reserved CUs, while memory limits stay.
+- Compute sharing per pod: a memory slice that the HAMi scheduler gives no cores (`devices.amd.computeSharing`) gets no `HSA_CU_MASK` and holds no CUs, so it runs on every CU of its GPU; pods with `amd.com/gpucores` keep their own CUs. This replaces the node-wide `-compute_sharing` flag, which was never released.
 
 ### Fixed
 

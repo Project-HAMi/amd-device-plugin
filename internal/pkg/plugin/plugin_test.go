@@ -1038,66 +1038,16 @@ func TestApplyDmemCapPerGPU(t *testing.T) {
 	}
 }
 
-// A memory-only slice shares every CU, so it must not hold them: a second
-// memory-only pod on the same GPU would otherwise find no free CUs.
+// A memory-only slice, as the HAMi scheduler's compute sharing sends it,
+// holds no CUs and gets no HSA_CU_MASK entry: it runs on every CU of its GPU,
+// also when another pod holds them all. A core slice in the same container
+// keeps its own mask, indexed among the container's GPUs.
 func TestAllocateMemoryOnlySliceHoldsNoCUs(t *testing.T) {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Annotations: map[string]string{
-			utils.BindTimeAnnotations:     "1",
-			utils.AssignedNodeAnnotations: "n",
-			utils.DeviceBindPhase:         utils.DeviceBindAllocating,
-			utils.DeviceToAllocate:        "uuid-a,AMDGPU,4096,0:;",
-		}},
-		Spec:   corev1.PodSpec{NodeName: "n", Containers: []corev1.Container{{Name: "c"}}},
-		Status: corev1.PodStatus{Phase: corev1.PodPending},
-	}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
-		utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
-	}}}
-	cs := fake.NewSimpleClientset(node, pod)
-	old := utils.KubeClient
-	t.Cleanup(func() { utils.KubeClient = old })
-	utils.KubeClient = cs
-	t.Setenv(utils.NodeNameEnvName, "n")
-
-	p := &AMDGPUPlugin{
-		AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
-		amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
-		amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
-		deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64, Devmem: 16304}},
-	}
-	resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
-		ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := resp.ContainerResponses[0].Envs["HSA_CU_MASK"]; got != "0:0-63" {
-		t.Errorf("HSA_CU_MASK = %q, want every CU", got)
-	}
-	if got := resp.ContainerResponses[0].Envs["HIP_DEVICE_MEMORY_LIMIT_0"]; got != "4096m" {
-		t.Errorf("HIP_DEVICE_MEMORY_LIMIT_0 = %q, want 4096m", got)
-	}
-	got, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cu, held := got.Annotations[utils.CuAllocation]; held {
-		t.Errorf("memory-only slice holds CUs %s", cu)
-	}
-}
-
-// Under compute sharing a container runs on every CU of its GPU: no
-// HSA_CU_MASK, no CUs held, so a GPU whose CUs another pod already holds
-// still takes a core slice. Memory limits and the hook stay.
-func TestAllocateComputeSharing(t *testing.T) {
 	for _, tc := range []struct {
-		name, request string
-		wantHook      bool
+		name, request, wantMask string
 	}{
-		{"core slice", "uuid-a,AMDGPU,4096,16:;", true},
-		{"memory-only slice", "uuid-a,AMDGPU,4096,0:;", true},
-		{"whole gpu", "uuid-a,AMDGPU,16304,64:;", false},
+		{"memory only", "uuid-a,AMDGPU,4096,0:;", ""},
+		{"with a core slice", "uuid-b,AMDGPU,256,2:uuid-a,AMDGPU,4096,0:;", "0:0-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pod := &corev1.Pod{
@@ -1117,48 +1067,50 @@ func TestAllocateComputeSharing(t *testing.T) {
 				Spec:   corev1.PodSpec{NodeName: "n"},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
 			}
-			cs := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}, pod, holder)
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Annotations: map[string]string{
+				utils.NodeLockKey: time.Now().Format(time.RFC3339) + ",ns,p",
+			}}}
+			cs := fake.NewSimpleClientset(node, pod, holder)
 			old := utils.KubeClient
 			t.Cleanup(func() { utils.KubeClient = old })
 			utils.KubeClient = cs
 			t.Setenv(utils.NodeNameEnvName, "n")
 
 			p := &AMDGPUPlugin{
-				AMDGPUs:              map[string]map[string]interface{}{"0000:08:00.0": {"card": 1, "renderD": 128}},
-				amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0"},
-				amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a"},
-				deviceCache:          []*utils.DeviceInfo{{ID: "uuid-a", Devcore: 64, Devmem: 16304}},
+				AMDGPUs: map[string]map[string]interface{}{
+					"0000:08:00.0": {"card": 1, "renderD": 128},
+					"0000:0a:00.0": {"card": 2, "renderD": 130},
+				},
+				amdSMIUUIDToTopology: map[string]string{"uuid-a": "0000:08:00.0", "uuid-b": "0000:0a:00.0"},
+				amdSMIUUIDToROCrUUID: map[string]string{"uuid-a": "GPU-a", "uuid-b": "GPU-b"},
+				deviceCache: []*utils.DeviceInfo{
+					{ID: "uuid-a", Devcore: 64, Devmem: 16304},
+					{ID: "uuid-b", Devcore: 2, Devmem: 512},
+				},
 			}
-			WithComputeSharing(true)(p)
+			ids := []string{"0000:08:00.0#0"}
+			if strings.HasPrefix(tc.request, "uuid-b") {
+				ids = []string{"0000:0a:00.0#0", "0000:08:00.0#0"}
+			}
 			resp, err := p.Allocate(context.Background(), &pluginapi.AllocateRequest{
-				ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"0000:08:00.0#0"}}},
+				ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: ids}},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			envs := resp.ContainerResponses[0].Envs
-			if mask, set := envs["HSA_CU_MASK"]; set {
-				t.Errorf("HSA_CU_MASK = %q, want unset", mask)
+			if mask, set := envs["HSA_CU_MASK"]; mask != tc.wantMask || set != (tc.wantMask != "") {
+				t.Errorf("HSA_CU_MASK = %q (set %v), want %q", mask, set, tc.wantMask)
 			}
-			if got := envs["ROCR_VISIBLE_DEVICES"]; got != "GPU-a" {
-				t.Errorf("ROCR_VISIBLE_DEVICES = %q, want GPU-a", got)
-			}
-			wantLimit := ""
-			if tc.wantHook {
-				wantLimit = "4096m"
-			}
-			if got := envs["HIP_DEVICE_MEMORY_LIMIT_0"]; got != wantLimit {
-				t.Errorf("HIP_DEVICE_MEMORY_LIMIT_0 = %q, want %q", got, wantLimit)
-			}
-			if hooked := len(resp.ContainerResponses[0].Mounts) == 1; hooked != tc.wantHook {
-				t.Errorf("hook mounted = %v, want %v", hooked, tc.wantHook)
+			if got := envs["HIP_DEVICE_MEMORY_LIMIT_"+strconv.Itoa(len(ids)-1)]; got != "4096m" {
+				t.Errorf("memory limit of the memory-only GPU = %q, want 4096m", got)
 			}
 			got, err := cs.CoreV1().Pods("ns").Get(context.Background(), "p", metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cu, held := got.Annotations[utils.CuAllocation]; held {
-				t.Errorf("compute sharing holds CUs %s", cu)
+			if cu := got.Annotations[utils.CuAllocation]; strings.Contains(cu, "uuid-a") {
+				t.Errorf("memory-only slice holds CUs %s", cu)
 			}
 		})
 	}
