@@ -35,7 +35,6 @@ helm install amd-gpu ./helm/amd-gpu -n kube-system
 | dp.reportNodeCapacity | bool | `false` | Publish the healthy GPUs' memory (`amd.com/gpumem`, MiB) and compute units (`amd.com/gpucores`) as node capacity and allocatable. Turning it off removes the entries again. |
 | dp.deviceMemoryScaling | float | `1` | Multiplies the VRAM each GPU registers. Above `1` oversubscribes: pods get `HIP_OVERSUBSCRIBE=true` and `hipMalloc` is served from managed memory that spills to host RAM. Slower than VRAM; needs XNACK on CDNA. |
 | dp.splitCount | int | `0` | How many workloads may share one GPU. `0` picks it per GPU: 2 on gfx12, otherwise 10. |
-| dp.computeSharing | bool | `false` | Let every pod on a GPU run on all of its CUs instead of its own CU slice: no `HSA_CU_MASK`, so `amd.com/gpucores` only weighs scheduling. Memory limits still apply. |
 | dp.allocatorPolicy | string | `"besteffort"` | Multi-GPU preferred allocation: `besteffort` (same as `binpack`) or `spread`. |
 | dp.dmemBackend | bool | `true` | Also cap sliced VRAM with the kernel dmem cgroup; skipped on nodes without dmem or the systemd cgroup driver. |
 | dp.muslFailClosed.enabled | bool | `false` | Refuse a slice whose image cannot load the memory hook (musl, static, or glibc older than 2.34), unless dmem caps it. Experimental. |

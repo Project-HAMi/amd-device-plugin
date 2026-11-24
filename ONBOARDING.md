@@ -78,7 +78,6 @@ Main chart values (all under `dp.` unless noted; the full list is in `helm/amd-g
 | `image.repository`, `image.tag` | | ghcr.io/project-hami/amd-device-plugin, chart appVersion | Image. |
 | `splitCount` | `-split_count` | 0 (10, or 2 on gfx12) | Pods that may share a GPU. Negative values exit with an error. |
 | `operatingMode`, `computePartition` | `OPERATING_MODE`, `COMPUTE_PARTITION` | `cu` | `partition` uses the hardware compute partitions of Instinct GPUs. |
-| `computeSharing` | `-compute_sharing` | false | Pods share all CUs of a GPU; no `HSA_CU_MASK`. |
 | `allocatorPolicy` | `-allocator_policy` | `besteffort` | Multi-GPU choice: `besteffort`, `binpack`, `spread`. |
 | `dmemBackend` | `-dmem_backend` | true | Kernel dmem cap (needs kernel 6.14+, systemd cgroup driver). |
 | `excludeGPUs` | `-exclude_gpus` | none | PCI BDFs or `cardN` the plugin leaves out. |
